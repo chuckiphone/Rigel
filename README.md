@@ -6,8 +6,8 @@
 
 **Several coding agents. One tree. One bill.**
 
-A local-first window for Codex, Claude Code, Cursor, Cline and Rigel's own coordinator, working the
-same project without silently overwriting each other.
+A local-first window for Codex, Claude Code, Gemini CLI, Cursor, Cline, Muse Code and Rigel's own
+coordinator, working the same project without silently overwriting each other.
 
 [![CI](https://github.com/OkVurb/Rigel/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/OkVurb/Rigel/actions/workflows/ci.yml)
 [![Windows](https://img.shields.io/badge/Windows-10%201809%2B-0078D6?logo=windows&logoColor=white)](docs/PLATFORMS.md)
@@ -15,18 +15,17 @@ same project without silently overwriting each other.
 
 </div>
 
-**0.3.0 preview.** This tree ships the 0.3 runtime, safety and window wave. Verified locally on
-2026-11-08: the Rust workspace (53 test binaries), `cargo fmt` and clippy, the renderer build, the
-55-test UI end-to-end suite, the docs, claims, design and version checks, the Functions tests and
-the VPS deploy checker are green. The hosted `main` workflow is green on 2026-11-18 (run
-[44213703351](https://github.com/OkVurb/Rigel/actions/runs/44213703351)): Rust, UI, Functions,
-docs, supply-chain, hygiene and the six-spec native window lane all pass. Of the
-[200-item roadmap](docs/roadmap-0.3.md), **92 items are done, 7 are blocked and 101 remain open**;
-the blocked set needs a signing certificate, a clean Windows VM or GitHub-hosted release proof.
+**0.3.0 source release.** The Rust workspace, Tauri configuration and renderer all report 0.3.0.
+The local release gate on 2026-11-22 passed the renderer build and token lint, the docs and version
+checks, the 63-test Playwright suite, and the native Tauri window lane. The signed installer is not
+cut: this repository currently publishes source, not a signed binary or provenance receipt. The
+[200-item roadmap](docs/roadmap-0.3.md) is still the honest list of what is finished, blocked and
+open; the blocked set needs a signing certificate, a clean Windows VM or GitHub-hosted release
+proof.
 
-![The Rigel session pane: an agent roster, a transcript with a command waiting on approval, and the per-agent bill](screenshots/2026-session.png)
+![The Rigel Paper: the day's work set as a broadsheet with a lead story, dispatches, an engraved plate and the day's numbers](screenshots/2026-paper.png)
 
-<p align="center"><sub>The session pane: roster, role-gutter transcript, approval card and bill. Captured from the current build.</sub></p>
+<p align="center"><sub>The Rigel Paper, the landing surface: lead story, dispatches, plate, prices current and the rack of earlier days. Captured from the 0.3.0 renderer with its labelled sample edition.</sub></p>
 
 ## What it is
 
@@ -45,18 +44,20 @@ closes to the tray, so a running session is not interrupted by losing the window
 | **Sessions** | A roster, a role-gutter transcript, streaming turns, an outline, bookmarks, templates, and a resume that reconciles the journal instead of replaying it. |
 | **Claims and merge** | Advisory claims with tombstones and a 24-hour expiry, a 250 ms attribution watcher, a three-way merge, and a CAS patch journal with one revert per patch. |
 | **Budget and safety** | Micro-dollar accounting per turn and per child, a preflight estimate, an 80% warning, and a $20/day project cap that refuses the next turn before it starts. |
-| **Skill shelf** | An offline SQLite FTS5 index, SimHash duplicate clusters, six static capability rules with `file:line` evidence, and source health read without a network call. |
+| **Skills and plugins** | An offline SQLite FTS5 index, SimHash duplicate clusters, six static capability rules with `file:line` evidence, nine built-in skills, and a 2,533-entry plugin catalogue with a capability broker and pinned installs. |
+| **Memory and permissions** | Committed memory facts ranked by recency, use and pin; a project tool ceiling narrowed by role and per-agent overrides; ordered network rules and opt-in sandbox profiles. |
+| **Chat** | An agentchattr room shaped as a messaging app: bots with presence, one thread per bot or the whole room, `@name` routing, room attachments and a review card before anything sends. |
 | **Cloud and phone** | An opt-in Firebase project you own, shelf metadata with tombstones, one published session readable on an iPhone, and a read-only web reader. |
 | **Routing and doors** | One resolver decides the provider and model; the inspector and `rigel route explain` print selected, requested, resolved, reason and the mismatch sentence. Launch health probes every credentialed door, and aliases resolve to the pair they name. |
 | **Runtime control** | Plan mode with one approval per plan, steering at a step boundary, pause across a restart, crash recovery with tombstones, deterministic replay, compaction at 80% of the window reading the stored per-turn summary, and per-step cost and timing. |
 | **Subagents** | Four read-only children with a parent DAG; write mode gives a child a worktree, per-file claims and a reviewed merge. |
 | **Home** | The Rigel Paper: each local day set as a broadsheet from the session database, with a lead story, dispatches, a plate, the day's numbers and a rack of earlier days. |
-| **Headless API** | `rigel serve` exposes the same coordinator over loopback HTTP with bearer auth, an OpenAPI 3.1 spec and SSE. |
+| **Headless API** | `rigel serve` exposes the same coordinator over loopback HTTP with bearer auth, an OpenAPI 3.1 spec and SSE; `rigel handoff` packages an unfinished session as a rules-preserving prompt. |
 | **Site and CMS** | A static site plus a Payload CMS; the VPS stack (Caddy, Fastify API, Postgres) is documented in [deploy/README.md](deploy/README.md). |
 
 The long version of each, including where it stops, is in [docs/what-works.md](docs/what-works.md).
 
-## New in the 0.3 tree
+## New in 0.3.0
 
 - **One route, made legible.** A saved pair, a picker pair, a role preset and a bare-id repair all
   pass through one resolver; the inspector and `rigel route explain` print the same decision, and a
@@ -70,25 +71,33 @@ The long version of each, including where it stops, is in [docs/what-works.md](d
 - **Plans and a subagent graph.** Plan mode proposes the tools and asks once; a tool outside the
   approved set re-arms the gate. Child agents declare dependencies, and a writable child lands only
   through its worktree and a reviewed merge.
+- **A plugin marketplace with a boundary.** The embedded catalogue is searchable offline; a plugin
+  is a validated `plugin.json` plus a short-lived child per tool call, every file grant is
+  canonicalised against its declared roots, and a rewritten manifest is refused instead of widening
+  its grant. Nine built-in skills install into the harness stores.
+- **A narrower agent, not a broader one.** Each roster row carries its own model, provider and
+  effort; project permissions are intersected with role presets and per-agent overrides, and a
+  spawned child can never inherit a tool its parent lacked. Memory facts expose the recency, use and
+  pin arithmetic instead of hiding a score.
 - **Proof under the surface.** Migration-prefix rehearsal, fuzzed parsers, a file jail, redaction
   and pre-write secret scanning, prompt-injection tagging, tool-call repair, context estimation and
   a bounded diagnostic ring — each with its named test in the roadmap.
 - **A headless door.** `rigel serve` gives an external orchestrator the same coordinator with
   OpenAPI 3.1, bearer auth and SSE; it binds loopback by default and refuses `0.0.0.0`.
-- **The window catches up.** The Rigel Paper home surface, recovery and subagent views, route
-  inspector, a token-only design system, eight-state and keyboard audits, focus mode and a real PTY
-  that refits on resize.
+- **The window catches up.** The Rigel Paper home surface, recovery, memory and subagent views, the
+  route inspector, a token-only design system, eight-state and keyboard audits, focus mode, six
+  grouped Settings sections with a foldable notes rail, and the amber composer state.
 
 
 
 ## Install
 
-Download the MSI from [Releases](https://github.com/OkVurb/Rigel/releases/latest). The installer
-ships MSI and NSIS builds for Windows 10 1809 and newer; no Node, Python or Rust is needed once it
-has run.
+The newest published installer is [0.1.7](https://github.com/OkVurb/Rigel/releases/tag/v0.1.7);
+0.3.0 is source-only until a signed build and provenance receipt are cut. Building from source is
+the supported 0.3.0 path today. The Windows installer needs no Node, Python or Rust once it has run.
 
 To build the desktop app from source, build the renderer first: the Tauri shell embeds `ui/dist` at
-compile time.
+compile time. You need Rust 1.88+, Node 22.12+ and npm.
 
 ```bash
 git clone https://github.com/OkVurb/Rigel
@@ -104,9 +113,10 @@ Or install only the CLI:
 cargo install --path crates/rigel-cli
 rigel skills index anthropics/skills --limit 20
 rigel skills search "pdf"
-rigel skills builtin --install          # the eight skills that ship with Rigel
+rigel skills builtin --install          # the nine skills that ship with Rigel
 rigel plugins browse                    # the curated catalogue
 rigel plugins install rigel-hello       # a plugin, pinned and capability-checked
+rigel handoff                           # a rules-preserving prompt for the next session
 rigel doctor
 ```
 
@@ -114,7 +124,31 @@ rigel doctor
 sidecar is built once on Windows before packaging; [CONTRIBUTING.md](CONTRIBUTING.md) has that step
 and the rest of the build setup.
 
+## Stack and dependencies
+
+Rigel is a Rust workspace with a React renderer inside a Tauri window. The agent CLIs are
+external: Rigel calls the copies you already have and does not bundle Codex, Claude Code, Gemini
+CLI, Cursor, Cline or Muse Code.
+
+| Layer | Current dependency |
+|---|---|
+| Desktop shell | Tauri 2 with the tray icon and dialog plugin; MSI and NSIS packaging for Windows 10 1809+ |
+| Renderer | React 19.3, TypeScript 6.0 and Vite 8.3; no component or CSS framework |
+| Core | Rust 1.88 (edition 2024), Tokio 1, Reqwest 0.12 with rustls, SQLx 0.8 on SQLite |
+| Local security | `keyring` 3 (Windows native store), `ed25519-dalek` 2, `sha2`, `tokio-tungstenite` 0.24 |
+| Storage | SQLite project and index databases, with migrations `0001`–`0024` applied in order |
+| Agent adapters | Native coordinator plus Codex, Claude Code, Muse Code and ACP (Gemini CLI, Cursor, Cline) |
+| Tests | Playwright 1.64 and axe-core 4.14 for the renderer; WebdriverIO 10.1 for the native Tauri window; `cargo test` for the workspace |
+| Chat sidecar | agentchattr and Python, bundled by the Windows packaging step |
+| Web and deploy | Static HTML/CSS/JS site; Fastify API, Payload CMS, Postgres and Caddy in `deploy/` |
+| Optional services | Firebase for cloud and phone, OpenRouter or local Ollama/llamafile doors, Exa for web search, AgentMail, Gravity sponsors |
+
+The README stills and GIFs are generated from the renderer with `node scripts/capture-shots.mjs`
+(Playwright plus ffmpeg). Point `RIGEL_PREVIEW_URL` at a running preview; the script writes the same
+files to `screenshots/` and `web/shots/`.
+
 ## How a turn works
+
 
 1. **Pick the door.** The model picker merges every provider you hold a key for, capped at six rows.
    A stored key is the permission; a model id never reaches a provider that does not own it.
@@ -125,16 +159,42 @@ and the rest of the build setup.
 
 ## Screenshots
 
-| The shelf, offline | Conflicts, not locks |
-|---|---|
-| <img src="screenshots/2026-shelf-detail.png" width="440" alt="The shelf: search results and an opened skill with grade, evidence and static review" /> | <img src="screenshots/2026-diff.png" width="440" alt="The diff view: a conflict with three versions, claims, and subagent worktrees with their reviews" /> |
+<table>
+<tr>
+<td width="50%"><img src="screenshots/2026-session.png" alt="The session pane: agent roster with per-agent models and bills, an approval on cargo test, memory scores, and the amber Build composer" /></td>
+<td width="50%"><img src="screenshots/2026-shelf-detail.png" alt="The skill shelf: search results and an opened skill with grade, source, stars and static review" /></td>
+</tr>
+<tr>
+<td><b>Session.</b> Roster, approval, memory and the bill.</td>
+<td><b>Shelf.</b> Grade, source and evidence.</td>
+</tr>
+<tr>
+<td><img src="screenshots/2026-diff.png" alt="The diff view: a three-version conflict, claims, the merge queue and subagent worktrees" /></td>
+<td><img src="screenshots/2026-settings.png" alt="Settings grouped into Agent, Guardrails, Workspace, Connections and Window, with Appearance open and the notes rail" /></td>
+</tr>
+<tr>
+<td><b>Diff.</b> Claims, one writer per path, reviewed worktrees.</td>
+<td><b>Settings.</b> Twenty pages in six groups; notes fold away.</td>
+</tr>
+<tr>
+<td><img src="screenshots/2026-chat.png" alt="The chat room with a bots list, a general channel and messages from Claude and Codex" /></td>
+<td><img src="screenshots/2026-palette.png" alt="The command palette over the shelf with Session and Account actions" /></td>
+</tr>
+<tr>
+<td><b>Chat.</b> Bots, threads and room routing.</td>
+<td><b>Palette.</b> Every surface from the keyboard.</td>
+</tr>
+</table>
 
-| The chat room | The command palette |
-|---|---|
-| <img src="screenshots/2026-chat.png" width="440" alt="The chat room with agent messages and who is in the room" /> | <img src="screenshots/2026-palette.png" width="440" alt="The command palette over the window" /> |
+<p align="center">
+  <img src="screenshots/rigel-tour-2026.gif" width="900" alt="The 0.3.0 tour: the Rigel Paper, shelf inspector, session approval, diff and merge queue, grouped Settings and the command palette" />
+</p>
 
-Every image is a capture of the built app. The [tour](web/shots/rigel-tour-2026.mp4) shows the
-shelf, palette, session, chat, diff and settings in order.
+<p align="center"><sub>The 0.3.0 tour. <a href="screenshots/rigel-tour-2026.mp4">MP4</a> · <a href="screenshots/rigel-demo.gif">short demo GIF</a> · <a href="screenshots/2026-attention.png">attention view</a></sub></p>
+
+These are captures of the 0.3.0 renderer in its browser preview, where the sample rows are labelled
+as samples. The native Tauri window lane checks the real window's open, turn, approval and diff flow.
+Every still is 1440×900 at 2×, and both GIFs are regenerated from the same script.
 
 ## Cloud is optional
 
@@ -167,10 +227,9 @@ Fastify routes replace them. The migration is staged so either side can be rolle
 
 The gaps are part of the record:
 
-- **108 roadmap items still need work.** [docs/roadmap-0.3.md](docs/roadmap-0.3.md) lists each
-  with its artifact and its "done when": 102 are open and seven are blocked, and the blocked set
-  needs a signing identity, a clean Windows VM or GitHub-hosted release proof. No open item is
-  described here as finished.
+- **The roadmap is still open.** [docs/roadmap-0.3.md](docs/roadmap-0.3.md) lists each item with
+  its artifact and its "done when". Blocked items need a signing identity, a clean Windows VM or
+  GitHub-hosted release proof. No open item is described here as finished.
 - **The signed release is not cut.** 0.3.0 has no published installer, provenance or receipt; the
   version agrees across the four build files, but signing credentials are not in this tree.
 - **The VPS API is partial.** Health, auth, devices, sessions, published sessions and the relay are

@@ -14,7 +14,7 @@ including the plugin marketplace, the grouped Settings window and the polished R
 - feat(plugins): add a subprocess plugin API with a validated manifest, a capability broker, a per-install tree receipt and an agent `plugin_call` that the permission matrix governs
 - feat(plugins): add a curated offline catalogue and a Settings → Plugins marketplace with tiers, capability chips, pinned installs, enable/disable and broken-install reporting
 - fix(plugins): pin the manifest hash in the receipt, keep a tampered install removable, and prove the marketplace in the real window with `e2e/specs/plugins.spec.ts`
-- feat(skills): ship eight native skills (SkillEvaluator, Headroom, AG-UI, mcptoon, llmfit, Semble, Cognee evaluate-only, Blender MCP), indexed at launch and installable into the harness stores; all eight pass SkillEvaluator tier 1 with grade A
+- feat(skills): ship nine native skills (SkillEvaluator, Headroom, AG-UI, mcptoon, llmfit, Semble, Cognee evaluate-only, Blender MCP, Superpowers), indexed at launch and installable into the harness stores
 - feat(swarm): add Rigel, the Muse big boss, and let Swarm choose any chat model for the coordinator
 - feat(concord): read and reply to Concord work from Settings, with awaiting/all filters and receipts
 - test(window): drive the built app through open, turn, approval and diff with the native window runner
