@@ -1516,10 +1516,10 @@ Open this pull request from ${plan.branch} into ${plan.base} with gh?`,
                           onSelect: () => void copyText(patch.diff, "Patch"),
                         },
                         {
-                          label: "Copy patch id",
+                          label: "Copy patch ID",
                           detail: patch.id,
                           icon: "copy",
-                          onSelect: () => void copyText(patch.id, "Patch id"),
+                          onSelect: () => void copyText(patch.id, "Patch ID"),
                         },
                         {
                           label: "Revert this patch",

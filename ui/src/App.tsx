@@ -38,9 +38,10 @@ import PluginShelf from "./pluginShelf";
 import Palette, { type PaletteAction } from "./palette";
 import SessionView from "./session";
 import SettingsView, { type SettingsPage } from "./settings";
-import { applyDisplay } from "./display";
+import { applyDisplay, sourceLabel } from "./display";
 import { applyContrast, applyTheme, themePreference } from "./theme";
 import Titlebar from "./titlebar";
+import { APP_VERSION } from "./version";
 import {
   formatShortcut,
   loadShortcuts,
@@ -1149,7 +1150,9 @@ ${task}`,
     <div
       className={`shell${native ? " chrome" : ""}${view === "session" ? " session" : ""}${
         view === "settings" || view === "account" ? " settings" : ""
-      }${view === "diff" ? " diff" : ""}${view === "home" ? " home" : ""}${focusMode ? " focus" : ""}`}
+      }${view === "diff" ? " diff" : ""}${view === "home" ? " home" : ""}${
+        view === "shelf" ? " shelf" : ""
+      }${view === "chat" ? " chat" : ""}${focusMode ? " focus" : ""}`}
       style={
         {
           "--list-w": `${panes.list}px`,
@@ -1470,7 +1473,7 @@ ${task}`,
         <PluginShelf kind={shelfKind} onKind={setShelfKind} onNotice={setNotice} />
       ) : (
       <>
-      <aside className="list-pane">
+      <aside className="list-pane shelf-nav">
         <div className="list-head">
           <div className="list-title">
             <h1>{VIEWS.find((item) => item.id === view)?.label ?? "Rigel"}</h1>
@@ -1509,7 +1512,7 @@ ${task}`,
         {view === "shelf" && !offline && stale.length > 0 ? (
           <p className="banner" role="status">
             {stale
-              .map((s) => `${s.id} stale since ${when(s.last_sync_at)}`)
+              .map((s) => `${sourceLabel(s.id)} stale since ${when(s.last_sync_at)}`)
               .join(" · ")}
           </p>
         ) : null}
@@ -1537,7 +1540,7 @@ ${task}`,
                   contextMenu.open(event, {
                     eyebrow: "Skill shelf",
                     title: row.name,
-                    subtitle: `${row.source}${row.repo ? ` · ${row.repo}` : ""}`,
+                    subtitle: `${sourceLabel(row.source)}${row.repo ? ` · ${row.repo}` : ""}`,
                     sections: [
                       {
                         label: "Skill",
@@ -1579,10 +1582,10 @@ ${task}`,
                             onSelect: () => void copyText(row.url ?? "", "Source URL"),
                           },
                           {
-                            label: "Copy skill id",
+                            label: "Copy skill ID",
                             detail: row.id,
                             icon: "copy",
-                            onSelect: () => void copyText(row.id, "Skill id"),
+                            onSelect: () => void copyText(row.id, "Skill ID"),
                           },
                         ],
                       },
@@ -1675,7 +1678,7 @@ ${task}`,
         )}
       </aside>
 
-      <main id="main" tabIndex={-1} className="detail">
+      <main id="main" tabIndex={-1} className="detail settings-main shelf-main">
         <header className="detail-head">
           <div>
             <p className="eyebrow">
@@ -1684,7 +1687,7 @@ ${task}`,
                 : selected?.repo
                   ? selected.repo
                   : selected
-                    ? selected.source
+                    ? sourceLabel(selected.source)
                     : "Rigel"}
             </p>
             <h2>{selected?.name ?? "Shelf"}</h2>
@@ -1754,7 +1757,7 @@ ${task}`,
         </p>
 
         {!selected ? (
-          <section className="onboarding">
+          <section className="settings-section onboarding">
             <h3>{isTauri() ? "The index is empty" : "Browser preview"}</h3>
             <p>
               {isTauri()
@@ -1794,7 +1797,7 @@ ${task}`,
               </div>
               <div>
                 <span className="label">Source</span>
-                <span className="value mono">{selected.source}</span>
+                <span className="value mono">{sourceLabel(selected.source)}</span>
               </div>
               <div>
                 <span className="label">Stars</span>
@@ -1815,7 +1818,7 @@ ${task}`,
             </section>
 
             {shown && shown.evidence.length > 0 ? (
-              <section className="evidence">
+              <section className="settings-section evidence">
                 <h3>Evidence</h3>
                 <table>
                   <thead>
@@ -1859,7 +1862,7 @@ ${task}`,
             ) : null}
 
             {shown && shown.capabilities.length > 0 ? (
-              <section className="touches">
+              <section className="settings-section touches">
                 <h3>Static review</h3>
                 <ul>
                   {shown.capabilities.map((capability) => (
@@ -1883,7 +1886,7 @@ ${task}`,
             ) : null}
 
             {shown && shown.variants.length > 0 ? (
-              <section className="variants">
+              <section className="settings-section variants">
                 <h3>
                   {shown.variants.length + 1} near-identical variants · showing every one
                 </h3>
@@ -1969,7 +1972,7 @@ ${task}`,
         <span className="sep">·</span>
         <span className="mono" title={`source: ${source.label}`}>
           {statuses.length > 0
-            ? statuses.map((s) => `${s.id} ${s.state}`).join(" · ")
+            ? statuses.map((s) => `${sourceLabel(s.id)} ${s.state}`).join(" · ")
             : isTauri()
               ? "no sources"
               : "sample"}
@@ -2020,12 +2023,12 @@ ${task}`,
                 <h2 id="about-title">Rigel</h2>
                 <p className="fine">A local-first agent workbench for Windows.</p>
               </div>
-              <span className="pill">0.1.7</span>
+              <span className="pill">{APP_VERSION}</span>
             </div>
             <dl className="about-facts">
               <div>
                 <dt>Version</dt>
-                <dd>0.1.7 · 0.2.0 in progress</dd>
+                <dd>{APP_VERSION} · current source release</dd>
               </div>
               <div>
                 <dt>Data</dt>

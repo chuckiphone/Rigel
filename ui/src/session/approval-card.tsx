@@ -327,7 +327,7 @@ export function ApprovalCard({
         ) : null}
         {skillScripts.length > 0 ? (
           <div className="approval-blast">
-            <p className="fine">skill scripts: a loaded skill contributed these paths</p>
+            <p className="fine">Skill scripts: a loaded skill contributed these paths</p>
             <ul className="approval-rows">
               {skillScripts.map((script, index) => (
                 <li key={`${script.path ?? "script"}-${index}`}>

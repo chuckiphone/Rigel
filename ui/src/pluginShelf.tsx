@@ -17,6 +17,7 @@ import {
   type PluginRow,
   type PluginsState,
 } from "./api";
+import { humanize, sourceLabel } from "./display";
 import { ShelfTabs, type ShelfKind } from "./mcps";
 
 const TIERS = ["all", "official", "verified", "community"] as const;
@@ -194,9 +195,9 @@ export default function PluginShelf({
               <span className="fine mono">{row.version}</span>
               <p className="fine">{row.description}</p>
               <p className="fine mono">{row.tools.join(" · ")}</p>
-              <p className="fine">capabilities: {row.capabilities.join(" · ")}</p>
+              <p className="fine">Capabilities: {row.capabilities.join(" · ")}</p>
               <p className="fine">
-                source: {row.source ?? "unknown"}
+                Source: {sourceLabel(row.source)}
                 {row.license ? ` · ${row.license}` : ""}
                 {row.installed_at ? ` · ${new Date(row.installed_at).toLocaleString()}` : ""}
               </p>
@@ -269,7 +270,7 @@ export default function PluginShelf({
 
   return (
     <>
-      <aside className="list-pane">
+      <aside className="list-pane shelf-nav">
         <div className="list-head">
           <div className="list-title">
             <h1>Shelf</h1>
@@ -300,7 +301,7 @@ export default function PluginShelf({
             >
               {KINDS.map((value) => (
                 <option key={value} value={value}>
-                  {value === "all" ? "every kind" : value}
+                  {value === "all" ? "Every kind" : humanize(value)}
                 </option>
               ))}
             </select>
@@ -311,7 +312,7 @@ export default function PluginShelf({
             >
               {TIERS.map((value) => (
                 <option key={value} value={value}>
-                  {value === "all" ? "every tier" : value}
+                  {value === "all" ? "Every tier" : humanize(value)}
                 </option>
               ))}
             </select>
@@ -320,10 +321,10 @@ export default function PluginShelf({
               aria-label="Catalogue category"
               onChange={(event) => setCategory(event.target.value || null)}
             >
-              <option value="">every shelf</option>
+              <option value="">Every shelf</option>
               {(catalog?.categories ?? []).map((value) => (
                 <option key={value} value={value}>
-                  {value}
+                  {humanize(value)}
                 </option>
               ))}
             </select>
@@ -357,7 +358,9 @@ export default function PluginShelf({
                 </span>
                 <span className="row-desc">{entry.description}</span>
               </span>
-              <span className="row-meta">{entry.source ?? entry.tier}</span>
+              <span className="row-meta">
+                {entry.source ? sourceLabel(entry.source) : humanize(entry.tier)}
+              </span>
             </button>
           ))}
 
@@ -388,12 +391,12 @@ export default function PluginShelf({
         </div>
       </aside>
 
-      <main id="main" tabIndex={-1} className="detail">
+      <main id="main" tabIndex={-1} className="detail settings-main shelf-main">
         <header className="detail-head">
           <div>
             <p className="eyebrow">
               Plugin catalogue
-              {selected?.source ? ` · ${selected.source}` : selected ? " · Rigel" : ""}
+              {selected?.source ? ` · ${sourceLabel(selected.source)}` : selected ? " · Rigel" : ""}
             </p>
             <h2>{selected?.title ?? "Plugins"}</h2>
             <p className="lede">
@@ -446,15 +449,15 @@ export default function PluginShelf({
             <section className="facts" aria-label="Plugin facts">
               <div>
                 <span className="label">Kind</span>
-                <span className="value mono">{selected.kind}</span>
+                <span className="value mono">{humanize(selected.kind)}</span>
               </div>
               <div>
                 <span className="label">Tier</span>
-                <span className="value mono">{selected.tier}</span>
+                <span className="value mono">{humanize(selected.tier)}</span>
               </div>
               <div>
                 <span className="label">Category</span>
-                <span className="value">{selected.category}</span>
+                <span className="value">{humanize(selected.category)}</span>
               </div>
               <div>
                 <span className="label">Author</span>
@@ -466,7 +469,13 @@ export default function PluginShelf({
               </div>
               <div>
                 <span className="label">Source</span>
-                <span className="value mono">{selected.source ?? (selected.bundled ? `bundled:${selected.bundled}` : "Rigel")}</span>
+                <span className="value mono">
+                  {selected.source
+                    ? sourceLabel(selected.source)
+                    : selected.bundled
+                      ? `Bundled · ${selected.bundled}`
+                      : "Rigel"}
+                </span>
               </div>
               <div>
                 <span className="label">Licence</span>
@@ -509,7 +518,7 @@ export default function PluginShelf({
             </section>
 
             {selected.capabilities.length > 0 || selected.skills.length > 0 ? (
-              <section className="plugin-shelf-section">
+              <section className="settings-section plugin-shelf-section">
                 <h3>Declared surface</h3>
                 <div className="plugins-chips">
                   {selected.capabilities.map((capability) => (
@@ -527,14 +536,14 @@ export default function PluginShelf({
             ) : null}
 
             {selected.note ? (
-              <section className="plugin-shelf-note">
+              <section className="settings-section plugin-shelf-note">
                 <strong>{selected.kind === "external" ? "Upstream listing" : "Review note"}</strong>
                 <p className="fine">{selected.note}</p>
               </section>
             ) : null}
 
             {selected.install ? (
-              <section className="plugin-shelf-section">
+              <section className="settings-section plugin-shelf-section">
                 <h3>
                   {selected.kind === "external" ? "Install in its harness" : "Install command"}
                 </h3>
@@ -547,7 +556,7 @@ export default function PluginShelf({
               </section>
             ) : null}
 
-            <section className="plugin-shelf-section">
+            <section className="settings-section plugin-shelf-section">
               <div className="settings-section-head">
                 <div>
                   <h3>Installed plugins</h3>
@@ -579,7 +588,7 @@ export default function PluginShelf({
             </section>
           </>
         ) : (
-          <section className="onboarding">
+          <section className="settings-section onboarding">
             <h3>{loading ? "Reading the catalogue" : "No entry selected"}</h3>
             <p>
               {loading

@@ -441,7 +441,7 @@ export function ModelControls({
                 {selectedTiered ? (
                   <p className="fine model-tier-note">
                     This id names the family; the tier travels as{" "}
-                    <code>reasoning_effort</code>, so the id stays unchanged.
+                    <code>reasoning_effort</code>, so the ID stays unchanged.
                   </p>
                 ) : null}
               </>

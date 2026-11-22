@@ -238,7 +238,7 @@ export default function ConcordPage({ onNotice }: Props) {
                   </p>
                 ) : !id ? (
                   <p className="fine">
-                    This cached row has no message id, so the reply route cannot address it.
+                    This cached row has no message ID, so the reply route cannot address it.
                   </p>
                 ) : (
                   <div className="concord-reply">

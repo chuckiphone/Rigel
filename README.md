@@ -86,7 +86,11 @@ The long version of each, including where it stops, is in [docs/what-works.md](d
   OpenAPI 3.1, bearer auth and SSE; it binds loopback by default and refuses `0.0.0.0`.
 - **The window catches up.** The Rigel Paper home surface, recovery, memory and subagent views, the
   route inspector, a token-only design system, eight-state and keyboard audits, focus mode, six
-  grouped Settings sections with a foldable notes rail, and the amber composer state.
+  grouped Settings sections with a foldable notes rail, the amber composer state, and Shelf and
+  Chat wearing the same grouped rail and card page.
+
+[The full 0.3.0 release notes](docs/release-notes/0.3.0.md) expand every item in this section,
+including upgrade notes, dependencies and known gaps.
 
 
 
@@ -251,6 +255,7 @@ The gaps are part of the record:
 ## Docs
 
 - [ARCHITECTURE.md](ARCHITECTURE.md): the pieces, the two databases, the write path and a turn
+- [docs/release-notes/0.3.0.md](docs/release-notes/0.3.0.md): the detailed 0.3.0 changelog, dependencies and upgrade notes
 - [docs/what-works.md](docs/what-works.md): every surface, its state and its evidence
 - [CONTRIBUTING.md](CONTRIBUTING.md): build, checks, layout and the rules for a schema change
 - [SECURITY.md](SECURITY.md): the threat model, every network call and what is not defended

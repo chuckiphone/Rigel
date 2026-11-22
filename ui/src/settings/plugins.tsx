@@ -342,7 +342,7 @@ export default function PluginsPage({ onNotice }: { onNotice: (notice: string) =
                 <span className="fine mono">{row.version}</span>
                 <p className="fine">{row.description}</p>
                 <p className="fine mono">{row.tools.join(" · ")}</p>
-                <p className="fine">capabilities: {row.capabilities.join(" · ")}</p>
+                <p className="fine">Capabilities: {row.capabilities.join(" · ")}</p>
                 <p className="fine" data-testid="plugin-receipt">
                   source: {row.source ?? "unknown"}
                   {row.license ? ` · ${row.license}` : ""}

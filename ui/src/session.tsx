@@ -3398,10 +3398,10 @@ export default function SessionView({
                         label: "Copy",
                         items: [
                           {
-                            label: "Session id",
+                            label: "Session ID",
                             detail: row.id,
                             icon: "copy",
-                            onSelect: () => void copyText(row.id, "Session id"),
+                            onSelect: () => void copyText(row.id, "Session ID"),
                           },
                           {
                             label: "Session title",
@@ -5368,10 +5368,10 @@ function TurnCard({
                   onSelect: () => onCopy(entry.turn.prompt ?? "", "Turn prompt"),
                 },
                 {
-                  label: "Copy turn id",
+                  label: "Copy turn ID",
                   detail: entry.turn.id,
                   icon: "copy",
-                  onSelect: () => onCopy(entry.turn.id, "Turn id"),
+                  onSelect: () => onCopy(entry.turn.id, "Turn ID"),
                 },
                 {
                   label: "Copy raw JSON",

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import { api, isTauri, type McpServer } from "./api";
+import { humanize, sourceLabel } from "./display";
 
 export type ShelfKind = "skills" | "mcps" | "plugins";
 
@@ -12,35 +13,38 @@ export function ShelfTabs({
   onKind: (kind: ShelfKind) => void;
 }) {
   return (
-    <div className="shelf-tabs" role="tablist" aria-label="Shelf catalogue">
-      <button
-        type="button"
-        role="tab"
-        aria-selected={kind === "skills"}
-        className={kind === "skills" ? "on" : ""}
-        onClick={() => onKind("skills")}
-      >
-        Skills
-      </button>
-      <button
-        type="button"
-        role="tab"
-        aria-selected={kind === "mcps"}
-        className={kind === "mcps" ? "on" : ""}
-        onClick={() => onKind("mcps")}
-      >
-        MCPs
-      </button>
-      <button
-        type="button"
-        role="tab"
-        aria-selected={kind === "plugins"}
-        className={kind === "plugins" ? "on" : ""}
-        onClick={() => onKind("plugins")}
-      >
-        Plugins
-      </button>
-    </div>
+    <>
+      <p className="shelf-nav-label">Catalogue</p>
+      <div className="shelf-tabs" role="tablist" aria-label="Shelf catalogue">
+        <button
+          type="button"
+          role="tab"
+          aria-selected={kind === "skills"}
+          className={kind === "skills" ? "on" : ""}
+          onClick={() => onKind("skills")}
+        >
+          Skills
+        </button>
+        <button
+          type="button"
+          role="tab"
+          aria-selected={kind === "mcps"}
+          className={kind === "mcps" ? "on" : ""}
+          onClick={() => onKind("mcps")}
+        >
+          MCPs
+        </button>
+        <button
+          type="button"
+          role="tab"
+          aria-selected={kind === "plugins"}
+          className={kind === "plugins" ? "on" : ""}
+          onClick={() => onKind("plugins")}
+        >
+          Plugins
+        </button>
+      </div>
+    </>
   );
 }
 
@@ -268,7 +272,7 @@ export default function McpShelf({ project, kind, onKind }: Props) {
 
   return (
     <>
-      <aside className="list-pane">
+      <aside className="list-pane shelf-nav">
         <div className="list-head">
           <div className="list-title">
             <h1>Shelf</h1>
@@ -325,7 +329,9 @@ export default function McpShelf({ project, kind, onKind }: Props) {
                 </span>
                 <span className="row-desc">{server.description || server.qualified}</span>
               </span>
-              <span className="row-meta">{server.source || "catalog"}</span>
+              <span className="row-meta">
+                {server.source ? sourceLabel(server.source) : "Catalogue"}
+              </span>
             </button>
           ))}
 
@@ -351,11 +357,11 @@ export default function McpShelf({ project, kind, onKind }: Props) {
         </div>
       </aside>
 
-      <main id="main" tabIndex={-1} className="detail">
+      <main id="main" tabIndex={-1} className="detail settings-main shelf-main">
         <header className="detail-head">
           <div>
             <p className="eyebrow">
-              MCP catalogue{selected?.source ? ` · ${selected.source}` : ""}
+              MCP catalogue{selected?.source ? ` · ${sourceLabel(selected.source)}` : ""}
             </p>
             <h2>{selected?.name ?? "MCP servers"}</h2>
             <p className="lede">
@@ -386,11 +392,11 @@ export default function McpShelf({ project, kind, onKind }: Props) {
             <section className="facts">
               <div>
                 <span className="label">Source</span>
-                <span className="value mono">{selected.source || "—"}</span>
+                <span className="value mono">{sourceLabel(selected.source)}</span>
               </div>
               <div>
                 <span className="label">Transport</span>
-                <span className="value mono">{selected.transport || "—"}</span>
+                <span className="value mono">{humanize(selected.transport)}</span>
               </div>
               <div>
                 <span className="label">Version</span>
@@ -401,7 +407,7 @@ export default function McpShelf({ project, kind, onKind }: Props) {
                 <span className="value mono">{selected.repo || "—"}</span>
               </div>
               <div>
-                <span className="label">Catalogue id</span>
+                <span className="label">Catalogue ID</span>
                 <span className="value mono">{selected.qualified || selected.id}</span>
               </div>
               <div>
@@ -410,7 +416,7 @@ export default function McpShelf({ project, kind, onKind }: Props) {
               </div>
             </section>
 
-            <section className="onboarding">
+            <section className="settings-section onboarding">
               <h3>{selected.installable ? "Install target" : "Manual setup needed"}</h3>
               {selected.installable ? (
                 <p>

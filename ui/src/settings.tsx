@@ -48,6 +48,7 @@ import { CustomProvider } from "./settings/custom-provider";
 import NetworkPolicyEditor from "./settings/network-policy";
 import PermissionsEditor from "./settings/permissions";
 import PluginsPage from "./settings/plugins";
+import { humanize, sourceLabel } from "./display";
 import { ensurePermission } from "./notify";
 import { applyContrast, applyTheme, type Theme } from "./theme";
 import { useMenu } from "./menu";
@@ -460,7 +461,7 @@ function HarnessKeyRow({
     <div className="harness-key-row">
       <div className="harness-key-label">
         <strong>{item.harness}</strong>
-        <span>{present ? `${item.name} key set` : `Needs API key · ${item.id}`}</span>
+        <span>{present ? `${item.name} key set` : `Needs API key · ${item.name}`}</span>
       </div>
       <input
         type="password"
@@ -1203,7 +1204,7 @@ export default function SettingsView({
     );
   };
 
-  /** Save the project id and web API key; the core owns validation and the file. */
+  /** Save the project ID and web API key; the core owns validation and the file. */
   const saveCloudProject = async () => {
     const project = cloudProject.trim();
     const key = cloudKey.trim();
@@ -1797,7 +1798,7 @@ export default function SettingsView({
             </span>
           </div>
           <label className="key-field">
-            <span>Project id</span>
+            <span>Project ID</span>
             <input
               value={vertexProject}
               onChange={(event) => setVertexProject(event.target.value)}
@@ -2209,8 +2210,10 @@ export default function SettingsView({
             {refreshReport.sources.map((row) => (
               <div className="harness-row" key={row.id}>
                 <div className="harness-row-head">
-                  <strong className="mono">{row.id}</strong>
-                  <span className={`pill ${row.state === "ok" ? "ok" : "failed"}`}>{row.state}</span>
+                  <strong className="mono">{sourceLabel(row.id)}</strong>
+                  <span className={`pill ${row.state === "ok" ? "ok" : "failed"}`}>
+                    {humanize(row.state)}
+                  </span>
                 </div>
                 <p className="fine">{row.detail}</p>
               </div>
@@ -2231,8 +2234,8 @@ export default function SettingsView({
             {sources.map((row) => (
               <div className="harness-row" key={row.id}>
                 <div className="harness-row-head">
-                  <strong className="mono">{row.id}</strong>
-                  <span className={sourcePill(row.state)}>{row.state}</span>
+                  <strong className="mono">{sourceLabel(row.id)}</strong>
+                  <span className={sourcePill(row.state)}>{humanize(row.state)}</span>
                 </div>
                 <p className="fine">
                   {row.base_url ? <code>{row.base_url}</code> : "built in"} · last sync{" "}
@@ -2952,18 +2955,18 @@ export default function SettingsView({
         </div>
         <p className="fine">
           Rigel runs no server of its own: the project is yours, created in the Firebase console
-          with Email/Password sign-in and Firestore. The project id and web API key are saved in{" "}
+          with Email/Password sign-in and Firestore. The project ID and web API key are saved in{" "}
           <code>cloud.json</code>; the key is public by design, and <code>firestore.rules</code> is
           what keeps one account's shelf out of another's. <code>docs/cloud.md</code> has the
           five-minute setup.
         </p>
         <div className="settings-field-grid">
           <label className="settings-field">
-            <span>Project id</span>
+            <span>Project ID</span>
             <div className="settings-field-row">
               <input
                 value={cloudProject}
-                aria-label="Firebase project id"
+                aria-label="Firebase project ID"
                 placeholder={cloud?.project_id ?? "rigel-cloud-4f2a1"}
                 spellCheck={false}
                 autoComplete="off"

@@ -7,9 +7,13 @@ Every release, newest first. The heading is the version its `v*` tag publishes.
 The 0.3 release. It keeps the 0.2.0 feature set and ships the work completed for the 0.3 tree,
 including the plugin marketplace, the grouped Settings window and the polished Rigel Paper.
 
+[Full release notes, dependencies and upgrade notes →](docs/release-notes/0.3.0.md)
+
 - feat(ui): give the composer one amber active state instead of a green Build button, and move the changed-skill badge into the same accent family
 - feat(ui): fold the Settings notes rail with a remembered preference and group the twenty pages under Agent, Guardrails, Workspace, Connections, Window and System
 - feat(ui): refine the Rigel Paper with a warmer stock, a flagline, an amber masthead rule, a pull-quote prompt, section ornaments and a front-page archive
+- feat(ui): give Shelf and Chat the grouped rail, large page header and card sections from Settings
+- fix(ui): use ID, PID and named source labels in reader-facing text, and read About's version from `package.json` instead of a hardcoded 0.1.7
 - refactor(ui): remove the Terminal surface, its rail tab, palette action, Settings page, xterm dependency and dead styles
 - feat(plugins): add a subprocess plugin API with a validated manifest, a capability broker, a per-install tree receipt and an agent `plugin_call` that the permission matrix governs
 - feat(plugins): add a curated offline catalogue and a Settings → Plugins marketplace with tiers, capability chips, pinned installs, enable/disable and broken-install reporting

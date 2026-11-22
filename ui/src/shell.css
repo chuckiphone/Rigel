@@ -9812,3 +9812,356 @@ html[data-surface="tray"] #root {
   width: 100%;
   margin: 0;
 }
+
+/* ---------- shared surface language: Shelf and Chat ----------
+   Settings leads with a quiet grouped rail and a card page. Shelf and Chat use the same type
+   scale, row geometry and card edges, so switching surfaces does not change the vocabulary. */
+
+.shell.shelf .list-pane,
+.shell.chat .list-pane {
+  background: var(--surface);
+}
+
+.shell.shelf .list-head,
+.shell.chat .list-head {
+  padding: 22px 18px 16px;
+  border-bottom: 0;
+}
+
+.shell.shelf .list-title,
+.shell.chat .list-title {
+  align-items: center;
+  margin-bottom: 10px;
+}
+
+.shell.shelf .list-title h1,
+.shell.chat .list-title h1 {
+  font-size: 20px;
+  font-weight: 650;
+  letter-spacing: -0.02em;
+}
+
+.shell.shelf .list-title span,
+.shell.chat .list-title span {
+  font-size: 9px;
+  letter-spacing: 0.1em;
+}
+
+.shelf-nav-label {
+  margin: 2px 0 0;
+  padding: 2px 2px 6px;
+  color: var(--faint);
+  font-size: 9px;
+  font-weight: 600;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.shell.shelf .shelf-tabs {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  width: 100%;
+  margin: 0 0 10px;
+  padding: 3px;
+  border-radius: 8px;
+  background: var(--bg);
+}
+
+.shell.shelf .shelf-tabs button {
+  height: 28px;
+  padding: 0 8px;
+  border-radius: 6px;
+  font-family: var(--ui);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0;
+}
+
+.shell.shelf .list-head > .search {
+  height: 34px;
+  margin-top: 10px;
+  border-radius: 8px;
+  background: var(--bg);
+}
+
+.shell.shelf .rows {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  padding: 2px 10px 12px;
+}
+
+.shell.shelf .row {
+  padding: 8px 10px;
+  border-radius: 8px;
+}
+
+.shell.shelf .row:hover {
+  background: var(--raised);
+}
+
+.shell.shelf .row.on {
+  background: var(--raised);
+  box-shadow: none;
+}
+
+.shell.shelf .row-name {
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+
+.shell.shelf .row-desc {
+  display: -webkit-box;
+  overflow: hidden;
+  line-height: 1.35;
+  white-space: normal;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+.shell.shelf .row-meta {
+  font-size: 9.5px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.shell.shelf .load-more {
+  margin: 6px 0 2px;
+}
+
+.shelf-main .facts {
+  margin-top: 20px;
+  border-radius: 12px;
+}
+
+.shelf-main .facts > div {
+  padding: 14px 16px;
+}
+
+.shelf-main > .settings-section {
+  max-width: none;
+  margin-top: 14px;
+}
+
+.shelf-main .touches,
+.shelf-main .variants,
+.shelf-main .onboarding {
+  max-width: none;
+}
+
+.shelf-main .onboarding {
+  margin-top: 14px;
+}
+
+.shelf-main .evidence table {
+  max-width: none;
+}
+
+.shelf-main .plugin-shelf-section {
+  margin-top: 14px;
+}
+
+.shelf-main .plugin-shelf-section h3 {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+
+.shelf-main .plugin-shelf-note {
+  border-left: 1px solid var(--hairline);
+}
+
+.shelf-main .plugin-shelf-note strong {
+  font-size: 13px;
+  font-weight: 600;
+}
+
+/* Chat: the settings rail rhythm on the left, a quieter page header and a centred conversation. */
+.shell.chat .bots-side-head {
+  gap: 12px;
+  padding: 22px 18px 14px;
+  border-bottom: 0;
+}
+
+.shell.chat .chat-title {
+  margin: 0;
+  align-items: center;
+}
+
+.shell.chat .chat-title h1 {
+  margin: 0;
+  font-size: 20px;
+  font-weight: 650;
+  letter-spacing: -0.02em;
+}
+
+.shell.chat .chat-title span {
+  color: var(--faint);
+  font-size: 9px;
+  letter-spacing: 0.1em;
+}
+
+.shell.chat .bots-project {
+  padding: 9px 10px;
+  border: 1px solid var(--hairline);
+  border-radius: 9px;
+  background: var(--bg);
+}
+
+.shell.chat .bots-search {
+  height: 34px;
+  border-radius: 8px;
+  background: var(--bg);
+}
+
+.shell.chat .bots-group {
+  padding: 12px 10px 6px;
+  font-size: 9px;
+  letter-spacing: 0.12em;
+}
+
+.shell.chat .bots-group-label {
+  margin: 10px 10px 3px;
+  padding: 0;
+  color: var(--faint);
+  font-size: 9px;
+  font-weight: 600;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.shell.chat .bots-list {
+  gap: 1px;
+  padding: 0 10px 8px;
+}
+
+.shell.chat .bots-row {
+  padding: 8px 10px;
+  border-radius: 8px;
+}
+
+.shell.chat .bots-row:hover {
+  background: var(--raised);
+}
+
+.shell.chat .bots-row.on {
+  background: var(--raised);
+  box-shadow: inset 2px 0 var(--accent);
+}
+
+.shell.chat .bots-avatar {
+  border-radius: 8px;
+}
+
+.shell.chat .bots-foot {
+  padding: 0 18px 12px;
+}
+
+.shell.chat .bots-start {
+  padding: 7px 2px;
+}
+
+.shell.chat .bots-main {
+  padding: 0;
+}
+
+.shell.chat .bots-thread-head {
+  align-items: flex-start;
+  gap: 12px;
+  margin: 0 28px;
+  padding: 22px 0 18px;
+  border-bottom: 1px solid var(--hairline);
+  background: transparent;
+}
+
+.shell.chat .bots-thread-head .bots-avatar {
+  flex-basis: 38px;
+  width: 38px;
+  height: 38px;
+  margin-top: 3px;
+  border-radius: 10px;
+  font-size: 15px;
+}
+
+.shell.chat .bots-head-text .eyebrow {
+  margin: 0 0 5px;
+  color: var(--accent-text);
+  font-size: 10px;
+  letter-spacing: 0.1em;
+}
+
+.shell.chat .bots-head-text h2 {
+  font-size: 30px;
+  font-weight: 650;
+  line-height: 1.1;
+  letter-spacing: -0.03em;
+}
+
+.shell.chat .bots-head-text p:not(.eyebrow) {
+  margin-top: 5px;
+  font-size: 12px;
+}
+
+.shell.chat .bots-head-actions {
+  margin-top: 6px;
+}
+
+.shell.chat .bots-pill,
+.shell.chat .bots-more {
+  border-radius: 8px;
+}
+
+.shell.chat .bots-notice,
+.shell.chat .bots-stream,
+.shell.chat .bots-composer {
+  width: min(1040px, calc(100% - 56px));
+  margin-right: auto;
+  margin-left: auto;
+}
+
+.shell.chat .bots-notice {
+  margin-top: 12px;
+}
+
+.shell.chat .bots-stream {
+  padding: 20px 0 12px;
+}
+
+.shell.chat .bots-composer {
+  margin-top: 12px;
+  margin-bottom: 22px;
+  padding: 7px 7px 7px 10px;
+  border-radius: 14px;
+  background: var(--surface);
+}
+
+.shell.chat .chat-main {
+  padding: 28px;
+}
+
+.shell.chat .chat-main .chat-empty {
+  width: min(640px, 100%);
+  padding: 24px;
+  border: 1px solid var(--hairline);
+  border-radius: 12px;
+  background: var(--surface);
+}
+
+.shell.chat .chat-main .chat-empty h3 {
+  font-size: 20px;
+  font-weight: 650;
+  letter-spacing: -0.02em;
+}
+
+@media (max-width: 1080px) {
+  .shell.chat .bots-thread-head {
+    margin: 0 20px;
+  }
+
+  .shell.chat .bots-notice,
+  .shell.chat .bots-stream,
+  .shell.chat .bots-composer {
+    width: calc(100% - 40px);
+  }
+}

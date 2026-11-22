@@ -253,11 +253,11 @@ export default function AccountView({ project, onNotice, onOpenSettings }: Props
                       onSelect: () => void copyText(cloud?.email ?? "", "Email"),
                     },
                     {
-                      label: "Copy user id",
+                      label: "Copy user ID",
                       detail: cloud?.uid ?? "No uid stored",
                       icon: "copy",
                       disabled: !cloud?.uid,
-                      onSelect: () => void copyText(cloud?.uid ?? "", "User id"),
+                      onSelect: () => void copyText(cloud?.uid ?? "", "User ID"),
                     },
                     {
                       label: "Copy Firebase project",
@@ -315,7 +315,7 @@ export default function AccountView({ project, onNotice, onOpenSettings }: Props
             {cloud === null
               ? "Reading cloud.json and the OS keychain…"
               : !configured
-                ? "No Firebase project yet. Settings → Cloud holds the project id and web API key; the key is public by design, and Firestore rules keep one account's data out of another's."
+                ? "No Firebase project yet. Settings → Cloud holds the project ID and web API key; the key is public by design, and Firestore rules keep one account's data out of another's."
                 : !signedIn
                   ? "The project is configured; no account is signed in on this machine. The sign-in form is in Settings → Cloud."
                   : "The refresh token lives in the OS keychain. The bearer token is minted on demand and never reaches this window."}
@@ -329,7 +329,7 @@ export default function AccountView({ project, onNotice, onOpenSettings }: Props
               </div>
             </div>
             <div className="settings-field">
-              <span>User id</span>
+              <span>User ID</span>
               <div className="settings-field-row">
                 <code>{cloud?.uid ?? "—"}</code>
               </div>

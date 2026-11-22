@@ -357,8 +357,8 @@ export default function NetworkPolicyEditor({
               <div className="cap-form">
                 <input
                   value={sessionInput}
-                  aria-label="Session id to disable"
-                  placeholder="session id"
+                  aria-label="Session ID to disable"
+                  placeholder="Session ID"
                   onChange={(event) => setSessionInput(event.target.value)}
                 />
                 <button

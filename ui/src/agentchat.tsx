@@ -84,7 +84,7 @@ function mentions(text: string, name: string): boolean {
 /** The one line under a bot's name: what it is, what it is doing, and who owns it. */
 function statusOf(agent: AgentChatAgent, owned?: AgentChatProcess): string {
   const state = agent.available ? (agent.busy ? "working" : "online") : owned ? "starting" : "offline";
-  return [agent.role, state, owned ? `pid ${owned.pid}` : null].filter(Boolean).join(" · ");
+  return [agent.role, state, owned ? `PID ${owned.pid}` : null].filter(Boolean).join(" · ");
 }
 
 /** The last path segment, which is what a person calls the folder. */
@@ -366,11 +366,11 @@ export default function ChatView({
   if (status && !status.running) {
     return (
       <>
-        <aside className="list-pane">
+        <aside className="list-pane shelf-nav chat-nav">
           <div className="list-head">
             <div className="list-title">
               <h1>Chat</h1>
-              <span>P6</span>
+              <span>Room</span>
             </div>
           </div>
         </aside>
@@ -423,11 +423,11 @@ export default function ChatView({
   if (status && status.running && !status.authed) {
     return (
       <>
-        <aside className="list-pane">
+        <aside className="list-pane shelf-nav chat-nav">
           <div className="list-head">
             <div className="list-title">
               <h1>Chat</h1>
-              <span>P6</span>
+              <span>Room</span>
             </div>
           </div>
         </aside>
@@ -570,7 +570,7 @@ export default function ChatView({
             owned
               ? {
                   label: "Stop this bot",
-                  detail: `pid ${owned.pid}`,
+                  detail: `PID ${owned.pid}`,
                   icon: "stop",
                   danger: true,
                   disabled: busyAgent !== null,
@@ -592,8 +592,12 @@ export default function ChatView({
 
   return (
     <>
-      <aside className="list-pane bots-pane" aria-label="Bots">
+      <aside className="list-pane shelf-nav bots-pane" aria-label="Bots">
         <div className="bots-side-head">
+          <div className="list-title chat-title">
+            <h1>Chat</h1>
+            <span>{online} online</span>
+          </div>
           <div className="bots-project">
             <span className="bots-project-mark" aria-hidden>
               {initial(projectName(project))}
@@ -601,7 +605,7 @@ export default function ChatView({
             <div className="bots-project-text">
               <strong title={project}>{projectName(project)}</strong>
               <span>
-                {online} online · {presence.length} bot{presence.length === 1 ? "" : "s"}
+                {presence.length} bot{presence.length === 1 ? "" : "s"} configured
               </span>
             </div>
             <button
@@ -639,7 +643,7 @@ export default function ChatView({
         </div>
 
         <div className="bots-group">
-          <span>Bots</span>
+          <span>Online</span>
           <span>{bots.length}</span>
         </div>
 
@@ -672,6 +676,7 @@ export default function ChatView({
             );
           })}
 
+          {startable.length > 0 ? <p className="bots-group-label">Available</p> : null}
           {startable.map((harness) => (
             <button
               key={harness.name}
@@ -692,6 +697,7 @@ export default function ChatView({
             </button>
           ))}
 
+          {blocked.length > 0 ? <p className="bots-group-label">Needs setup</p> : null}
           {blocked.map((harness) => (
             <button
               key={harness.name}
@@ -792,6 +798,7 @@ export default function ChatView({
             {focus ? initial(focusedLabel) : "#"}
           </span>
           <div className="bots-head-text">
+            <p className="eyebrow">Chat room</p>
             <h2>{title}</h2>
             <p>{subtitle}</p>
           </div>
@@ -931,10 +938,10 @@ export default function ChatView({
                               onSelect: () => setFocus(message.sender),
                             },
                             {
-                              label: "Copy message id",
+                              label: "Copy message ID",
                               detail: `#${message.id}`,
                               icon: "copy",
-                              onSelect: () => void copyText(String(message.id), "Message id"),
+                              onSelect: () => void copyText(String(message.id), "Message ID"),
                             },
                           ],
                         },
