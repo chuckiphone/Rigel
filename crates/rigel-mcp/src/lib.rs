@@ -18,6 +18,7 @@ pub mod project_mcp;
 use async_trait::async_trait;
 use rigel_core::agent::approval::{ApprovalBus, ApprovalScope, PendingApproval};
 use rigel_core::budget::BudgetService;
+use rigel_core::mcp::pin::{Catalog, PinObservation, PinStore, SchemaDiff};
 use rigel_core::memory::{MemoryApprover, MemoryDecision, MemoryRequest, MemoryService, WriteMode};
 use rigel_core::patches::{PatchError, PatchPipeline};
 use rigel_core::{ClaimService, Scopes};
@@ -110,7 +111,9 @@ pub struct McpContext {
     pub turn_id: Option<String>,
     /// Q242: real `tools/list` results read before the first project-tool question. The cache
     /// is per MCP process, so an approved server is not launched again for every call.
-    pub tool_lists: Arc<tokio::sync::Mutex<HashMap<String, Vec<Value>>>>,
+    pub tool_lists: Arc<tokio::sync::Mutex<HashMap<String, Catalog>>>,
+    /// Roadmap 68: the accepted version, catalogue hash and per-tool schemas.
+    pub pins: PinStore,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -653,29 +656,23 @@ async fn approve_project_tool(
 
     let mut server_scope = scopes.granted(&server_key);
     let mut tool_scope = scopes.granted(&tool_key);
-    let mut tools = ctx
-        .tool_lists
-        .lock()
-        .await
-        .get(&server.name)
-        .cloned()
-        .unwrap_or_default();
+    let mut catalog = ctx.tool_lists.lock().await.get(&server.name).cloned();
 
     // Listing is the one launch before consent. It is bounded, uses only the declared local
     // command, and is skipped when the process already read this server's list.
-    if tools.is_empty() {
-        match project_mcp::list_tools(
+    if catalog.is_none() {
+        match project_mcp::list_catalog(
             &server,
             ctx.approval_wait.min(std::time::Duration::from_secs(15)),
         )
         .await
         {
             Ok(list) => {
-                tools = list;
+                catalog = Some(list.clone());
                 ctx.tool_lists
                     .lock()
                     .await
-                    .insert(server.name.clone(), tools.clone());
+                    .insert(server.name.clone(), list);
             }
             Err(error) => {
                 record_mcp_decision(
@@ -701,6 +698,8 @@ async fn approve_project_tool(
         }
     }
 
+    let catalog = catalog.unwrap_or_else(|| Catalog::new("unknown", Vec::new()).unwrap());
+    let tools = &catalog.tools;
     let tool_info = tools
         .iter()
         .find(|entry| entry.get("name").and_then(Value::as_str) == Some(tool))
@@ -718,7 +717,7 @@ async fn approve_project_tool(
             tool,
             "deny",
             None,
-            &tools,
+            tools,
             Some(&message),
         )
         .await;
@@ -732,6 +731,127 @@ async fn approve_project_tool(
     }
 
     let bus = ApprovalBus::new(&ctx.index_dir);
+
+    // Roadmap 68: the server's declaration is not a pin. A changed or added tool stays blocked
+    // until the schema card is accepted. First use records the pin without a card; a
+    // version-only or removal-only change has nothing to call, so it can be pinned directly.
+    let mut schema_diff: Option<SchemaDiff> = None;
+    match ctx.pins.observe(&server.name, &catalog) {
+        Err(error) => {
+            let message = format!(
+                "the MCP pin for {} could not be read, so nothing ran: {error}",
+                server.name
+            );
+            record_mcp_decision(
+                ctx,
+                service,
+                tool_name,
+                &server,
+                tool,
+                "deny",
+                None,
+                tools,
+                Some(&message),
+            )
+            .await;
+            return Ok(json!({
+                "behavior": "deny",
+                "code": "MCP_PIN_INVALID",
+                "server": server.name,
+                "tool": tool,
+                "message": message,
+            }));
+        }
+        Ok(PinObservation::FirstUse) => {
+            if let Err(error) = ctx.pins.accept(&server.name, &catalog) {
+                return pin_write_failure(ctx, service, &server, tool, tool_name, tools, error)
+                    .await;
+            }
+        }
+        Ok(PinObservation::Unchanged) => {}
+        Ok(PinObservation::Changed(diff)) if diff.blocked_tools.is_empty() => {
+            if let Err(error) = ctx.pins.accept(&server.name, &catalog) {
+                return pin_write_failure(ctx, service, &server, tool, tool_name, tools, error)
+                    .await;
+            }
+        }
+        Ok(PinObservation::Changed(diff)) if diff.blocks(tool) => schema_diff = Some(*diff),
+        Ok(PinObservation::Changed(_)) => {}
+    }
+
+    if let Some(diff) = schema_diff {
+        let key = format!("mcp-schema:{}:{}", server.name, diff.hash_after);
+        let pending = PendingApproval::now(
+            "mcp_schema",
+            &key,
+            format!("accept changed MCP schema: {tool} on {}", server.name),
+        )
+        .in_project(&ctx.project_root)
+        .in_session(&ctx.session_id, &ctx.agent_id)
+        .with_detail(json!({
+            "server": server.name,
+            "server_version_before": diff.server_version_before,
+            "server_version_after": diff.server_version_after,
+            "hash_before": diff.hash_before,
+            "hash_after": diff.hash_after,
+            "tool": tool,
+            "schema_diff": &diff,
+            "tools": tools,
+            "note": "This server's tools/list changed. Added and changed tools stay blocked until this card is accepted. Project and Always update .rigel/mcp-pins.json; This session accepts this catalogue for this MCP process only; Allow once accepts it for this call.",
+        }));
+        match bus.ask(pending, ctx.approval_wait).await {
+            Ok(scope) => {
+                let accepted = match scope {
+                    ApprovalScope::Project | ApprovalScope::Always => {
+                        ctx.pins.accept(&server.name, &catalog).map(|_| ())
+                    }
+                    ApprovalScope::Session => ctx.pins.accept_for_session(&server.name, &catalog),
+                    ApprovalScope::Once => Ok(()),
+                };
+                if let Err(error) = accepted {
+                    return pin_write_failure(ctx, service, &server, tool, tool_name, tools, error)
+                        .await;
+                }
+                record_mcp_schema_decision(
+                    ctx,
+                    service,
+                    tool_name,
+                    &server,
+                    tool,
+                    "allow",
+                    Some(scope),
+                    tools,
+                    &diff,
+                    None,
+                )
+                .await;
+            }
+            Err(_) => {
+                let message = "the user did not accept the changed MCP schema; nothing ran";
+                record_mcp_schema_decision(
+                    ctx,
+                    service,
+                    tool_name,
+                    &server,
+                    tool,
+                    "deny",
+                    None,
+                    tools,
+                    &diff,
+                    Some(message),
+                )
+                .await;
+                return Ok(json!({
+                    "behavior": "deny",
+                    "code": "MCP_SCHEMA_DENIED",
+                    "server": server.name,
+                    "tool": tool,
+                    "message": message,
+                }));
+            }
+        }
+    }
+
     if server_scope.is_none() {
         let pending = PendingApproval::now(
             "mcp_server",
@@ -763,7 +883,7 @@ async fn approve_project_tool(
                     tool,
                     "deny",
                     None,
-                    &tools,
+                    tools,
                     Some("the user did not approve starting this MCP server"),
                 )
                 .await;
@@ -812,7 +932,7 @@ async fn approve_project_tool(
                     tool,
                     "deny",
                     None,
-                    &tools,
+                    tools,
                     Some("the user did not approve this MCP tool"),
                 )
                 .await;
@@ -836,7 +956,7 @@ async fn approve_project_tool(
         tool,
         "allow",
         Some(scope),
-        &tools,
+        tools,
         None,
     )
     .await;
@@ -848,6 +968,80 @@ async fn approve_project_tool(
         "tool": tool,
         "tools": tools.iter().filter_map(|entry| entry.get("name").cloned()).collect::<Vec<_>>(),
     }))
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn pin_write_failure(
+    ctx: &McpContext,
+    service: &SessionService,
+    server: &project_mcp::ServerSpec,
+    tool: &str,
+    tool_name: &str,
+    tools: &[Value],
+    error: rigel_core::mcp::pin::PinError,
+) -> Result<Value, Value> {
+    let message = format!(
+        "the MCP pin for {} could not be written, so nothing ran: {error}",
+        server.name
+    );
+    record_mcp_decision(
+        ctx,
+        service,
+        tool_name,
+        server,
+        tool,
+        "deny",
+        None,
+        tools,
+        Some(&message),
+    )
+    .await;
+    Ok(json!({
+        "behavior": "deny",
+        "code": "MCP_PIN_WRITE",
+        "server": server.name,
+        "tool": tool,
+        "message": message,
+    }))
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn record_mcp_schema_decision(
+    ctx: &McpContext,
+    service: &SessionService,
+    tool_name: &str,
+    server: &project_mcp::ServerSpec,
+    tool: &str,
+    decision: &str,
+    scope: Option<ApprovalScope>,
+    tools: &[Value],
+    diff: &SchemaDiff,
+    reason: Option<&str>,
+) {
+    let body = json!({
+        "tool": tool_name,
+        "server": server.name,
+        "mcp_tool": tool,
+        "decision": decision,
+        "scope": scope.map(ApprovalScope::as_str),
+        "tools": tools.iter().filter_map(|entry| entry.get("name").cloned()).collect::<Vec<_>>(),
+        "schema_diff": diff,
+        "reason": reason,
+        "gate": "R68",
+    });
+    match &ctx.turn_id {
+        Some(turn) => {
+            let status = if decision == "allow" { "ok" } else { "denied" };
+            let _ = service
+                .append_item(turn, "approval", status, &body, &body)
+                .await;
+        }
+        None => {
+            let _ = service
+                .record_intervention(&ctx.session_id, "mcp_approval", body)
+                .await;
+        }
+    }
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1048,6 +1242,7 @@ mod tests {
             approval_wait: std::time::Duration::from_millis(150),
             turn_id: None,
             tool_lists: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
+            pins: PinStore::new(tmp.path()),
         };
         (tmp, ctx)
     }

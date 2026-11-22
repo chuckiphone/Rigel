@@ -17,7 +17,6 @@ export type PaletteAction =
   | "session"
   | "chat"
   | "diff"
-  | "terminal"
   | "account"
   | "settings"
   | "focus";
@@ -36,7 +35,6 @@ const ACTIONS: Action[] = [
   { id: "session", label: "Session", detail: "Transcript, agents and composer" },
   { id: "chat", label: "Chat", detail: "The agent room" },
   { id: "diff", label: "Diff", detail: "Claims, patches and merges" },
-  { id: "terminal", label: "Terminal", detail: "A shell in the project" },
   { id: "account", label: "Account", detail: "Identity, verification and session sync" },
   { id: "settings", label: "Settings", detail: "Providers, safety, appearance" },
 ];
@@ -224,9 +222,11 @@ export default function Palette({
         kind: "turn",
         key: `turn:${turn.turn_id}`,
         title: turn.snippet || turn.prompt || `Turn ${turn.seq}`,
-        subtitle: turn.from_item
-          ? `from a tool result · ${turn.role || turn.harness}`
-          : `you asked · ${turn.role || turn.harness}`,
+        subtitle: turn.from_summary
+          ? `from the turn summary · ${turn.role || turn.harness}`
+          : turn.from_item
+            ? `from a tool result · ${turn.role || turn.harness}`
+            : `you asked · ${turn.role || turn.harness}`,
         meta: `turn ${turn.seq} · ${when(turn.created_at)}`,
         sessionId: turn.session_id,
         turnId: turn.turn_id,

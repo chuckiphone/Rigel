@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 
 import { api, isTauri, type McpServer } from "./api";
 
-export type ShelfKind = "skills" | "mcps";
+export type ShelfKind = "skills" | "mcps" | "plugins";
 
 export function ShelfTabs({
   kind,
@@ -30,6 +30,15 @@ export function ShelfTabs({
         onClick={() => onKind("mcps")}
       >
         MCPs
+      </button>
+      <button
+        type="button"
+        role="tab"
+        aria-selected={kind === "plugins"}
+        className={kind === "plugins" ? "on" : ""}
+        onClick={() => onKind("plugins")}
+      >
+        Plugins
       </button>
     </div>
   );

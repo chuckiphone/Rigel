@@ -126,6 +126,73 @@ async fn a_session_can_be_renamed_pinned_and_archived() {
     ));
 }
 
+/// Roadmap 56: a name is either the user's or the cheap model's, never both. The first automatic
+/// title sticks; a manual name refuses every later one; clearing the manual name opens the door
+/// again. The source travels with the row so a restarted window agrees.
+#[tokio::test]
+async fn only_an_untitled_session_accepts_an_automatic_title() {
+    let tmp = TempDir::new().unwrap();
+    let service = SessionService::open(tmp.path()).await.unwrap();
+
+    let manual = service.start(Some("mine"), None).await.unwrap();
+    assert_eq!(manual.title_source.as_deref(), Some("manual"));
+    assert!(
+        service
+            .apply_auto_title(&manual.id, "theirs")
+            .await
+            .unwrap()
+            .is_none()
+    );
+    assert_eq!(
+        service.get(&manual.id).await.unwrap().title.as_deref(),
+        Some("mine")
+    );
+
+    let open = service.start(None, None).await.unwrap();
+    assert_eq!(open.title_source, None);
+    let titled = service
+        .apply_auto_title(&open.id, "  Speed up the parser.  ")
+        .await
+        .unwrap()
+        .expect("an untitled session accepts the first automatic title");
+    assert_eq!(titled.title.as_deref(), Some("Speed up the parser"));
+    assert_eq!(titled.title_source.as_deref(), Some("auto"));
+
+    assert!(
+        service
+            .apply_auto_title(&open.id, "a second name")
+            .await
+            .unwrap()
+            .is_none(),
+        "an automatic title does not replace another automatic title"
+    );
+
+    let cleared = service.rename(&manual.id, None).await.unwrap();
+    assert_eq!(cleared.title, None);
+    assert_eq!(cleared.title_source, None);
+    let adopted = service
+        .apply_auto_title(&manual.id, "now automatic")
+        .await
+        .unwrap()
+        .expect("clearing the manual name lets the automatic title take over");
+    assert_eq!(adopted.title_source.as_deref(), Some("auto"));
+
+    let reopened = SessionService::open(tmp.path()).await.unwrap();
+    assert_eq!(
+        reopened
+            .get(&open.id)
+            .await
+            .unwrap()
+            .title_source
+            .as_deref(),
+        Some("auto")
+    );
+    assert!(matches!(
+        reopened.apply_auto_title("missing", "x").await,
+        Err(SessionError::SessionNotFound(_))
+    ));
+}
+
 /// D150: a star is a toggle over one target per session, and the label is a single line the
 /// inspector can draw without joining the item it names.
 #[tokio::test]

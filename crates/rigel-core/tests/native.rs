@@ -718,6 +718,7 @@ impl Model for SubagentScriptModel {
                 on_delta(Delta::Usage(RawUsage {
                     input_tokens: 50,
                     cached_input_tokens: 0,
+                    cache_write_input_tokens: 0,
                     output_tokens: 10,
                     reasoning_tokens: 0,
                     cost_usd: Some(0.0003),
@@ -735,6 +736,7 @@ impl Model for SubagentScriptModel {
             on_delta(Delta::Usage(RawUsage {
                 input_tokens: 50,
                 cached_input_tokens: 0,
+                cache_write_input_tokens: 0,
                 output_tokens: 10,
                 reasoning_tokens: 0,
                 cost_usd: Some(0.0003),
@@ -762,6 +764,7 @@ impl Model for SubagentScriptModel {
             on_delta(Delta::Usage(RawUsage {
                 input_tokens: 100,
                 cached_input_tokens: 0,
+                cache_write_input_tokens: 0,
                 output_tokens: 20,
                 reasoning_tokens: 0,
                 cost_usd: Some(0.0004),
@@ -781,6 +784,7 @@ impl Model for SubagentScriptModel {
             on_delta(Delta::Usage(RawUsage {
                 input_tokens: 80,
                 cached_input_tokens: 0,
+                cache_write_input_tokens: 0,
                 output_tokens: 20,
                 reasoning_tokens: 0,
                 cost_usd: Some(0.0001),
@@ -2368,6 +2372,7 @@ impl Model for HangingModel {
         on_delta(Delta::Usage(RawUsage {
             input_tokens: 100,
             cached_input_tokens: 0,
+            cache_write_input_tokens: 0,
             output_tokens: 20,
             reasoning_tokens: 0,
             cost_usd: Some(0.0002),
@@ -2703,11 +2708,92 @@ async fn usage_rows_carry_step_wall_and_queue_time() {
     assert!(usage.body["duration_ms"].is_u64());
     assert!(usage.body["queue_ms"].is_u64());
     assert!(usage.body["cost_micros"].as_i64().unwrap() > 0);
+    assert!(
+        usage.body.get("cache").is_none(),
+        "a provider that reported no cache activity gets no cache claim"
+    );
     let exported = serde_json::to_value(usage).unwrap();
     assert_eq!(
         exported["body"], usage.body,
         "export carries the same step numbers"
     );
+}
+
+struct CachedModel;
+
+#[async_trait]
+impl Model for CachedModel {
+    fn id(&self) -> String {
+        "cached-script".to_string()
+    }
+
+    async fn chat(
+        &self,
+        _request: ChatRequest,
+        _cancel: &CancellationToken,
+        on_delta: &mut DeltaSink<'_>,
+    ) -> Result<(), ModelError> {
+        on_delta(Delta::Text("a cached answer\n".to_string()));
+        on_delta(Delta::Usage(RawUsage {
+            input_tokens: 2_000,
+            cached_input_tokens: 1_500,
+            cache_write_input_tokens: 400,
+            output_tokens: 100,
+            reasoning_tokens: 0,
+            cost_usd: None,
+            served_model: None,
+        }));
+        on_delta(Delta::Finish("stop".to_string()));
+        Ok(())
+    }
+}
+
+#[tokio::test]
+async fn a_usage_row_shows_reported_cache_reads_and_writes_and_only_a_reported_saving() {
+    let tmp = repo();
+    let service = SessionService::open(tmp.path()).await.unwrap();
+    let session = service.start(Some("cache"), Some(25)).await.unwrap();
+    let agent = service
+        .register_agent(&session.id, "native", Some("worker"))
+        .await
+        .unwrap();
+
+    let mut coordinator = coordinator_with_model(
+        tmp.path(),
+        &service,
+        Arc::new(CachedModel),
+        StopAt::Never,
+        3,
+    );
+    // A published row lets the row price the discount; GPT-5.4 mini caches at one tenth.
+    coordinator.model_name = "openai/gpt-5.4-mini".to_string();
+    let run = coordinator
+        .run(&session.id, &agent.id, "cache this prefix")
+        .await
+        .unwrap();
+
+    let items = service.items(&run.turn.id).await.unwrap();
+    let usage = items
+        .iter()
+        .find(|item| item.kind == "usage")
+        .expect("a usage row");
+    assert_eq!(usage.body["cached_input_tokens"], 1_500);
+    assert_eq!(usage.body["cache_write_tokens"], 400);
+    assert_eq!(usage.body["cache"]["read_tokens"], 1_500);
+    assert_eq!(usage.body["cache"]["write_tokens"], 400);
+    // 1,500 reads × ($0.75 − $0.075)/M = 1,012.5 µ$, rounded once.
+    assert_eq!(usage.body["cache"]["saved_micros"], 1_013);
+    assert_eq!(usage.body["cache"]["saving"], "estimated");
+
+    // The same numbers are what the turn stores, so the export and the transcript agree.
+    let stored = service
+        .turn(&run.turn.id)
+        .await
+        .unwrap()
+        .usage
+        .expect("the turn keeps its usage");
+    assert_eq!(stored.cached_input_tokens, 1_500);
+    assert_eq!(stored.cache_write_tokens, 400);
 }
 
 #[derive(Default)]

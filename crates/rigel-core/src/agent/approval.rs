@@ -566,6 +566,22 @@ impl ApprovalBus {
         Ok(())
     }
 
+    /// Deny every question a stopped turn left open. A card nobody answers holds the turn for
+    /// the full ten minutes, which makes Stop look broken; the caller cancels the token too, so
+    /// the turn closes at the next boundary. Returns the ids that were removed.
+    pub fn deny_pending_for_turn(&self, turn_id: &str) -> Vec<String> {
+        let ids = self
+            .pending()
+            .into_iter()
+            .filter(|pending| pending.turn_id.as_deref() == Some(turn_id))
+            .map(|pending| pending.id)
+            .collect::<Vec<_>>();
+        for id in &ids {
+            let _ = self.answer_with(id, None, false, Some("turn stopped".to_string()));
+        }
+        ids
+    }
+
     fn record_denial(&self, pending: &PendingApproval, reason: &str) {
         let dir = self.denied_dir();
         let _ = std::fs::create_dir_all(&dir);
@@ -884,6 +900,53 @@ mod tests {
             tokio::time::sleep(std::time::Duration::from_millis(20)).await;
         }
         bus.answer(&open[0].id, None).unwrap();
+        assert!(handle.await.unwrap().is_err());
+    }
+
+    #[tokio::test]
+    async fn stopping_a_turn_denies_its_question_without_touching_another_turn() {
+        let dir = tempfile::tempdir().unwrap();
+        let bus = ApprovalBus::new(dir.path());
+        let stopped = PendingApproval::now("command", "command:cargo test", "cargo test")
+            .on_turn("turn-stopped");
+        let waiting = PendingApproval::now("command", "command:cargo build", "cargo build")
+            .on_turn("turn-waiting");
+        bus.publish(&stopped).unwrap();
+        bus.publish(&waiting).unwrap();
+
+        let denied = bus.deny_pending_for_turn("turn-stopped");
+        assert_eq!(denied, vec![stopped.id.clone()]);
+        let open = bus.pending();
+        assert_eq!(open.len(), 1);
+        assert_eq!(open[0].turn_id.as_deref(), Some("turn-waiting"));
+        assert!(
+            bus.pending()
+                .iter()
+                .all(|pending| pending.turn_id.as_deref() != Some("turn-stopped"))
+        );
+
+        // The waiter sees the answer and returns a refusal, not a scope.
+        let asker = bus.clone();
+        let handle = tokio::spawn(async move {
+            asker
+                .ask(
+                    PendingApproval::now("command", "command:rm -rf build", "rm -rf build")
+                        .on_turn("turn-stopped"),
+                    std::time::Duration::from_secs(5),
+                )
+                .await
+        });
+        for _ in 0..50 {
+            let live = bus.pending();
+            if live.iter().any(|pending| {
+                pending.turn_id.as_deref() == Some("turn-stopped")
+                    && pending.title == "rm -rf build"
+            }) {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        }
+        assert!(!bus.deny_pending_for_turn("turn-stopped").is_empty());
         assert!(handle.await.unwrap().is_err());
     }
 

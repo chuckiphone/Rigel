@@ -958,16 +958,17 @@ pre code {
 /* ---------- sponsored slot ---------- */
 
 .sponsor-band {
-  padding-block: clamp(28px, 4vw, 42px);
+  padding-block: 0 clamp(28px, 4vw, 42px);
 }
 
 .sponsor-card {
   display: grid;
-  gap: 4px;
-  max-width: 620px;
-  padding: 0;
-  border: 0;
-  background: transparent;
+  gap: 10px;
+  max-width: 900px;
+  padding: clamp(16px, 2.4vw, 24px);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface);
 }
 
 .sponsor-label {
@@ -980,30 +981,88 @@ pre code {
   text-transform: uppercase;
 }
 
+.sponsor-body {
+  display: grid;
+  grid-template-columns: clamp(112px, 17vw, 168px) minmax(0, 1fr);
+  gap: clamp(18px, 3vw, 30px);
+  align-items: center;
+}
+
+.sponsor-copy {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+}
+
+.sponsor-mark {
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: 100%;
+  aspect-ratio: 1;
+  overflow: hidden;
+  border: 1px solid rgba(233, 162, 59, 0.38);
+  border-radius: 14px;
+  background: rgba(233, 162, 59, 0.1);
+  color: var(--accent-hi);
+  font-family: var(--mono);
+  font-size: clamp(2rem, 4vw, 3rem);
+  font-weight: 600;
+  line-height: 1;
+}
+
+.sponsor-mark[hidden],
+.sponsor-mark img[hidden] {
+  display: none;
+}
+
+.sponsor-mark[data-kind="photo"],
+.sponsor-mark[data-kind="icon"] {
+  border-color: var(--line-hi);
+  background: #f7f4ee;
+}
+
+.sponsor-mark img {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.sponsor-mark[data-kind="icon"] img {
+  inset: 19%;
+  width: 62%;
+  height: 62%;
+  object-fit: contain;
+}
+
 .sponsor-brand {
   margin: 0;
   color: var(--muted);
   font-size: 0.8125rem;
+  font-weight: 500;
 }
 
 .sponsor-title {
   margin: 0;
-  font-size: 1.0625rem;
-  letter-spacing: -0.02em;
-  line-height: 1.4;
+  font-size: clamp(1.25rem, 2.2vw, 1.6rem);
+  letter-spacing: -0.025em;
+  line-height: 1.25;
 }
 
 .sponsor-text {
   margin: 0;
   max-width: 60ch;
   color: var(--muted);
-  font-size: 0.875rem;
+  font-size: 0.9375rem;
+  line-height: 1.6;
 }
 
 .sponsor-card .btn {
   justify-self: start;
   height: auto;
-  margin-top: 2px;
+  margin-top: 4px;
   padding: 0;
   border: 0;
   background: transparent;
@@ -1450,6 +1509,17 @@ body.locked {
 
   .gallery .zoom img {
     aspect-ratio: 16 / 11;
+  }
+
+  .sponsor-body {
+    grid-template-columns: 104px minmax(0, 1fr);
+    gap: 14px;
+    align-items: start;
+  }
+
+  .sponsor-mark {
+    border-radius: 11px;
+    font-size: 1.5rem;
   }
 
   .doc-section table {

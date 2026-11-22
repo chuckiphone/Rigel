@@ -9,12 +9,14 @@
  * drift out of sync, and the same JSON the CLI prints under `--json`.
  */
 
-import { previewApprovals } from "./sessionMock";
+import { previewAgents, previewApprovals, previewMemoryFacts } from "./sessionMock";
 
 export interface Session {
   id: string;
   project_root: string;
   title: string | null;
+  /** Roadmap 56: `manual` names never yield to a later cheap-model title. */
+  title_source?: "manual" | "auto" | null;
   status: "active" | "idle" | "interrupted" | "ended";
   budget_cents: number | null;
   spend_cents: number;
@@ -70,6 +72,7 @@ export interface PaletteTurn {
   prompt: string;
   snippet: string;
   from_item: boolean;
+  from_summary: boolean;
   created_at: number;
 }
 
@@ -138,7 +141,7 @@ export interface Settings {
   quiet_hours_end: string;
   /** Opt-in Gravity sponsored card on Home. Off by default; off means no request. */
   gravity_ads: boolean;
-  /** Test ads: no billing, no metrics, and a sample card when no ad matches. */
+  /** Test ads: no billing and no metrics; they appear only when Gravity returns one. */
   gravity_test_ads: boolean;
 }
 
@@ -208,20 +211,27 @@ export interface ConcordReply {
   result: unknown;
 }
 
-/** A sponsored card from Gravity, as the ad engine returns it. Never contains the API key. */
+/**
+ * A sponsored card from Gravity, as the broker returns it. Never contains the API key; the
+ * advertiser's artwork is optional and only https URLs are rendered.
+ */
 export interface GravityAd {
   adText: string;
   title: string;
   brandName: string;
   cta: string;
   url: string;
-  favicon: string;
-  brandImage: string;
+  /** The advertiser's small mark, preferred over the wider brand image. */
+  favicon?: string;
+  /** A wider brand image, used only when no favicon is present. */
+  brandImage?: string;
   /** The tracked link. `url` is the raw landing page and must not be linked. */
   clickUrl: string;
   impUrl: string;
   placement: string;
   placement_id: string;
+  /** A non-billed test fill; clicking opens `url`, not the test host in `clickUrl`. */
+  test?: boolean;
 }
 
 export interface GravityMessage {
@@ -236,6 +246,11 @@ export interface GravityDevice {
   os: string;
 }
 
+/** A sample mark for `npm run dev`; real fills carry their own https artwork. */
+const PREVIEW_AD_ART = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(
+  '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32"><rect width="32" height="32" rx="7" fill="#16130c"/><path d="M16 6l8 10-8 10-8-10z" fill="#e9a23b"/><path d="M16 11l4 5-4 5-4-5z" fill="#fff7ef"/></svg>',
+)}`;
+
 /** A sample card for `npm run dev`; the real one comes from `gravity_ad`. */
 const PREVIEW_AD: GravityAd = {
   adText: "Serverless Postgres that scales to zero. Start free in a minute.",
@@ -243,12 +258,12 @@ const PREVIEW_AD: GravityAd = {
   brandName: "Sample sponsor",
   cta: "Learn more",
   url: "https://example.com",
-  favicon: "",
-  brandImage: "",
+  favicon: PREVIEW_AD_ART,
   clickUrl: "https://api.trygravity.ai/track/click?p=preview",
   impUrl: "",
   placement: "below_response",
   placement_id: "rigel-sponsor",
+  test: true,
 };
 
 /** The browser preview's stand-in for `settings.toml`; `null` until the first save. */
@@ -522,6 +537,181 @@ export interface RolePreset {
   tools: string[];
 }
 
+/** Roadmap 66: the project ceiling and the effective role/agent grants. */
+export interface PermissionRole {
+  id: string;
+  title: string;
+  requested: string[];
+  effective: string[];
+  blocked_by_project: string[];
+}
+
+export interface PermissionAgent {
+  id: string;
+  role: string | null;
+  role_title: string | null;
+  /** Explicit narrowing below the role; null means the role alone decides. */
+  tool_overrides: string[] | null;
+  effective: string[];
+  /** Tools the role and project would grant, but this agent's override removes. */
+  narrowed_by_override: string[];
+  source: string;
+}
+
+export interface PermissionMatrix {
+  project_grant: string[];
+  all_tools: string[];
+  roles: PermissionRole[];
+  agents: PermissionAgent[];
+}
+
+const PREVIEW_TOOLS = [
+  "read_file",
+  "list_files",
+  "edit_file",
+  "write_file",
+  "skills_search",
+  "skill_load",
+  "budget",
+  "propose_plan",
+  "run_command",
+  "web_search",
+  "web_fetch",
+  "fetch_url",
+  "browser_open",
+  "roblox_studio",
+  "roblox_sound",
+  "email_list",
+  "email_read",
+  "email_send",
+  "email_reply",
+  "spawn_agents",
+  "assign_agents",
+  "merge_subagent",
+  "subagent_results",
+];
+
+const PREVIEW_ROLE_TOOLS: Record<string, string[]> = {
+  implementer: [
+    "read_file",
+    "list_files",
+    "edit_file",
+    "write_file",
+    "run_command",
+    "skills_search",
+    "skill_load",
+    "budget",
+  ],
+  reviewer: ["read_file", "list_files", "run_command", "skills_search", "skill_load", "budget"],
+  tester: ["read_file", "list_files", "run_command", "budget"],
+  researcher: [
+    "read_file",
+    "list_files",
+    "web_search",
+    "web_fetch",
+    "fetch_url",
+    "browser_open",
+    "skills_search",
+    "skill_load",
+    "budget",
+  ],
+};
+
+let previewPermissionGrant = [...PREVIEW_TOOLS];
+const previewPermissionOverrides: Record<string, string[] | null> = {};
+
+/** The browser preview has no project database or Tauri host; keep one matrix in memory. */
+function previewPermissionMatrix(): PermissionMatrix {
+  const project = new Set(previewPermissionGrant);
+  const roles = [
+    ["implementer", "Implementer"],
+    ["reviewer", "Reviewer"],
+    ["tester", "Tester"],
+    ["researcher", "Researcher"],
+  ].map(([id, title]) => {
+    const requested = PREVIEW_ROLE_TOOLS[id];
+    return {
+      id,
+      title,
+      requested,
+      effective: requested.filter((tool) => project.has(tool)),
+      blocked_by_project: requested.filter((tool) => !project.has(tool)),
+    };
+  });
+  const agents = previewAgents.map((agent) => {
+    const role = roles.find((candidate) => candidate.id === agent.role);
+    const requested = role ? role.requested : [...PREVIEW_TOOLS];
+    const overrides = previewPermissionOverrides[agent.id] ?? null;
+    const effective = requested.filter(
+      (tool) => project.has(tool) && (overrides === null || overrides.includes(tool)),
+    );
+    return {
+      id: agent.id,
+      role: agent.role ?? null,
+      role_title: role?.title ?? null,
+      tool_overrides: overrides,
+      effective,
+      narrowed_by_override: requested.filter(
+        (tool) => project.has(tool) && overrides !== null && !overrides.includes(tool),
+      ),
+      source: role
+        ? overrides
+          ? `role preset \`${role.id}\` + per-agent override`
+          : `role preset \`${role.id}\``
+        : overrides
+          ? "per-agent override"
+          : "project grant",
+    };
+  });
+  return {
+    project_grant: [...previewPermissionGrant],
+    all_tools: [...PREVIEW_TOOLS],
+    roles,
+    agents,
+  };
+}
+
+/** Roadmap 61: the ordered rule and its default. */
+export type NetworkAction = "allow" | "deny";
+export type NetworkDefault = "ask" | "deny";
+
+export interface NetworkRule {
+  action: NetworkAction;
+  pattern: string;
+  note?: string | null;
+}
+
+export interface NetworkLimits {
+  window_seconds: number;
+  per_origin_requests: number;
+  per_agent_requests: number;
+  max_response_bytes: number;
+  pin_dns: boolean;
+  allow_private_addresses: boolean;
+}
+
+export interface NetworkPolicy {
+  enabled: boolean;
+  default: NetworkDefault;
+  rules: NetworkRule[];
+  limits: NetworkLimits;
+  /** Legacy exact-origin list; the core converts it to allow rules on save. */
+  allowlist?: string[];
+  disabled_sessions: string[];
+}
+
+export interface NetworkDecision {
+  allowed: boolean;
+  code: string;
+  source: string;
+  reason: string;
+}
+
+export interface NetworkCheck {
+  origin: string;
+  decision: NetworkDecision;
+}
+
 /** D92: one row of the cross-session spend report. `micros` is the canonical unit. */
 export interface SpendRow {
   key: string;
@@ -551,7 +741,13 @@ export interface Agent {
   session_id: string;
   harness: string;
   role: string | null;
+  /** Roadmap 66: an optional per-agent filter below the role. */
+  tool_overrides?: string[] | null;
   model: string | null;
+  /** Roadmap 58: the door that serves `model`, when the roster picked the pair. */
+  provider?: string | null;
+  /** Roadmap 58: the row's own effort; absent falls back to the composer's. */
+  effort?: string | null;
   status: "starting" | "running" | "idle" | "exited" | "failed" | string;
   started_at: number;
   spend_cents: number;
@@ -574,9 +770,43 @@ export interface TeamAgent {
   status: "assigned" | "working" | "done" | "failed" | string;
 }
 
+/** One factor of a memory fact's score (roadmap 55). */
+export interface MemoryFactor {
+  name: "recency" | "use" | "pin" | string;
+  /** 0..1. */
+  value: number;
+  weight: number;
+  /** `value × weight`; the factors sum to the score total. */
+  contribution: number;
+  reason: string;
+}
+
+export interface MemoryScore {
+  total: number;
+  method: string;
+  /** The instant the score was computed, so a decay claim is reproducible. */
+  now: number;
+  factors: MemoryFactor[];
+}
+
+/** One ranked line of committed memory, with the arithmetic that placed it. */
+export interface MemoryFact {
+  id: string;
+  agent_id: string;
+  topic: string;
+  text: string;
+  pinned: boolean;
+  uses: number;
+  last_used_at: number | null;
+  updated_at: number;
+  score: MemoryScore;
+}
+
 export interface Usage {
   input_tokens: number;
   cached_input_tokens: number;
+  /** Tokens the provider wrote into its prompt cache. Anthropic reports this; others send 0. */
+  cache_write_tokens?: number;
   output_tokens: number;
   reasoning_tokens: number;
   /** Micro-dollars. This is the bill; cents are only for display. */
@@ -679,19 +909,6 @@ export interface FreeChoice {
   /** Antigravity's model id, or the deterministic benchmark fallback. */
   brain: string;
   attempts: FreeAttempt[];
-}
-
-export interface TerminalInfo {
-  id: string;
-  shell: string;
-  cwd: string;
-}
-
-/** One chunk from the PTY, base64 so escape sequences and raw bytes survive the event. */
-export interface TerminalOutput {
-  id: string;
-  data: string;
-  exit: boolean;
 }
 
 /** Q268: one explicit local test run. `output` is already bounded by Rust. */
@@ -1439,6 +1656,9 @@ export interface HarnessInfo {
     programmatic_approval: boolean;
     worktree: boolean;
     nested_agents: boolean;
+    usage: boolean;
+    resume: "wired" | "vendor-only" | "unsupported";
+    tools: boolean;
   };
   provider: string | null;
   install_hint: string | null;
@@ -1452,7 +1672,7 @@ const PREVIEW_HARNESSES: HarnessInfo[] = [
     version: "0.162.1",
     path: "C:\\Program Files\\Codex\\codex.exe",
     auth_mode: "api_key",
-    capabilities: { acp: false, json_stream: true, programmatic_approval: true, worktree: true, nested_agents: false },
+    capabilities: { acp: false, json_stream: true, programmatic_approval: true, worktree: true, nested_agents: false, usage: true, resume: "vendor-only", tools: true },
     provider: "omniroute",
     install_hint: null,
   },
@@ -1462,7 +1682,7 @@ const PREVIEW_HARNESSES: HarnessInfo[] = [
     version: "2.1.251",
     path: "C:\\Users\\you\\.local\\bin\\claude.exe",
     auth_mode: "api_key",
-    capabilities: { acp: false, json_stream: true, programmatic_approval: true, worktree: false, nested_agents: true },
+    capabilities: { acp: false, json_stream: true, programmatic_approval: true, worktree: false, nested_agents: true, usage: true, resume: "vendor-only", tools: true },
     provider: "anthropic",
     install_hint: null,
   },
@@ -1472,7 +1692,7 @@ const PREVIEW_HARNESSES: HarnessInfo[] = [
     version: null,
     path: null,
     auth_mode: "none",
-    capabilities: { acp: false, json_stream: true, programmatic_approval: false, worktree: false, nested_agents: false },
+    capabilities: { acp: false, json_stream: true, programmatic_approval: false, worktree: false, nested_agents: false, usage: false, resume: "unsupported", tools: true },
     provider: "meta",
     install_hint: "powershell -NoProfile -Command \"irm https://dev.meta.ai/install.ps1 | iex\"",
   },
@@ -1482,7 +1702,7 @@ const PREVIEW_HARNESSES: HarnessInfo[] = [
     version: null,
     path: null,
     auth_mode: "none",
-    capabilities: { acp: true, json_stream: true, programmatic_approval: true, worktree: true, nested_agents: false },
+    capabilities: { acp: true, json_stream: true, programmatic_approval: true, worktree: true, nested_agents: false, usage: true, resume: "unsupported", tools: true },
     provider: "cursor",
     install_hint: "powershell -NoProfile -Command \"irm 'https://cursor.com/install?win32=true' | iex\"",
   },
@@ -1492,7 +1712,7 @@ const PREVIEW_HARNESSES: HarnessInfo[] = [
     version: null,
     path: null,
     auth_mode: "none",
-    capabilities: { acp: true, json_stream: true, programmatic_approval: true, worktree: true, nested_agents: false },
+    capabilities: { acp: true, json_stream: true, programmatic_approval: true, worktree: true, nested_agents: false, usage: true, resume: "unsupported", tools: true },
     provider: null,
     install_hint: "npm install -g cline",
   },
@@ -1502,7 +1722,7 @@ const PREVIEW_HARNESSES: HarnessInfo[] = [
     version: null,
     path: null,
     auth_mode: "none",
-    capabilities: { acp: true, json_stream: true, programmatic_approval: true, worktree: false, nested_agents: false },
+    capabilities: { acp: true, json_stream: true, programmatic_approval: true, worktree: false, nested_agents: false, usage: true, resume: "unsupported", tools: true },
     provider: "gemini",
     install_hint: "npm install -g @google/gemini-cli",
   },
@@ -1656,6 +1876,56 @@ export interface SourceStatus {
   state: "ok" | "stale" | "broken";
   last_sync_at: number | null;
   error: string | null;
+}
+
+/** One curated marketplace listing: a built-in skill or an installable plugin. */
+export interface PluginCatalogEntry {
+  name: string;
+  title: string;
+  kind: "skill" | "plugin" | "external";
+  tier: "official" | "verified" | "community";
+  category: string;
+  description: string;
+  license: string | null;
+  homepage: string | null;
+  /** Publisher named by an external marketplace listing. */
+  author: string | null;
+  /** Upstream plugin version, when the listing names one. */
+  version: string | null;
+  /** Where an external listing came from, e.g. `claude-plugins-official`. */
+  source: string | null;
+  repo: string | null;
+  sha: string | null;
+  subdir: string | null;
+  bundled: string | null;
+  capabilities: string[];
+  skills: string[];
+  install: string | null;
+  note: string | null;
+}
+
+export interface PluginCatalog {
+  entries: PluginCatalogEntry[];
+  categories: string[];
+  updated: string;
+}
+
+export interface PluginRow {
+  name: string;
+  version: string;
+  description: string;
+  enabled: boolean;
+  tools: string[];
+  capabilities: string[];
+  source: string | null;
+  license: string | null;
+  installed_at: number | null;
+}
+
+export interface PluginsState {
+  plugins: PluginRow[];
+  broken: { name: string; error: string }[];
+  enabled_tools: string[];
 }
 
 export interface IngestReport {
@@ -1813,6 +2083,22 @@ export interface WritableDiffView {
   diff: string;
 }
 
+/** One live per-path write lane (roadmap 46). */
+export interface MergeQueueEntry {
+  path: string;
+  writer_id: string;
+  /** The writer holding this path while this ticket waits, or the holder itself. */
+  holder_id: string;
+  state: "writing" | "waiting";
+  /** One-based for a waiter; zero for the holder. */
+  position: number;
+  since: number;
+}
+
+export interface MergeQueueView {
+  entries: MergeQueueEntry[];
+}
+
 /** One file's outcome from a merge, as the CAS pipeline reported it. */
 export interface MergeLineView {
   path: string;
@@ -1854,6 +2140,36 @@ export interface ConflictSides {
   note?: string;
   merged_patch_id?: string;
   merged_hash?: string;
+  /** The stored guided-merge verdict, once one has been written. */
+  verdict?: ConflictVerdict | null;
+}
+
+/** One conflict block as the three versions a reviewer decides between. */
+export interface ConflictHunk {
+  base: string;
+  ours: string;
+  theirs: string;
+}
+
+export interface ConflictHunkDecision {
+  index: number;
+  choice: "ours" | "theirs" | "edited";
+}
+
+/** The reviewer's answer, sent with the merged text. */
+export interface ConflictVerdictInput {
+  reviewer: string;
+  decisions: ConflictHunkDecision[];
+  test_hint: string;
+  tests_acknowledged: boolean;
+}
+
+/** The verdict stored beside the conflict after the write. */
+export interface ConflictVerdict extends ConflictVerdictInput {
+  verdict: "accepted";
+  hunks: number;
+  merged_hash: string;
+  created_at: number;
 }
 
 /** The merge text, before anything is written. */
@@ -1863,12 +2179,15 @@ export interface MergedConflict {
   merged: string;
   conflicts: number;
   clean: boolean;
+  /** The base, ours and theirs text for each conflict block, in order. */
+  hunks: ConflictHunk[];
 }
 
 export interface MergeResolution {
   path: string;
   patch: Patch | null;
   unchanged: boolean;
+  verdict: ConflictVerdict;
 }
 
 export const isTauri = (): boolean =>
@@ -2328,6 +2647,45 @@ export const api = {
     return call<SubagentGraph[]>("subagent_graph", { project, session });
   },
 
+  /** Roadmap 66: the project ceiling and the effective role/agent grants. */
+  async permissionsGet(project: string, session: string | null): Promise<PermissionMatrix> {
+    if (!isTauri()) return previewPermissionMatrix();
+    return call<PermissionMatrix>("permissions_get", { project, session });
+  },
+
+  /** Roadmap 66: save the project grant; a role never gains a tool back. */
+  async permissionsSet(
+    project: string,
+    session: string | null,
+    tools: string[],
+  ): Promise<PermissionMatrix> {
+    if (!isTauri()) {
+      previewPermissionGrant = [...tools];
+      return previewPermissionMatrix();
+    }
+    return call<PermissionMatrix>("permissions_set", { project, session, tools });
+  },
+
+  /** Roadmap 66: narrow one agent below its role; `null` clears the override. */
+  async permissionsSetAgent(
+    project: string,
+    session: string,
+    agent: string,
+    tools: string[] | null,
+  ): Promise<PermissionMatrix> {
+    if (!isTauri()) {
+      if (tools === null) delete previewPermissionOverrides[agent];
+      else previewPermissionOverrides[agent] = [...tools];
+      return previewPermissionMatrix();
+    }
+    return call<PermissionMatrix>("permissions_set_agent", {
+      project,
+      session,
+      agent,
+      tools,
+    });
+  },
+
   /** D94: the four built-in role presets. */
   async rolePresets(): Promise<RolePreset[]> {
     if (!isTauri()) return [];
@@ -2342,6 +2700,71 @@ export const api = {
     preset: string,
   ): Promise<Agent> {
     return call<Agent>("role_apply", { project, session, agent, preset });
+  },
+
+  /** Roadmap 58: leave a preset while keeping the pair it resolved to. */
+  async roleClear(project: string, session: string, agent: string): Promise<Agent> {
+    return call<Agent>("role_clear", { project, session, agent });
+  },
+
+  /** Roadmap 58: a roster row's own model, provider and effort. */
+  async agentConfigure(
+    project: string,
+    session: string,
+    agent: string,
+    model: string,
+    provider: string,
+    effort: string,
+  ): Promise<Agent> {
+    return call<Agent>("agent_configure", {
+      project,
+      session,
+      agent,
+      model,
+      provider,
+      effort,
+    });
+  },
+
+  /** Roadmap 61: read the project's network policy. The preview starts from the default. */
+  async networkGet(project: string): Promise<NetworkPolicy> {
+    if (!isTauri()) {
+      return {
+        enabled: true,
+        default: "ask",
+        rules: [],
+        limits: {
+          window_seconds: 60,
+          per_origin_requests: 30,
+          per_agent_requests: 120,
+          max_response_bytes: 262144,
+          pin_dns: true,
+          allow_private_addresses: false,
+        },
+        disabled_sessions: [],
+      };
+    }
+    return call<NetworkPolicy>("network_get", { project });
+  },
+
+  /** Roadmap 61: validate and save the policy the core will enforce. */
+  async networkSet(project: string, policy: NetworkPolicy): Promise<NetworkPolicy> {
+    if (!isTauri()) return policy;
+    return call<NetworkPolicy>("network_set", { project, policy });
+  },
+
+  /** Roadmap 61: explain one URL before a fetch. The preview has no core to ask. */
+  async networkCheck(
+    project: string,
+    url: string,
+    session?: string | null,
+  ): Promise<NetworkCheck | null> {
+    if (!isTauri()) return null;
+    return call<NetworkCheck>("network_check", {
+      project,
+      url,
+      session: session ?? null,
+    });
   },
 
   /**
@@ -2432,6 +2855,12 @@ export const api = {
     return call<CoordinationView>("claim_list", { project });
   },
 
+  /** Live write lanes, holder and waiters; polled with the claims and reviews. */
+  async mergeQueue(project: string): Promise<MergeQueueView> {
+    if (!isTauri()) return { entries: [] };
+    return call<MergeQueueView>("merge_queue", { project });
+  },
+
   /** Writable subagents with their plans and latest review; polled with the claims. */
   async writableList(project: string, session: string): Promise<WritableAgentView[]> {
     if (!isTauri()) return [];
@@ -2477,8 +2906,15 @@ export const api = {
     session: string,
     id: string,
     merged: string,
+    verdict: ConflictVerdictInput,
   ): Promise<MergeResolution> {
-    return call<MergeResolution>("conflict_resolve_merged", { project, session, id, merged });
+    return call<MergeResolution>("conflict_resolve_merged", {
+      project,
+      session,
+      id,
+      merged,
+      verdict,
+    });
   },
 
   /** Tell the desktop watcher which project to follow. */
@@ -2687,9 +3123,9 @@ export const api = {
   },
 
   /** Record the click and open the landing page. The app never navigates itself. */
-  async gravityClick(url: string): Promise<string> {
-    if (!isTauri()) return url;
-    return call<string>("gravity_click", { url });
+  async gravityClick(url: string, landing?: string, test?: boolean): Promise<string> {
+    if (!isTauri()) return test && landing ? landing : url;
+    return call<string>("gravity_click", { url, landing: landing ?? null, test: test ?? false });
   },
 
   async saveSettings(settings: Settings): Promise<Settings> {
@@ -2947,6 +3383,44 @@ export const api = {
     return call<string>("rules_export_memory", { project });
   },
 
+  /** Ranked memory facts with recency, use and pin explained (roadmap 55). */
+  async memoryFacts(project: string, agent?: string): Promise<MemoryFact[]> {
+    if (!isTauri()) return previewMemoryFacts;
+    return call<MemoryFact[]>("memory_facts", { project, agent: agent ?? null });
+  },
+
+  /** Filter the ranking and count the returned facts as recalled. */
+  async recallMemory(
+    project: string,
+    query: string,
+    agent?: string,
+    limit = 10,
+  ): Promise<MemoryFact[]> {
+    if (!isTauri()) {
+      const needle = query.trim().toLowerCase();
+      return previewMemoryFacts.filter(
+        (fact) => !needle || fact.text.toLowerCase().includes(needle),
+      );
+    }
+    return call<MemoryFact[]>("memory_recall", {
+      project,
+      agent: agent ?? null,
+      query,
+      limit,
+    });
+  },
+
+  /** Pin or unpin one fact. A pinned fact's recency value no longer decays. */
+  async pinMemoryFact(project: string, id: string, pinned: boolean): Promise<MemoryFact> {
+    if (!isTauri()) {
+      const found = previewMemoryFacts.find((fact) => fact.id === id);
+      if (found) found.pinned = pinned;
+      if (found) return found;
+      throw new Error(`memory fact ${id} does not exist`);
+    }
+    return call<MemoryFact>("memory_pin", { project, id, pinned });
+  },
+
   /** Per-turn checkpoints, newest last. */
   async listCheckpoints(project: string, session: string): Promise<Checkpoint[]> {
     if (!isTauri()) return [];
@@ -3151,40 +3625,6 @@ export const api = {
     },
   },
 
-  /** The integrated terminal: a real PTY owned by Rust, streamed to xterm.js. */
-  terminal: {
-    async open(
-      project: string | null,
-      cols: number,
-      rows: number,
-      /** The shell to open; empty or absent means the OS default. */
-      shell?: string,
-    ): Promise<TerminalInfo> {
-      if (!isTauri()) throw new Error("The terminal runs in the desktop app, not the browser preview.");
-      return call<TerminalInfo>("terminal_open", {
-        project,
-        cols,
-        rows,
-        shell: shell?.trim() ? shell.trim() : null,
-      });
-    },
-
-    async write(id: string, data: string): Promise<void> {
-      if (!isTauri()) return;
-      return call<void>("terminal_write", { id, data });
-    },
-
-    async resize(id: string, cols: number, rows: number): Promise<void> {
-      if (!isTauri()) return;
-      return call<void>("terminal_resize", { id, cols, rows });
-    },
-
-    async close(id: string): Promise<void> {
-      if (!isTauri()) return;
-      return call<void>("terminal_close", { id });
-    },
-  },
-
   /** Q268: run the project's detected test command and return its parsed result. */
   tests: {
     async run(project: string): Promise<TestRun> {
@@ -3239,6 +3679,38 @@ export const api = {
     async quit(): Promise<void> {
       if (!isTauri()) return;
       return call<void>("tray_quit");
+    },
+  },
+
+  /** The curated plugin catalogue, installed trees and the harness skill copies. */
+  plugins: {
+    async catalog(
+      query = "",
+      category: string | null = null,
+      tier: string | null = null,
+    ): Promise<PluginCatalog> {
+      if (!isTauri()) return { entries: [], categories: [], updated: "preview" };
+      return call<PluginCatalog>("plugins_catalog", { query, category, tier });
+    },
+
+    async list(): Promise<PluginsState> {
+      if (!isTauri()) return { plugins: [], broken: [], enabled_tools: [] };
+      return call<PluginsState>("plugins_list");
+    },
+
+    async install(name: string): Promise<unknown> {
+      if (!isTauri()) throw new Error("Install plugins in the desktop app.");
+      return call<unknown>("plugins_install", { name });
+    },
+
+    async remove(name: string): Promise<boolean> {
+      if (!isTauri()) return false;
+      return call<boolean>("plugins_remove", { name });
+    },
+
+    async setEnabled(name: string, enabled: boolean): Promise<PluginRow> {
+      if (!isTauri()) throw new Error("Enable plugins in the desktop app.");
+      return call<PluginRow>("plugins_set_enabled", { name, enabled });
     },
   },
 

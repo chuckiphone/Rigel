@@ -5,6 +5,8 @@
 //! older turns with an extractive summary, preserves every pinned skill hash, and records each
 //! dropped turn's item ids. The record is written to the transcript before the next request.
 
+use std::collections::HashMap;
+
 use serde::Serialize;
 
 use crate::session::{Item, SkillPin, TurnTranscript};
@@ -64,7 +66,12 @@ impl Compaction {
     }
 }
 
-pub fn build(history: &[TurnTranscript], pins: &[SkillPin], model: &str) -> Option<Compaction> {
+pub fn build(
+    history: &[TurnTranscript],
+    pins: &[SkillPin],
+    model: &str,
+    summaries: &HashMap<String, String>,
+) -> Option<Compaction> {
     if history.len() < 2 {
         return None;
     }
@@ -95,7 +102,7 @@ pub fn build(history: &[TurnTranscript], pins: &[SkillPin], model: &str) -> Opti
         .iter()
         .map(|transcript| transcript.turn.id.clone())
         .collect::<Vec<_>>();
-    let summary = summarize(dropped_turns, recent_turns, pins);
+    let summary = summarize(dropped_turns, recent_turns, pins, summaries);
     let after_chars = summary.chars().count() + recent_turns.iter().map(turn_chars).sum::<usize>();
     let after_tokens = tokens::estimate_chars(after_chars, model).tokens;
     let recent = recent_turns
@@ -134,19 +141,26 @@ fn turn_chars(transcript: &TurnTranscript) -> usize {
             .sum::<usize>()
 }
 
-fn summarize(dropped: &[TurnTranscript], recent: &[TurnTranscript], pins: &[SkillPin]) -> String {
+fn summarize(
+    dropped: &[TurnTranscript],
+    recent: &[TurnTranscript],
+    pins: &[SkillPin],
+    summaries: &HashMap<String, String>,
+) -> String {
     let mut out = String::new();
     for transcript in dropped {
         out.push_str(&format!(
             "\n\nTurn {} (seq {}, status {}):",
             transcript.turn.id, transcript.turn.seq, transcript.turn.status
         ));
-        if let Some(prompt) = &transcript.turn.prompt {
-            out.push_str("\nUser: ");
-            out.push_str(prompt);
-        }
-        for item in &transcript.items {
-            append_item(&mut out, item);
+        // Roadmap 57: the turn's own stored summary is the only representation of it here.
+        // The items were read once when the turn closed; compaction does not re-derive them.
+        match summaries.get(&transcript.turn.id) {
+            Some(summary) => {
+                out.push('\n');
+                out.push_str(summary);
+            }
+            None => out.push_str("\n[summary unavailable]"),
         }
         if out.len() >= MAX_SUMMARY_CHARS {
             out.push_str(
@@ -314,7 +328,7 @@ mod tests {
     #[test]
     fn below_the_threshold_nothing_is_dropped() {
         let history = vec![turn("t1", 1, "one"), turn("t2", 2, "two")];
-        assert!(build(&history, &[], "openai/gpt-5-mini").is_none());
+        assert!(build(&history, &[], "openai/gpt-5-mini", &HashMap::new()).is_none());
     }
 
     #[test]
@@ -327,7 +341,16 @@ mod tests {
             body_sha: "sha-pinned".to_string(),
             pinned_at: 1,
         }];
-        let compaction = build(&history, &pins, "openai/gpt-4o").unwrap();
+        let summaries = history
+            .iter()
+            .map(|transcript| {
+                (
+                    transcript.turn.id.clone(),
+                    super::super::summary::build(&transcript.turn, &transcript.items).summary,
+                )
+            })
+            .collect::<HashMap<_, _>>();
+        let compaction = build(&history, &pins, "openai/gpt-4o", &summaries).unwrap();
         assert_eq!(compaction.record.dropped.len(), 196);
         assert_eq!(compaction.record.retained_turns.len(), 4);
         assert!(
@@ -340,5 +363,37 @@ mod tests {
         assert!(compaction.record.summary.contains("pdf-tools @ sha-pinned"));
         assert!(compaction.record.after_tokens < compaction.record.before_tokens);
         assert!(compaction.prompt().contains("Compacted history"));
+    }
+
+    #[test]
+    fn a_dropped_turn_uses_its_stored_summary_not_its_items() {
+        let history = (1..=200)
+            .map(|seq| turn(&format!("t{seq}"), seq, "do the work"))
+            .collect::<Vec<_>>();
+        let summaries = history
+            .iter()
+            .map(|transcript| {
+                (
+                    transcript.turn.id.clone(),
+                    format!("STORED summary for turn {}.", transcript.turn.seq),
+                )
+            })
+            .collect::<HashMap<_, _>>();
+
+        let compaction = build(&history, &[], "openai/gpt-4o", &summaries).unwrap();
+        assert!(
+            compaction
+                .record
+                .summary
+                .contains("STORED summary for turn 1.")
+        );
+        assert!(
+            compaction.record.summary.contains("[summary truncated"),
+            "the documented bound still protects the prompt"
+        );
+        assert!(
+            !compaction.record.summary.contains("xxxx"),
+            "the dropped turn's item body was not re-derived"
+        );
     }
 }

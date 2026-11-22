@@ -26,7 +26,8 @@ use std::time::Duration;
 
 use async_trait::async_trait;
 use clap::ValueEnum;
-use rigel_adapters::acp::{AcpConfig, AcpEvent, ApprovalDecision, ApprovalRequest, Approver};
+use rigel_adapters::HarnessEvent;
+use rigel_adapters::acp::{AcpConfig, ApprovalDecision, ApprovalRequest, Approver};
 use rigel_adapters::{AcpClient, AdapterError, Harness};
 use rigel_core::{
     ApprovalScope, BudgetService, CostSource, ItemKind, Scopes, SessionService, Usage, credentials,
@@ -93,12 +94,16 @@ pub struct AcpArgs {
 /// without a prompt even when the agent only ever offers `allow_once` (P4.10d).
 pub struct CliApprover {
     mode: ApprovalChoice,
-    events: mpsc::UnboundedSender<AcpEvent>,
+    events: mpsc::UnboundedSender<HarnessEvent>,
     scopes: Scopes,
 }
 
 impl CliApprover {
-    fn new(mode: ApprovalChoice, events: mpsc::UnboundedSender<AcpEvent>, scopes: Scopes) -> Self {
+    fn new(
+        mode: ApprovalChoice,
+        events: mpsc::UnboundedSender<HarnessEvent>,
+        scopes: Scopes,
+    ) -> Self {
         Self {
             mode,
             events,
@@ -135,7 +140,7 @@ fn decision_for(scope: ApprovalScope) -> ApprovalDecision {
 #[async_trait]
 impl Approver for CliApprover {
     async fn approve(&self, request: &ApprovalRequest) -> ApprovalDecision {
-        let _ = self.events.send(AcpEvent::PermissionRequested {
+        let _ = self.events.send(HarnessEvent::ApprovalRequested {
             request: request.clone(),
         });
         let key = approval_key(request);
@@ -156,7 +161,8 @@ impl Approver for CliApprover {
                 }
             },
         };
-        let _ = self.events.send(AcpEvent::PermissionResolved {
+        let _ = self.events.send(HarnessEvent::ApprovalResolved {
+            request: None,
             tool_call_id: request.tool_call_id.clone(),
             decision,
         });
@@ -306,7 +312,7 @@ pub async fn run(args: AcpArgs) -> ExitCode {
     let outcome = {
         let sink = events.clone();
         client
-            .prompt(&args.prompt, move |event| {
+            .prompt_unified(&args.prompt, move |event| {
                 let _ = sink.send(event);
             })
             .await
@@ -438,48 +444,46 @@ impl State {
         &mut self,
         service: &SessionService,
         turn_id: &str,
-        event: AcpEvent,
+        event: HarnessEvent,
         json: bool,
     ) {
         match event {
-            AcpEvent::MessageDelta { text } => {
+            HarnessEvent::Delta {
+                kind: ItemKind::Message,
+                text,
+            } => {
                 self.text.push_str(&text);
                 if !json {
                     print!("{text}");
                 }
             }
-            AcpEvent::ThoughtDelta { text } => self.reasoning.push_str(&text),
-            AcpEvent::ToolCall {
-                tool_call_id,
-                title,
-                kind,
-                item_kind,
-                operation,
-                status,
-                raw_input,
-            } => {
+            HarnessEvent::Delta {
+                kind: ItemKind::Reasoning,
+                text,
+            } => self.reasoning.push_str(&text),
+            HarnessEvent::Item { item, status } => {
+                let tool_call_id = item.body["tool_call_id"]
+                    .as_str()
+                    .unwrap_or_default()
+                    .to_string();
+                let title = item.body["title"].as_str().unwrap_or("tool");
+                let kind = item.body["kind"].as_str();
                 if !json {
-                    println!("\n  [{}] {title}", kind.as_deref().unwrap_or("tool"));
+                    println!("\n  [{}] {title}", kind.unwrap_or("tool"));
                 }
                 // P4.8: the ACP `kind` picks the item kind, so an edit is a file change and a
                 // search is a web search instead of everything being a command.
-                self.kinds.insert(tool_call_id.clone(), item_kind);
+                self.kinds.insert(tool_call_id.clone(), item.kind);
                 record(
                     service,
                     turn_id,
-                    item_kind.as_str(),
+                    item.kind.as_str(),
                     status.as_deref().unwrap_or("running"),
-                    json!({
-                        "tool_call_id": tool_call_id,
-                        "title": title,
-                        "kind": kind,
-                        "operation": operation,
-                        "raw_input": raw_input,
-                    }),
+                    item.body,
                 )
                 .await;
             }
-            AcpEvent::ToolCallUpdate {
+            HarnessEvent::ToolCallUpdate {
                 tool_call_id,
                 status,
                 text,
@@ -505,7 +509,7 @@ impl State {
                 )
                 .await;
             }
-            AcpEvent::Plan { entries } => {
+            HarnessEvent::Plan { entries } => {
                 record(
                     service,
                     turn_id,
@@ -515,7 +519,7 @@ impl State {
                 )
                 .await;
             }
-            AcpEvent::Usage {
+            HarnessEvent::Usage {
                 used,
                 size,
                 cost_micros,
@@ -534,7 +538,7 @@ impl State {
                 )
                 .await;
             }
-            AcpEvent::Notice { message } => {
+            HarnessEvent::Notice { message } => {
                 record(
                     service,
                     turn_id,
@@ -544,7 +548,7 @@ impl State {
                 )
                 .await;
             }
-            AcpEvent::PermissionRequested { request } => {
+            HarnessEvent::ApprovalRequested { request } => {
                 record(
                     service,
                     turn_id,
@@ -564,9 +568,10 @@ impl State {
                 )
                 .await;
             }
-            AcpEvent::PermissionResolved {
+            HarnessEvent::ApprovalResolved {
                 tool_call_id,
                 decision,
+                ..
             } => {
                 record(
                     service,
@@ -577,7 +582,7 @@ impl State {
                 )
                 .await;
             }
-            AcpEvent::Unmapped { kind } => {
+            HarnessEvent::Unmapped { kind } => {
                 record(
                     service,
                     turn_id,
@@ -587,6 +592,9 @@ impl State {
                 )
                 .await;
             }
+            HarnessEvent::Started { .. }
+            | HarnessEvent::Message { .. }
+            | HarnessEvent::Delta { .. } => {}
         }
     }
 }
@@ -702,7 +710,7 @@ fn usage_of(usage: Option<rigel_adapters::AcpUsage>) -> Usage {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use rigel_adapters::acp::{AcpEvent, ApprovalOption};
+    use rigel_adapters::acp::ApprovalOption;
 
     #[cfg(windows)]
     #[test]
@@ -807,11 +815,11 @@ mod tests {
         assert_eq!(decision, ApprovalDecision::AllowOnce);
         assert!(matches!(
             rx.try_recv(),
-            Ok(AcpEvent::PermissionRequested { .. })
+            Ok(HarnessEvent::ApprovalRequested { .. })
         ));
         assert!(matches!(
             rx.try_recv(),
-            Ok(AcpEvent::PermissionResolved {
+            Ok(HarnessEvent::ApprovalResolved {
                 decision: ApprovalDecision::AllowOnce,
                 ..
             })

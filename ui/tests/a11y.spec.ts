@@ -16,7 +16,7 @@ test("the first tab stop skips the chrome and turns are labelled", async ({ page
   await expect(turn).toHaveAttribute("aria-label", /^Turn \d+, (completed|running|failed)/);
 });
 
-test("both palettes clear AA and the terminal recolours without a reload", async ({ page }) => {
+test("both palettes clear AA and a theme switch repaints without a reload", async ({ page }) => {
   await page.goto("/");
 
   const ratios = await page.evaluate(() => {
@@ -58,11 +58,6 @@ test("both palettes clear AA and the terminal recolours without a reload", async
     expect(pair.faint, `${palette} faint`).toBeGreaterThanOrEqual(4.5);
   }
 
-  await page.getByRole("button", { name: "Terminal" }).click();
-  const host = page.locator(".terminal-host");
-  await expect(host).toHaveAttribute("data-terminal-theme", "dark");
-  await expect(host).toHaveAttribute("data-terminal-background", "#0b0c0e");
-
   await page.getByRole("button", { name: "Settings" }).click();
   await page.getByRole("option", { name: /^Appearance/ }).click();
   await page
@@ -70,11 +65,7 @@ test("both palettes clear AA and the terminal recolours without a reload", async
     .getByRole("button", { name: /^Light/ })
     .click();
   await expect(page.locator("html")).toHaveAttribute("data-theme", "light");
-  await expect(host).toHaveAttribute("data-terminal-theme", "light");
-  await expect(host).toHaveAttribute("data-terminal-background", "#ffffff");
-
-  await page.getByRole("button", { name: "Terminal" }).click();
-  await expect(page.locator(".terminal-frame")).toBeVisible();
+  await expect(page.locator(".shell")).toBeVisible();
 });
 
 test("more contrast raises the metadata colour", async ({ page }) => {

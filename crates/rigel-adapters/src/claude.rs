@@ -205,6 +205,18 @@ impl ClaudeAdapter {
         &self.config
     }
 
+    /// Run one prompt to completion, reporting the unified events item 49 defines.
+    pub async fn run_turn_unified<F>(
+        &self,
+        prompt: &str,
+        mut on_event: F,
+    ) -> Result<ClaudeTurn, AdapterError>
+    where
+        F: FnMut(crate::HarnessEvent),
+    {
+        self.run_turn(prompt, |event| on_event(event.into())).await
+    }
+
     /// Run one prompt to completion, reporting deltas as they arrive.
     pub async fn run_turn<F>(
         &self,

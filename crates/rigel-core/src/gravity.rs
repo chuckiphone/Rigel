@@ -166,7 +166,8 @@ impl AdRequest {
 }
 
 /// One ad, as the engine returns it. `click_url` is the tracked link; `url` is the raw landing
-/// page and must not be used for a link.
+/// page and must not be used for a link. `favicon` and `brand_image` are the advertiser's own
+/// marks; both are optional and kept only when they are https URLs.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Ad {
@@ -176,14 +177,14 @@ pub struct Ad {
     pub title: String,
     #[serde(default)]
     pub brand_name: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub favicon: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub brand_image: String,
     #[serde(default)]
     pub cta: String,
     #[serde(default)]
     pub url: String,
-    #[serde(default)]
-    pub favicon: String,
-    #[serde(default)]
-    pub brand_image: String,
     #[serde(default)]
     pub click_url: String,
     /// Gravity spells this `impUrl`; the explicit rename keeps the odd capitalization honest.
@@ -194,6 +195,10 @@ pub struct Ad {
     /// The engine spells this `placement_id`, unlike the camelCase fields around it.
     #[serde(default, rename = "placement_id")]
     pub placement_id: String,
+    /// The broker marks the publisher's non-billed test fills. Gravity's test creative carries
+    /// the test host in `click_url`; the UI opens `url` after the Rust click receipt instead.
+    #[serde(default)]
+    pub test: bool,
 }
 
 impl Ad {
@@ -206,6 +211,17 @@ impl Ad {
     /// typo in a field name cannot silently disable tracking.
     pub fn impression_url(&self) -> &str {
         &self.imp_url
+    }
+
+    /// Keep only https artwork. A direct Gravity reply or a broker response cannot make the
+    /// webview load another scheme.
+    pub fn sanitize_artwork(&mut self) {
+        if !is_https(&self.favicon) {
+            self.favicon.clear();
+        }
+        if !is_https(&self.brand_image) {
+            self.brand_image.clear();
+        }
     }
 }
 
@@ -306,7 +322,14 @@ impl Gravity {
             .json()
             .await
             .map_err(|error| GravityError::Unreadable(error.to_string()))?;
-        Ok(ads.into_iter().filter(Ad::drawable).collect())
+        Ok(ads
+            .into_iter()
+            .map(|mut ad| {
+                ad.sanitize_artwork();
+                ad
+            })
+            .filter(Ad::drawable)
+            .collect())
     }
 }
 
@@ -384,13 +407,19 @@ impl SharedGravity {
             .json()
             .await
             .map_err(|error| GravityError::Unreadable(error.to_string()))?;
+        let test = answer.test;
         Ok(SharedAds {
             ads: answer
                 .ads
                 .into_iter()
+                .map(|mut ad| {
+                    ad.sanitize_artwork();
+                    ad.test = test;
+                    ad
+                })
                 .filter(|ad| ad.drawable() && is_https(&ad.click_url))
                 .collect(),
-            test: answer.test,
+            test,
         })
     }
 }
@@ -645,17 +674,43 @@ mod tests {
         assert!(!trusted_tracking_url("not a url"));
     }
 
+    #[test]
+    fn only_https_artwork_reaches_the_card() {
+        let mut ad = Ad {
+            favicon: "http://cdn.example/neon.png".to_string(),
+            brand_image: "https://cdn.example/neon-hero.png".to_string(),
+            ..Ad::default()
+        };
+        ad.sanitize_artwork();
+        assert!(ad.favicon.is_empty());
+        assert_eq!(ad.brand_image, "https://cdn.example/neon-hero.png");
+
+        let serialized = serde_json::to_value(&ad).unwrap();
+        assert!(serialized.get("favicon").is_none(), "{serialized}");
+    }
+
     #[tokio::test]
     async fn a_200_returns_the_ad_and_sends_the_documented_body() {
         let (origin, seen) = serve(
             "200 OK",
-            r#"[{"adText":"Serverless Postgres that scales to zero.","title":"Neon","brandName":"Neon","cta":"Try Neon Free","url":"https://neon.tech","clickUrl":"https://api.trygravity.ai/track/click?p=abc","impUrl":"https://api.trygravity.ai/ack?p=abc","placement":"below_response","placement_id":"rigel-sponsor"}]"#,
+            r#"[{"adText":"Serverless Postgres that scales to zero.","title":"Neon","brandName":"Neon","cta":"Try Neon Free","url":"https://neon.tech","favicon":"https://cdn.example/neon.png","brandImage":"https://cdn.example/neon-hero.png","clickUrl":"https://api.trygravity.ai/track/click?p=abc","impUrl":"https://api.trygravity.ai/ack?p=abc","placement":"below_response","placement_id":"rigel-sponsor"}]"#,
         )
         .await;
         let gravity = Gravity::new("gr-test", origin);
         let ads = gravity.get_ads(&request()).await.unwrap();
         assert_eq!(ads.len(), 1);
         assert_eq!(ads[0].brand_name, "Neon");
+        let serialized = serde_json::to_value(&ads[0]).unwrap();
+        assert_eq!(
+            serialized.get("favicon").and_then(|value| value.as_str()),
+            Some("https://cdn.example/neon.png")
+        );
+        assert_eq!(
+            serialized
+                .get("brandImage")
+                .and_then(|value| value.as_str()),
+            Some("https://cdn.example/neon-hero.png")
+        );
         assert_eq!(
             ads[0].click_url,
             "https://api.trygravity.ai/track/click?p=abc"
@@ -693,7 +748,7 @@ mod tests {
     async fn the_shared_broker_returns_test_ads_without_sending_a_key() {
         let (origin, seen) = serve(
             "200 OK",
-            r#"{"ads":[{"adText":"Ship a database this afternoon.","title":"Neon","brandName":"Neon","cta":"Try Neon Free","clickUrl":"https://api.trygravity.ai/track/click?p=abc","impUrl":"https://api.trygravity.ai/ack?p=abc","placement":"below_response","placement_id":"rigel-sponsor"}],"test":true}"#,
+            r#"{"ads":[{"adText":"Ship a database this afternoon.","title":"Neon","brandName":"Neon","cta":"Try Neon Free","favicon":"https://cdn.example/neon.png","brandImage":"https://cdn.example/neon-hero.png","clickUrl":"https://api.trygravity.ai/track/click?p=abc","impUrl":"https://api.trygravity.ai/ack?p=abc","placement":"below_response","placement_id":"rigel-sponsor"}],"test":true}"#,
         )
         .await;
         let broker = SharedGravity::new(format!("{origin}/api/gravity-ad"));
@@ -701,6 +756,17 @@ mod tests {
         assert!(answer.test);
         assert_eq!(answer.ads.len(), 1);
         assert_eq!(answer.ads[0].placement_id, "rigel-sponsor");
+        let serialized = serde_json::to_value(&answer.ads[0]).unwrap();
+        assert_eq!(
+            serialized.get("favicon").and_then(|value| value.as_str()),
+            Some("https://cdn.example/neon.png")
+        );
+        assert_eq!(
+            serialized
+                .get("brandImage")
+                .and_then(|value| value.as_str()),
+            Some("https://cdn.example/neon-hero.png")
+        );
 
         let sent = seen.lock().unwrap().clone();
         assert!(sent.starts_with("POST /api/gravity-ad HTTP/1.1"), "{sent}");

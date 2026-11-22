@@ -52,6 +52,9 @@ pub struct Session {
     pub id: String,
     pub project_root: String,
     pub title: Option<String>,
+    /// `manual` when the user named the session, `auto` when the cheap model did, `None` when
+    /// no name has been chosen. Only a `None` source may receive an automatic title.
+    pub title_source: Option<String>,
     pub status: SessionStatus,
     pub budget_cents: Option<i64>,
     pub spend_cents: i64,
@@ -73,7 +76,14 @@ pub struct Agent {
     pub session_id: String,
     pub harness: String,
     pub role: Option<String>,
+    /// Roadmap 66: a per-agent filter below the role. `None` leaves the role alone; an empty
+    /// list denies every tool to this agent. It can never add a tool the role or project lacks.
+    pub tool_overrides: Option<Vec<String>>,
     pub model: Option<String>,
+    /// Roadmap 58: the door that serves `model`, when the roster picker chose the pair.
+    pub provider: Option<String>,
+    /// Roadmap 58: the row's own reasoning effort; `None` falls back to the composer.
+    pub effort: Option<String>,
     /// The agent's private checkout, when it was given one (P5.5).
     pub worktree: Option<String>,
     pub status: String,
@@ -215,6 +225,12 @@ pub enum SessionError {
     #[error("unknown role preset `{0}`; use implementer, reviewer, tester or researcher")]
     InvalidRole(String),
 
+    #[error("unknown effort `{0}`; use low, medium or high")]
+    InvalidEffort(String),
+
+    #[error(transparent)]
+    Permission(#[from] crate::permissions::PermissionError),
+
     #[error("turn {0} does not exist")]
     TurnNotFound(String),
 
@@ -265,6 +281,7 @@ type SessionRow = (
     Option<i64>,
     Option<i64>,
     Option<i64>,
+    Option<String>,
 );
 
 impl SessionService {
@@ -303,12 +320,15 @@ impl SessionService {
         let created_at = now_ms();
 
         sqlx::query(
-            "INSERT INTO sessions (id, project_root, title, status, budget_cents, created_at)
-             VALUES (?, ?, ?, 'active', ?, ?)",
+            "INSERT INTO sessions
+                 (id, project_root, title, title_source, status, budget_cents, created_at)
+             VALUES (?, ?, ?, ?, 'active', ?, ?)",
         )
         .bind(&id)
         .bind(&self.project_root)
         .bind(title)
+        // A name given at creation is the user's, exactly like a later rename.
+        .bind(title.map(|_| "manual"))
         .bind(budget_cents)
         .bind(created_at)
         .execute(&self.pool)
@@ -320,7 +340,8 @@ impl SessionService {
     pub async fn get(&self, id: &str) -> Result<Session, SessionError> {
         let row: Option<SessionRow> = sqlx::query_as(
             "SELECT id, project_root, title, status, budget_cents, spend_cents, spend_micros,
-                    interventions, tasks_done, created_at, ended_at, pinned_at, archived_at
+                    interventions, tasks_done, created_at, ended_at, pinned_at, archived_at,
+                    title_source
              FROM sessions WHERE id = ?",
         )
         .bind(id)
@@ -340,7 +361,8 @@ impl SessionService {
     pub async fn list(&self) -> Result<Vec<Session>, SessionError> {
         let rows: Vec<SessionRow> = sqlx::query_as(
             "SELECT id, project_root, title, status, budget_cents, spend_cents, spend_micros,
-                    interventions, tasks_done, created_at, ended_at, pinned_at, archived_at
+                    interventions, tasks_done, created_at, ended_at, pinned_at, archived_at,
+                    title_source
              FROM sessions
              ORDER BY (pinned_at IS NULL), pinned_at DESC, created_at DESC, id DESC",
         )
@@ -353,15 +375,19 @@ impl SessionService {
     /// D148: name a session, or clear the name so the automatic title takes over again.
     ///
     /// The list is one line per row, so the name is the first line and at most 120 characters;
-    /// silently clipping is still better than a row that breaks the pane it is drawn in.
+    /// silently clipping is still better than a row that breaks the pane it is drawn in. A name
+    /// is `manual` and can never be replaced by a later automatic title; clearing it sets the
+    /// source back to `None`, which lets one take over.
     pub async fn rename(&self, id: &str, title: Option<&str>) -> Result<Session, SessionError> {
         let title = title
             .map(|value| value.lines().next().unwrap_or("").trim())
             .filter(|value| !value.is_empty())
             .map(|value| value.chars().take(120).collect::<String>());
+        let source = title.as_ref().map(|_| "manual");
 
-        let result = sqlx::query("UPDATE sessions SET title = ? WHERE id = ?")
-            .bind(title)
+        let result = sqlx::query("UPDATE sessions SET title = ?, title_source = ? WHERE id = ?")
+            .bind(&title)
+            .bind(source)
             .bind(id)
             .execute(&self.pool)
             .await?;
@@ -370,6 +396,44 @@ impl SessionService {
             return Err(SessionError::SessionNotFound(id.to_string()));
         }
         self.get(id).await
+    }
+
+    /// Roadmap 56: store a cheap model's title only while no name has been chosen. The write is
+    /// conditional, so a manual rename that lands while generation is in flight wins without a
+    /// second check in the caller, and a second automatic title never replaces the first.
+    pub async fn apply_auto_title(
+        &self,
+        id: &str,
+        title: &str,
+    ) -> Result<Option<Session>, SessionError> {
+        let title = title
+            .lines()
+            .next()
+            .unwrap_or("")
+            .trim()
+            .trim_end_matches(['.', ',', ':', ';', '!', '?'])
+            .trim()
+            .chars()
+            .take(60)
+            .collect::<String>();
+        if title.is_empty() {
+            return Ok(None);
+        }
+
+        let result = sqlx::query(
+            "UPDATE sessions SET title = ?, title_source = 'auto'
+             WHERE id = ? AND title_source IS NULL",
+        )
+        .bind(&title)
+        .bind(id)
+        .execute(&self.pool)
+        .await?;
+
+        let session = self.get(id).await?;
+        if result.rows_affected() == 0 {
+            return Ok(None);
+        }
+        Ok(Some(session))
     }
 
     /// D148: pin or unpin. Pinning is a timestamp, not a boolean, so the pinned block keeps its
@@ -584,10 +648,95 @@ impl SessionService {
         let Some(preset) = crate::agent::roles::preset(Some(preset)) else {
             return Err(SessionError::InvalidRole(preset.to_string()));
         };
+        let result = sqlx::query(
+            "UPDATE agents SET role = ?, model = ?, provider = NULL, effort = ?
+             WHERE id = ? AND session_id = ?",
+        )
+        .bind(preset.id)
+        .bind(preset.model)
+        .bind(preset.effort)
+        .bind(agent_id)
+        .bind(session_id)
+        .execute(&self.pool)
+        .await?;
+        if result.rows_affected() == 0 {
+            return Err(SessionError::AgentNotFound(agent_id.to_string()));
+        }
+        self.agent(agent_id).await
+    }
+
+    /// Roadmap 58: the roster picker's write. `model` and `provider` travel together, and an
+    /// empty string clears a field so the row falls back to the composer. The effort is the
+    /// row's own unless a role preset is applied later.
+    pub async fn set_agent_config(
+        &self,
+        session_id: &str,
+        agent_id: &str,
+        model: Option<&str>,
+        provider: Option<&str>,
+        effort: Option<&str>,
+    ) -> Result<Agent, SessionError> {
+        let clean = |value: Option<&str>| {
+            value
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .map(str::to_string)
+        };
+        let model = clean(model);
+        let provider = clean(provider);
+        let effort = clean(effort);
+        if let Some(effort) = &effort
+            && !matches!(effort.as_str(), "low" | "medium" | "high")
+        {
+            return Err(SessionError::InvalidEffort(effort.clone()));
+        }
+        if model.is_none() {
+            // A provider or effort without a model would describe a pair that cannot be sent.
+            // Clearing the model clears the other two with it.
+            let result = sqlx::query(
+                "UPDATE agents SET model = NULL, provider = NULL, effort = NULL
+                 WHERE id = ? AND session_id = ?",
+            )
+            .bind(agent_id)
+            .bind(session_id)
+            .execute(&self.pool)
+            .await?;
+            if result.rows_affected() == 0 {
+                return Err(SessionError::AgentNotFound(agent_id.to_string()));
+            }
+        } else {
+            let result = sqlx::query(
+                "UPDATE agents SET model = ?, provider = ?, effort = ?
+                 WHERE id = ? AND session_id = ?",
+            )
+            .bind(&model)
+            .bind(&provider)
+            .bind(&effort)
+            .bind(agent_id)
+            .bind(session_id)
+            .execute(&self.pool)
+            .await?;
+            if result.rows_affected() == 0 {
+                return Err(SessionError::AgentNotFound(agent_id.to_string()));
+            }
+        }
+        self.agent(agent_id).await
+    }
+
+    /// Roadmap 66: narrow one agent below its role. `None` removes the override and returns the
+    /// agent to its role's allowance; `Some(empty)` denies every tool to this agent. Names are
+    /// canonicalised against the dispatcher registry, so a typo is refused rather than stored.
+    pub async fn set_agent_tool_overrides(
+        &self,
+        session_id: &str,
+        agent_id: &str,
+        tools: Option<&[String]>,
+    ) -> Result<Agent, SessionError> {
+        let canonical = tools.map(crate::permissions::canonical_tools).transpose()?;
+        let encoded = canonical.as_ref().map(serde_json::to_string).transpose()?;
         let result =
-            sqlx::query("UPDATE agents SET role = ?, model = ? WHERE id = ? AND session_id = ?")
-                .bind(preset.id)
-                .bind(preset.model)
+            sqlx::query("UPDATE agents SET tool_overrides = ? WHERE id = ? AND session_id = ?")
+                .bind(encoded)
                 .bind(agent_id)
                 .bind(session_id)
                 .execute(&self.pool)
@@ -598,10 +747,28 @@ impl SessionService {
         self.agent(agent_id).await
     }
 
+    /// Roadmap 58: leave a role preset without losing the pair it resolved to, so the row keeps
+    /// its model when it becomes custom and the next pick is the person's, not the preset's.
+    pub async fn clear_role_preset(
+        &self,
+        session_id: &str,
+        agent_id: &str,
+    ) -> Result<Agent, SessionError> {
+        let result = sqlx::query("UPDATE agents SET role = NULL WHERE id = ? AND session_id = ?")
+            .bind(agent_id)
+            .bind(session_id)
+            .execute(&self.pool)
+            .await?;
+        if result.rows_affected() == 0 {
+            return Err(SessionError::AgentNotFound(agent_id.to_string()));
+        }
+        self.agent(agent_id).await
+    }
+
     pub async fn agents(&self, session_id: &str) -> Result<Vec<Agent>, SessionError> {
         let rows: Vec<AgentRow> = sqlx::query_as(
-            "SELECT id, session_id, harness, role, model, worktree, status, started_at,
-                    spend_cents, spend_micros, tokens_in, tokens_out
+            "SELECT id, session_id, harness, role, model, provider, effort, worktree, status,
+                    started_at, spend_cents, spend_micros, tokens_in, tokens_out, tool_overrides
              FROM agents WHERE session_id = ? ORDER BY started_at, rowid",
         )
         .bind(session_id)
@@ -701,18 +868,41 @@ impl SessionService {
     ) -> Result<(), SessionError> {
         let now = now_ms();
         let mut tx = self.pool.begin().await?;
-        sqlx::query("DELETE FROM subagent_nodes WHERE session_id = ? AND parent_turn_id = ?")
-            .bind(session_id)
-            .bind(parent_turn_id)
-            .execute(&mut *tx)
-            .await?;
+        // Every thread saves the shared graph, and two can hold snapshots taken a moment apart:
+        // the prerequisite's final save may be followed by a stale snapshot that still says the
+        // dependent is pending. Replacing the whole graph let that later write erase `blocked`
+        // (the Pending-vs-Blocked race). Upsert instead, and never let a non-terminal snapshot
+        // walk a state backwards: a terminal state wins, and `running` is not overwritten by a
+        // stale `pending`.
         for node in nodes {
             let depends_on = serde_json::to_string(&node.depends_on).unwrap_or_default();
             sqlx::query(
                 "INSERT INTO subagent_nodes
                     (session_id, parent_turn_id, node_id, role, depends_on_json, state, detail,
                      depth, budget_micros, spent_micros, remaining_micros, updated_at)
-                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                 ON CONFLICT(session_id, parent_turn_id, node_id) DO UPDATE SET
+                    role = excluded.role,
+                    depends_on_json = excluded.depends_on_json,
+                    state = CASE
+                        WHEN subagent_nodes.state IN ('done','failed','blocked','cancelled')
+                            THEN subagent_nodes.state
+                        WHEN subagent_nodes.state = 'running' AND excluded.state = 'pending'
+                            THEN subagent_nodes.state
+                        ELSE excluded.state
+                    END,
+                    detail = CASE
+                        WHEN subagent_nodes.state IN ('done','failed','blocked','cancelled')
+                            THEN subagent_nodes.detail
+                        WHEN subagent_nodes.state = 'running' AND excluded.state = 'pending'
+                            THEN subagent_nodes.detail
+                        ELSE excluded.detail
+                    END,
+                    depth = excluded.depth,
+                    budget_micros = excluded.budget_micros,
+                    spent_micros = excluded.spent_micros,
+                    remaining_micros = excluded.remaining_micros,
+                    updated_at = excluded.updated_at",
             )
             .bind(session_id)
             .bind(parent_turn_id)
@@ -821,8 +1011,8 @@ impl SessionService {
 
     pub async fn agent(&self, id: &str) -> Result<Agent, SessionError> {
         let row: Option<AgentRow> = sqlx::query_as(
-            "SELECT id, session_id, harness, role, model, worktree, status, started_at,
-                    spend_cents, spend_micros, tokens_in, tokens_out
+            "SELECT id, session_id, harness, role, model, provider, effort, worktree, status,
+                    started_at, spend_cents, spend_micros, tokens_in, tokens_out, tool_overrides
              FROM agents WHERE id = ?",
         )
         .bind(id)
@@ -1032,7 +1222,19 @@ impl SessionService {
             return Err(SessionError::TurnNotFound(turn_id.to_string()));
         }
 
-        self.turn(turn_id).await
+        let turn = self.turn(turn_id).await?;
+        // Roadmap 57: one compact summary per closed turn, with the items it was built from.
+        // The transcript stays the source of truth; this row is what compaction and palette
+        // search read so they do not walk the items again.
+        let (session_id,): (String,) = sqlx::query_as(
+            "SELECT a.session_id FROM turns t JOIN agents a ON a.id = t.agent_id WHERE t.id = ?",
+        )
+        .bind(turn_id)
+        .fetch_one(&self.pool)
+        .await?;
+        let items = self.items(&turn.id).await?;
+        crate::agent::summary::store(&self.pool, &session_id, &turn, &items).await?;
+        Ok(turn)
     }
 
     pub async fn turn(&self, turn_id: &str) -> Result<Turn, SessionError> {
@@ -1660,12 +1862,15 @@ type AgentRow = (
     Option<String>,
     Option<String>,
     Option<String>,
+    Option<String>,
+    Option<String>,
     String,
     i64,
     i64,
     i64,
     i64,
     i64,
+    Option<String>,
 );
 
 fn agent_from_row(row: AgentRow) -> Agent {
@@ -1675,13 +1880,21 @@ fn agent_from_row(row: AgentRow) -> Agent {
         harness: row.2,
         role: row.3,
         model: row.4,
-        worktree: row.5,
-        status: row.6,
-        started_at: row.7,
-        spend_cents: row.8,
-        spend_micros: row.9,
-        tokens_in: row.10,
-        tokens_out: row.11,
+        provider: row.5,
+        effort: row.6,
+        worktree: row.7,
+        status: row.8,
+        started_at: row.9,
+        spend_cents: row.10,
+        spend_micros: row.11,
+        tokens_in: row.12,
+        tokens_out: row.13,
+        // A malformed stored value is a denial, not an absent override: a corrupted row must not
+        // silently widen the agent back to its role.
+        tool_overrides: row
+            .14
+            .as_deref()
+            .map(|value| serde_json::from_str(value).unwrap_or_default()),
         claims_held: 0,
         claims_stale: 0,
     }
@@ -1724,6 +1937,7 @@ fn session_from_row(row: SessionRow) -> Result<Session, SessionError> {
         id: row.0,
         project_root: row.1,
         title: row.2,
+        title_source: row.13,
         status,
         budget_cents: row.4,
         spend_cents: row.5,

@@ -5,7 +5,8 @@
 //! resolution writes the merged file through the same compare-and-swap path as an agent patch.
 
 use rigel_core::{
-    ClaimError, ClaimService, MERGE_AUTHOR, PatchError, PatchPipeline, SessionService,
+    ClaimError, ClaimService, ConflictHunkDecision, ConflictVerdictInput, MERGE_AUTHOR,
+    MergedConflict, PatchError, PatchPipeline, SessionService,
 };
 
 const BASE: &str = "one\ntwo\nthree\nfour\nfive\n";
@@ -61,6 +62,23 @@ impl Fixture {
 
     fn hash(&self, text: &str) -> String {
         rigel_core::patches::sha256_hex(text.as_bytes())
+    }
+
+    /// The reviewer answers every conflicted hunk. The tests choose `ours` unless they are
+    /// deliberately exercising a bad verdict; the core checks coverage and the reviewer, not the
+    /// visual choice.
+    fn verdict(&self, merged: &MergedConflict, reviewer: &str) -> ConflictVerdictInput {
+        ConflictVerdictInput {
+            reviewer: reviewer.to_string(),
+            decisions: (0..merged.hunks.len())
+                .map(|index| ConflictHunkDecision {
+                    index,
+                    choice: "ours".to_string(),
+                })
+                .collect(),
+            test_hint: "cargo test -p rigel-core --test merge".to_string(),
+            tests_acknowledged: true,
+        }
     }
 
     async fn write_as(&self, agent: &str, path: &str, text: &str) -> String {
@@ -187,6 +205,7 @@ async fn a_write_outside_the_pipeline_is_merged_with_the_claimants_version() {
             &fixture.session,
             &conflict.id,
             &merged.merged,
+            &fixture.verdict(&merged, "Ada Reviewer"),
         )
         .await
         .unwrap();
@@ -228,7 +247,13 @@ async fn a_write_outside_the_pipeline_is_merged_with_the_claimants_version() {
     assert!(matches!(
         fixture
             .claims
-            .resolve_with_merge(&fixture.pipeline, &fixture.session, &conflict.id, "again\n")
+            .resolve_with_merge(
+                &fixture.pipeline,
+                &fixture.session,
+                &conflict.id,
+                "again\n",
+                &fixture.verdict(&merged, "Ada Reviewer"),
+            )
             .await,
         Err(ClaimError::ConflictClosed(_))
     ));
@@ -267,6 +292,7 @@ async fn a_linear_writer_that_built_on_ours_needs_no_write() {
             &fixture.session,
             &conflict.id,
             &merged.merged,
+            &fixture.verdict(&merged, "Ada Reviewer"),
         )
         .await
         .unwrap();
@@ -278,7 +304,7 @@ async fn a_linear_writer_that_built_on_ours_needs_no_write() {
 }
 
 #[tokio::test]
-async fn edits_to_the_same_line_are_written_with_their_markers() {
+async fn unresolved_markers_are_refused_and_the_next_write_records_the_reviewer() {
     let path = "notes.txt";
     let fixture = Fixture::new(path).await;
     let base_hash = fixture.hash(BASE);
@@ -308,19 +334,48 @@ async fn edits_to_the_same_line_are_written_with_their_markers() {
     assert!(merged.merged.contains("THREE from theirs"));
     assert!(merged.merged.contains(">>>>>>> theirs"));
 
-    // Writing the markers is a real choice: the file then says what is unresolved, and the patch
-    // is the record of who left it that way.
-    fixture
+    // A marker block is the question, not an answer: even a complete verdict cannot write it.
+    let refused = fixture
         .claims
         .resolve_with_merge(
             &fixture.pipeline,
             &fixture.session,
             &conflict.id,
             &merged.merged,
+            &fixture.verdict(&merged, "Ada Reviewer"),
+        )
+        .await;
+    assert!(matches!(refused, Err(ClaimError::UnresolvedMarkers)));
+    assert_eq!(fixture.read(path), theirs_text, "nothing was written");
+
+    let resolved = "one\ntwo\nTHREE from ours\nfour\nfive\n";
+    let resolution = fixture
+        .claims
+        .resolve_with_merge(
+            &fixture.pipeline,
+            &fixture.session,
+            &conflict.id,
+            resolved,
+            &fixture.verdict(&merged, "Ada Reviewer"),
         )
         .await
         .unwrap();
-    assert_eq!(fixture.read(path), merged.merged);
+    assert_eq!(resolution.verdict.reviewer, "Ada Reviewer");
+    assert_eq!(resolution.verdict.decisions.len(), 1);
+    assert_eq!(
+        resolution.verdict.test_hint,
+        "cargo test -p rigel-core --test merge"
+    );
+    assert!(resolution.verdict.tests_acknowledged);
+    assert_eq!(fixture.read(path), resolved);
+
+    let sides = fixture.claims.sides(&conflict.id).await.unwrap();
+    let verdict = sides
+        .verdict
+        .expect("the verdict is stored with the conflict");
+    assert_eq!(verdict.reviewer, "Ada Reviewer");
+    assert_eq!(verdict.verdict, "accepted");
+    assert_eq!(verdict.merged_hash, resolution.patch.unwrap().result_hash);
 }
 
 #[tokio::test]
@@ -400,6 +455,7 @@ async fn a_write_after_the_capture_is_refused_instead_of_overwritten() {
             &fixture.session,
             &conflict.id,
             &merged.merged,
+            &fixture.verdict(&merged, "Ada Reviewer"),
         )
         .await;
     assert!(
@@ -460,6 +516,7 @@ async fn a_claimant_that_never_wrote_has_base_equal_to_ours() {
             &fixture.session,
             &conflict.id,
             &merged.merged,
+            &fixture.verdict(&merged, "Ada Reviewer"),
         )
         .await
         .unwrap();
@@ -509,4 +566,112 @@ async fn a_claim_collision_without_an_observed_hash_still_renders_the_file() {
             .contains("no observed version"),
         "the note explains why the row is not a lost write"
     );
+}
+
+#[tokio::test]
+async fn every_conflicted_hunk_needs_a_choice_and_the_verdict_names_the_reviewer() {
+    let path = "notes.txt";
+    let fixture = Fixture::new(path).await;
+    let base_hash = fixture.hash(BASE);
+    let ours_text = BASE
+        .replace("two\n", "TWO from ours\n")
+        .replace("four\n", "FOUR from ours\n");
+    let theirs_text = BASE
+        .replace("two\n", "TWO from theirs\n")
+        .replace("four\n", "FOUR from theirs\n");
+    fixture.write_as(&fixture.claimant, path, &ours_text).await;
+    let theirs_hash = fixture.write_as(&fixture.writer, path, &theirs_text).await;
+
+    let conflict = fixture
+        .claims
+        .record_conflict(
+            path,
+            Some(&fixture.claimant),
+            Some(&fixture.writer),
+            Some(base_hash),
+            Some(theirs_hash),
+        )
+        .await
+        .unwrap();
+    let merged = fixture.claims.merge(&conflict.id).await.unwrap();
+    assert_eq!(merged.conflicts, 2, "two lines were edited by both sides");
+    assert_eq!(merged.hunks.len(), 2);
+    assert_eq!(merged.hunks[0].base, "two");
+    assert_eq!(merged.hunks[1].base, "four");
+
+    // A complete decision list cannot smuggle the marker block through.
+    let marked = fixture
+        .claims
+        .resolve_with_merge(
+            &fixture.pipeline,
+            &fixture.session,
+            &conflict.id,
+            &merged.merged,
+            &fixture.verdict(&merged, "Ada Reviewer"),
+        )
+        .await;
+    assert!(matches!(marked, Err(ClaimError::UnresolvedMarkers)));
+
+    // The reviewer is part of the verdict, and a missing name is refused before any write.
+    let mut unnamed = fixture.verdict(&merged, "Ada Reviewer");
+    unnamed.reviewer = "   ".to_string();
+    let refused = fixture
+        .claims
+        .resolve_with_merge(
+            &fixture.pipeline,
+            &fixture.session,
+            &conflict.id,
+            "one\nTWO from ours\nthree\nFOUR from theirs\nfive\n",
+            &unnamed,
+        )
+        .await;
+    assert!(matches!(refused, Err(ClaimError::ReviewerMissing)));
+
+    // Every hunk needs its own decision: one short is not a resolution.
+    let mut short = fixture.verdict(&merged, "Ada Reviewer");
+    short.decisions.pop();
+    let refused = fixture
+        .claims
+        .resolve_with_merge(
+            &fixture.pipeline,
+            &fixture.session,
+            &conflict.id,
+            "one\nTWO from ours\nthree\nFOUR from theirs\nfive\n",
+            &short,
+        )
+        .await;
+    assert!(matches!(
+        refused,
+        Err(ClaimError::VerdictCount {
+            expected: 2,
+            given: 1
+        })
+    ));
+
+    let mut verdict = fixture.verdict(&merged, "Ada Reviewer");
+    verdict.decisions[0].choice = "ours".to_string();
+    verdict.decisions[1].choice = "theirs".to_string();
+    verdict.test_hint = "cargo test -p rigel-core --test merge".to_string();
+    let resolved = "one\nTWO from ours\nthree\nFOUR from theirs\nfive\n";
+    let resolution = fixture
+        .claims
+        .resolve_with_merge(
+            &fixture.pipeline,
+            &fixture.session,
+            &conflict.id,
+            resolved,
+            &verdict,
+        )
+        .await
+        .unwrap();
+    assert_eq!(resolution.verdict.reviewer, "Ada Reviewer");
+    assert_eq!(resolution.verdict.decisions.len(), 2);
+    assert_eq!(resolution.verdict.decisions[1].choice, "theirs");
+    assert_eq!(resolution.verdict.hunks, 2);
+    assert_eq!(fixture.read(path), resolved);
+
+    let stored = fixture.claims.verdict(&conflict.id).await.unwrap().unwrap();
+    assert_eq!(stored.reviewer, "Ada Reviewer");
+    assert_eq!(stored.decisions.len(), 2);
+    assert!(stored.tests_acknowledged);
 }

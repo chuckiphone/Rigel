@@ -193,6 +193,80 @@ pub async fn run_memory(command: MemoryCommand) -> ExitCode {
                 Err(error) => memory_failure(error, as_json),
             }
         }
+        MemoryCommand::Rank {
+            project,
+            agent,
+            query,
+            limit,
+            json: as_json,
+        } => {
+            let service = match SessionService::open(&project).await {
+                Ok(service) => service,
+                Err(error) => return crate::fail(error),
+            };
+            let memory = MemoryService::new(&project, service.pool().clone());
+            let rows = match query {
+                Some(query) => memory.recall(agent.as_deref(), &query, limit).await,
+                None => memory.facts(agent.as_deref()).await.map(|mut rows| {
+                    rows.truncate(limit.clamp(1, 50));
+                    rows
+                }),
+            };
+            match rows {
+                Ok(rows) => {
+                    if as_json {
+                        println!("{}", serde_json::to_string(&rows).unwrap_or_default());
+                    } else if rows.is_empty() {
+                        println!("no memory facts");
+                    } else {
+                        for row in rows {
+                            println!(
+                                "{:.3}  {}/{}  {}",
+                                row.score.total, row.fact.agent_id, row.fact.topic, row.fact.text
+                            );
+                            for factor in &row.score.factors {
+                                println!(
+                                    "  {:<8} {:.2} × {:.2}  {}",
+                                    factor.name, factor.value, factor.weight, factor.reason
+                                );
+                            }
+                        }
+                    }
+                    ExitCode::SUCCESS
+                }
+                Err(error) => memory_failure(error, as_json),
+            }
+        }
+        MemoryCommand::Pin {
+            project,
+            id,
+            unpin,
+            json: as_json,
+        } => {
+            let service = match SessionService::open(&project).await {
+                Ok(service) => service,
+                Err(error) => return crate::fail(error),
+            };
+            let memory = MemoryService::new(&project, service.pool().clone());
+            match memory.pin_fact(&id, !unpin).await {
+                Ok(row) => {
+                    if as_json {
+                        println!("{}", serde_json::to_string(&row).unwrap_or_default());
+                    } else {
+                        println!(
+                            "{}  {}/{}  {}  pinned={}",
+                            row.score.total,
+                            row.fact.agent_id,
+                            row.fact.topic,
+                            row.fact.text,
+                            row.fact.pinned
+                        );
+                    }
+                    ExitCode::SUCCESS
+                }
+                Err(error) => memory_failure(error, as_json),
+            }
+        }
         MemoryCommand::Write {
             project,
             agent,
@@ -361,6 +435,7 @@ pub async fn run_mcp(
         eprintln!("rigel: {error}");
         return ExitCode::from(1);
     }
+    let pins = rigel_core::mcp::pin::PinStore::new(&project);
     let ctx = rigel_mcp::McpContext {
         project_root: project,
         session_id: session,
@@ -369,6 +444,7 @@ pub async fn run_mcp(
         approval_wait: std::time::Duration::from_secs(600),
         turn_id: turn,
         tool_lists: std::sync::Arc::new(tokio::sync::Mutex::new(std::collections::HashMap::new())),
+        pins,
     };
     let stdin = tokio::io::BufReader::new(tokio::io::stdin());
     let stdout = tokio::io::stdout();

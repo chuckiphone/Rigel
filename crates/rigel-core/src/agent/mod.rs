@@ -12,6 +12,7 @@
 //! | [`agentchat`] | the vendor chat server behind the Chat tab, its health and token |
 //! | [`scripted`] | a deterministic model for tests and the offline QA run |
 //! | [`pricing`] | the local price fallback, marked `estimated` |
+//! | [`cache`] | Anthropic cache markers and the provider-reported cache row |
 //! | [`tools`] | read/list/edit/write, skills, budget — all path-checked |
 //! | [`coordinator`] | the turn loop, cancellation, checkpointing |
 //! | [`subagents`] | the background child registry and its terminal results |
@@ -26,6 +27,7 @@ pub mod aliases;
 pub mod anthropic;
 pub mod approval;
 pub mod approval_batch;
+pub mod cache;
 pub mod capabilities;
 pub mod catalog;
 pub mod compact;
@@ -43,6 +45,7 @@ pub mod gemini;
 pub mod health;
 pub mod limiter;
 pub mod local;
+pub mod merge_queue;
 pub mod model;
 pub mod obscura;
 pub mod omniroute;
@@ -60,8 +63,10 @@ pub mod scripted;
 pub mod secret_scan;
 pub mod steer;
 pub mod subagents;
+pub mod summary;
 pub mod synthesis;
 pub mod team;
+pub mod title;
 pub mod tokens;
 pub mod tool_repair;
 pub mod tools;
@@ -84,11 +89,14 @@ pub use destructive::{
     BlastRadius, BlastTarget, Finding, POLICIES, Policy, blast_radius, classify,
 };
 pub use egress::{
-    DenyOrigins, Egress, EgressError, Fetched, NetworkPolicy, OriginApprover, OriginDecision,
-    OriginRequest,
+    AddressResolver, DenyOrigins, Egress, EgressCounters, EgressError, EgressLimits,
+    EgressResponse, Fetched, NetworkAction, NetworkCheck, NetworkDecision, NetworkDefault,
+    NetworkPolicy, NetworkRule, OriginApprover, OriginDecision, OriginRequest, PinnedResolution,
+    SystemResolver,
 };
 pub use freemode::{FreeAttempt, FreeChoice};
 pub use limiter::{Permit, RateLimiter};
+pub use merge_queue::{MergeQueueEntry, MergeQueueState, MergeQueueView, QueueLease};
 pub use model::{
     ChatMessage, ChatRequest, Delta, DeltaSink, Model, ModelError, RawUsage, SseDecoder, ToolCall,
     ToolCallBuilder, ToolSpec,

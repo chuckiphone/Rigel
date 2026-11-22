@@ -21,7 +21,7 @@ same project without silently overwriting each other.
 the VPS deploy checker are green. The hosted `main` workflow is green on 2026-11-18 (run
 [44213703351](https://github.com/OkVurb/Rigel/actions/runs/44213703351)): Rust, UI, Functions,
 docs, supply-chain, hygiene and the six-spec native window lane all pass. Of the
-[200-item roadmap](docs/roadmap-0.3.md), **75 items are done, 7 are blocked and 118 remain open**;
+[200-item roadmap](docs/roadmap-0.3.md), **92 items are done, 7 are blocked and 101 remain open**;
 the blocked set needs a signing certificate, a clean Windows VM or GitHub-hosted release proof.
 
 ![The Rigel session pane: an agent roster, a transcript with a command waiting on approval, and the per-agent bill](screenshots/2026-session.png)
@@ -46,10 +46,9 @@ closes to the tray, so a running session is not interrupted by losing the window
 | **Claims and merge** | Advisory claims with tombstones and a 24-hour expiry, a 250 ms attribution watcher, a three-way merge, and a CAS patch journal with one revert per patch. |
 | **Budget and safety** | Micro-dollar accounting per turn and per child, a preflight estimate, an 80% warning, and a $20/day project cap that refuses the next turn before it starts. |
 | **Skill shelf** | An offline SQLite FTS5 index, SimHash duplicate clusters, six static capability rules with `file:line` evidence, and source health read without a network call. |
-| **Terminal** | A real PTY in the project root, live font and scrollback settings, and a command gate that names the exact text, cwd and timeout before approval. |
 | **Cloud and phone** | An opt-in Firebase project you own, shelf metadata with tombstones, one published session readable on an iPhone, and a read-only web reader. |
 | **Routing and doors** | One resolver decides the provider and model; the inspector and `rigel route explain` print selected, requested, resolved, reason and the mismatch sentence. Launch health probes every credentialed door, and aliases resolve to the pair they name. |
-| **Runtime control** | Plan mode with one approval per plan, steering at a step boundary, pause across a restart, crash recovery with tombstones, deterministic replay, compaction at 80% of the window and per-step cost and timing. |
+| **Runtime control** | Plan mode with one approval per plan, steering at a step boundary, pause across a restart, crash recovery with tombstones, deterministic replay, compaction at 80% of the window reading the stored per-turn summary, and per-step cost and timing. |
 | **Subagents** | Four read-only children with a parent DAG; write mode gives a child a worktree, per-file claims and a reviewed merge. |
 | **Home** | The Rigel Paper: each local day set as a broadsheet from the session database, with a lead story, dispatches, a plate, the day's numbers and a rack of earlier days. |
 | **Headless API** | `rigel serve` exposes the same coordinator over loopback HTTP with bearer auth, an OpenAPI 3.1 spec and SSE. |
@@ -105,6 +104,9 @@ Or install only the CLI:
 cargo install --path crates/rigel-cli
 rigel skills index anthropics/skills --limit 20
 rigel skills search "pdf"
+rigel skills builtin --install          # the eight skills that ship with Rigel
+rigel plugins browse                    # the curated catalogue
+rigel plugins install rigel-hello       # a plugin, pinned and capability-checked
 rigel doctor
 ```
 
@@ -127,12 +129,12 @@ and the rest of the build setup.
 |---|---|
 | <img src="screenshots/2026-shelf-detail.png" width="440" alt="The shelf: search results and an opened skill with grade, evidence and static review" /> | <img src="screenshots/2026-diff.png" width="440" alt="The diff view: a conflict with three versions, claims, and subagent worktrees with their reviews" /> |
 
-| The chat room | A real shell |
+| The chat room | The command palette |
 |---|---|
-| <img src="screenshots/2026-chat.png" width="440" alt="The chat room with agent messages and who is in the room" /> | <img src="screenshots/2026-terminal.png" width="440" alt="The terminal surface with a shell prompt in the project root" /> |
+| <img src="screenshots/2026-chat.png" width="440" alt="The chat room with agent messages and who is in the room" /> | <img src="screenshots/2026-palette.png" width="440" alt="The command palette over the window" /> |
 
 Every image is a capture of the built app. The [tour](web/shots/rigel-tour-2026.mp4) shows the
-shelf, palette, session, chat, diff, terminal and settings in order.
+shelf, palette, session, chat, diff and settings in order.
 
 ## Cloud is optional
 
@@ -165,9 +167,10 @@ Fastify routes replace them. The migration is staged so either side can be rolle
 
 The gaps are part of the record:
 
-- **118 roadmap items are still open.** [docs/roadmap-0.3.md](docs/roadmap-0.3.md) lists each with
-  its artifact and its "done when"; the seven blocked items need a signing identity, a clean Windows
-  VM or GitHub-hosted release proof. No open item is described here as finished.
+- **108 roadmap items still need work.** [docs/roadmap-0.3.md](docs/roadmap-0.3.md) lists each
+  with its artifact and its "done when": 102 are open and seven are blocked, and the blocked set
+  needs a signing identity, a clean Windows VM or GitHub-hosted release proof. No open item is
+  described here as finished.
 - **The signed release is not cut.** 0.3.0 has no published installer, provenance or receipt; the
   version agrees across the four build files, but signing credentials are not in this tree.
 - **The VPS API is partial.** Health, auth, devices, sessions, published sessions and the relay are
@@ -198,6 +201,8 @@ The gaps are part of the record:
 - [docs/roblox.md](docs/roblox.md): Roblox Studio MCP, 3D assets, animations and sound effects
 - [docs/design.md](docs/design.md): surface jobs, the token contract and the responsive breakpoints
 - [docs/api.md](docs/api.md): `rigel serve`, bearer auth, OpenAPI and the endpoint table
+- [docs/plugins.md](docs/plugins.md): the plugin manifest, protocol, capability boundary and catalogue
+- [docs/harness-parity.md](docs/harness-parity.md): the generated, test-enforced approvals/streaming/usage/resume/tools table
 - [docs/threat-model.md](docs/threat-model.md): five threats and what is, and is not, defended
 - [docs/troubleshooting.md](docs/troubleshooting.md): real error strings and the fix for each
 - [docs/adr/README.md](docs/adr/README.md): the routing, storage, approval and cloud decisions

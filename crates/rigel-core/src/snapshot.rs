@@ -16,10 +16,16 @@
 //! never pretends a partial copy is a backup.
 
 use std::fs;
+use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
+
+pub mod gc;
+
+pub use gc::{GcPolicy, GcRemoved, GcReport};
 
 pub const MAX_SNAPSHOT_FILES: usize = 2_000;
 pub const MAX_SNAPSHOT_BYTES: u64 = 200 * 1024 * 1024;
@@ -53,6 +59,14 @@ pub enum SnapshotError {
     WrongRoot { snapshot: String, target: String },
     #[error("manifest: {0}")]
     Manifest(String),
+    #[error(
+        "snapshot restore refused: {path} does not match its recorded hash (expected {expected}, got {actual})"
+    )]
+    HashMismatch {
+        path: String,
+        expected: String,
+        actual: String,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -69,6 +83,10 @@ pub struct FileEntry {
     /// Project-relative, with `/` separators.
     pub path: String,
     pub bytes: u64,
+    /// SHA-256 of the copied bytes. Older manifests have no hash and restore without this
+    /// verification rather than pretending they were checked.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sha256: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -110,6 +128,9 @@ pub struct RestoreReport {
     pub files_restored: usize,
     pub git_restored: bool,
     pub total_bytes: u64,
+    /// Files in a pre-hash manifest that could not be verified.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub unverified: Vec<String>,
 }
 
 /// One project's snapshot directory under the app data dir.
@@ -187,10 +208,17 @@ impl SnapshotService {
                 })?;
             }
             match fs::copy(&source_path, &destination) {
-                Ok(bytes) => copied.push(FileEntry {
-                    path: relative,
-                    bytes,
-                }),
+                Ok(bytes) => {
+                    let sha256 = file_sha256(&destination).map_err(|source| SnapshotError::Io {
+                        path: destination.clone(),
+                        source,
+                    })?;
+                    copied.push(FileEntry {
+                        path: relative,
+                        bytes,
+                        sha256: Some(sha256),
+                    });
+                }
                 Err(error) => {
                     let _ = fs::remove_dir_all(&directory);
                     return Err(SnapshotError::Io {
@@ -329,6 +357,26 @@ impl SnapshotService {
         }
         let directory = self.base.join(&manifest.id);
 
+        // Verify the whole snapshot before touching git or the worktree. A truncated or edited
+        // copy is refused with the exact path, and the project is left as it was.
+        for entry in &manifest.files {
+            let Some(expected) = &entry.sha256 else {
+                continue;
+            };
+            let source = directory.join(FILES).join(&entry.path);
+            let actual = file_sha256(&source).map_err(|source| SnapshotError::Io {
+                path: directory.join(FILES).join(&entry.path),
+                source,
+            })?;
+            if &actual != expected {
+                return Err(SnapshotError::HashMismatch {
+                    path: entry.path.clone(),
+                    expected: expected.clone(),
+                    actual,
+                });
+            }
+        }
+
         let mut git_restored = false;
         if let Some(stash) = &manifest.stash {
             let repo = GitRepo::detect(&target).ok_or_else(|| {
@@ -355,6 +403,7 @@ impl SnapshotService {
         }
 
         let mut files_restored = 0;
+        let mut unverified = Vec::new();
         for entry in &manifest.files {
             let source = directory.join(FILES).join(&entry.path);
             let destination = target.join(&entry.path);
@@ -365,9 +414,25 @@ impl SnapshotService {
                 })?;
             }
             fs::copy(&source, &destination).map_err(|source| SnapshotError::Io {
-                path: destination,
+                path: destination.clone(),
                 source,
             })?;
+            match &entry.sha256 {
+                Some(expected) => {
+                    let actual = file_sha256(&destination).map_err(|source| SnapshotError::Io {
+                        path: destination.clone(),
+                        source,
+                    })?;
+                    if &actual != expected {
+                        return Err(SnapshotError::HashMismatch {
+                            path: entry.path.clone(),
+                            expected: expected.clone(),
+                            actual,
+                        });
+                    }
+                }
+                None => unverified.push(entry.path.clone()),
+            }
             files_restored += 1;
         }
 
@@ -377,6 +442,7 @@ impl SnapshotService {
             files_restored,
             git_restored,
             total_bytes: manifest.total_bytes,
+            unverified,
         })
     }
 }
@@ -586,6 +652,20 @@ fn write_manifest(directory: &Path, manifest: &Manifest) -> Result<(), SnapshotE
         source,
     })?;
     fs::rename(&temporary, &path).map_err(|source| SnapshotError::Io { path, source })
+}
+
+fn file_sha256(path: &Path) -> std::io::Result<String> {
+    let mut file = fs::File::open(path)?;
+    let mut hasher = Sha256::new();
+    let mut buffer = [0_u8; 64 * 1024];
+    loop {
+        let read = file.read(&mut buffer)?;
+        if read == 0 {
+            break;
+        }
+        hasher.update(&buffer[..read]);
+    }
+    Ok(format!("{:x}", hasher.finalize()))
 }
 
 fn canonical(path: &Path) -> Result<PathBuf, SnapshotError> {

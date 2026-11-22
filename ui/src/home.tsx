@@ -24,7 +24,7 @@ import {
   type TurnTranscript,
 } from "./api";
 import { previewDossiers } from "./homeMock";
-import { hashString, sponsorSession } from "./sponsor";
+import { adArtwork, adInitial, hashString, sponsorSession } from "./sponsor";
 
 /** How far back the paper reads, and how many sessions it opens at once. */
 const MAX_SESSIONS = 24;
@@ -743,6 +743,7 @@ export default function HomeView({
               <span>Telegraphed from the local host</span>
             </div>
             <h1 className="paper-name">The Rigel Paper</h1>
+            <p className="paper-flagline">All the work fit to print · A local daily of agents at work</p>
             <div className="paper-dateline">
               <span>{place}</span>
               <span>{longDate(new Date())}</span>
@@ -781,6 +782,7 @@ export default function HomeView({
               <span>Telegraphed from the local host</span>
             </div>
             <h1 className="paper-name">The Rigel Paper</h1>
+            <p className="paper-flagline">All the work fit to print · A local daily of agents at work</p>
             <div className="paper-dateline">
               <span>{place}</span>
               <span>{longDate(current.date)}</span>
@@ -846,8 +848,13 @@ export default function HomeView({
                 </div>
               </section>
 
+              <div className="paper-ornament" aria-hidden="true">
+                <span>❦</span>
+              </div>
+
               {rest.length > 0 ? (
                 <section className="paper-stories" aria-label="Also in this edition">
+                  <h3 className="paper-section-title">Also in this Edition</h3>
                   {rest.map((story) => (
                     <article className="paper-story" key={story.key}>
                       <p className="paper-story-kicker">
@@ -972,6 +979,7 @@ export default function HomeView({
 function Sponsored({ ad }: { ad: GravityAd }) {
   const [opening, setOpening] = useState(false);
   const [failed, setFailed] = useState(false);
+  const art = adArtwork(ad);
 
   const cardRef = useRef<HTMLElement>(null);
   const impressed = useRef<string | null>(null);
@@ -1009,7 +1017,7 @@ function Sponsored({ ad }: { ad: GravityAd }) {
     setOpening(true);
     setFailed(false);
     try {
-      await api.gravityClick(ad.clickUrl);
+      await api.gravityClick(ad.clickUrl, ad.url, ad.test);
     } catch {
       setFailed(true);
     } finally {
@@ -1021,7 +1029,27 @@ function Sponsored({ ad }: { ad: GravityAd }) {
     <section ref={cardRef} className="paper-sponsor" aria-label="Sponsored">
       <p className="paper-sponsor-label">Advertisement</p>
       <div className="paper-sponsor-body">
-        {ad.brandName ? <p className="paper-sponsor-brand">{ad.brandName}</p> : null}
+        {ad.brandName || art ? (
+          <div className="paper-sponsor-brand-row">
+            <span className="paper-sponsor-mark" aria-hidden="true">
+              <span>{adInitial(ad.brandName)}</span>
+              {art ? (
+                <img
+                  key={art}
+                  src={art}
+                  alt=""
+                  loading="lazy"
+                  decoding="async"
+                  referrerPolicy="no-referrer"
+                  onError={(event) => {
+                    event.currentTarget.hidden = true;
+                  }}
+                />
+              ) : null}
+            </span>
+            {ad.brandName ? <p className="paper-sponsor-brand">{ad.brandName}</p> : null}
+          </div>
+        ) : null}
         <h3>{ad.title || "From the wire"}</h3>
         <p className="paper-sponsor-copy">{ad.adText}</p>
       </div>

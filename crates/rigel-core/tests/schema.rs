@@ -94,13 +94,16 @@ async fn project_schema_has_every_table_the_plan_names() {
         "claim_conflicts",
         "claims",
         "conflict_sides",
+        "conflict_verdicts",
         "interventions",
         "items",
+        "memory_facts",
         "memory_index",
         "patches",
         "schema_migrations",
         "session_skills",
         "sessions",
+        "turn_summaries",
         "turns",
     ] {
         assert!(
@@ -135,6 +138,14 @@ async fn spend_is_kept_in_micro_dollars_and_turns_record_their_stop() {
         column_names(&store, "agents")
             .await
             .contains(&"spend_micros".to_string())
+    );
+    // Roadmap 58: the roster's own model pair.
+    let agent_columns = column_names(&store, "agents").await;
+    assert!(agent_columns.contains(&"provider".to_string()));
+    assert!(agent_columns.contains(&"effort".to_string()));
+    assert!(
+        agent_columns.contains(&"tool_overrides".to_string()),
+        "a per-agent permission override has a column"
     );
     assert!(
         column_names(&store, "turns")

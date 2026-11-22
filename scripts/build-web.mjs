@@ -24,7 +24,6 @@ import { join, resolve } from "node:path";
 
 const SOURCE = resolve("web");
 const OUT = resolve(".deploy");
-const CONSTELLATION_ASSETS = resolve("ui/public/constellations");
 const check = process.argv.includes("--check");
 const CMS_URL = (process.env.RIGEL_CMS_URL || "").trim().replace(/\/+$/, "");
 
@@ -74,14 +73,6 @@ if (!existsSync(join(SOURCE, "index.html"))) {
 
 rmSync(OUT, { recursive: true, force: true });
 cpSync(SOURCE, OUT, { recursive: true });
-
-// The window bundles these SVGs from `ui/public`; publish the same files beside the site so the
-// cloud copy and the offline copy cannot drift.
-if (!existsSync(CONSTELLATION_ASSETS)) {
-  console.error(`No constellation assets at ${CONSTELLATION_ASSETS}`);
-  process.exit(1);
-}
-cpSync(CONSTELLATION_ASSETS, join(OUT, "constellations"), { recursive: true });
 
 await applyCmsContent();
 

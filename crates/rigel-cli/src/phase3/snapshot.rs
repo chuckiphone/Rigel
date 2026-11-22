@@ -8,7 +8,7 @@ use std::path::PathBuf;
 use std::process::ExitCode;
 
 use clap::Subcommand;
-use rigel_core::SnapshotService;
+use rigel_core::{GcPolicy, SnapshotService};
 use serde_json::json;
 
 #[derive(Subcommand)]
@@ -32,6 +32,18 @@ pub enum SnapshotCommand {
         id: String,
         #[arg(long, value_name = "PATH", default_value = ".")]
         project: PathBuf,
+        #[arg(long)]
+        json: bool,
+    },
+
+    /// Remove old snapshots that have no readable manifest or whose project is gone.
+    Prune {
+        /// Only prune an orphan older than this many days.
+        #[arg(long, default_value_t = 30)]
+        older_than_days: u64,
+        /// Show what would be removed without deleting it.
+        #[arg(long)]
+        dry_run: bool,
         #[arg(long)]
         json: bool,
     },
@@ -128,6 +140,53 @@ pub fn run_snapshot(command: SnapshotCommand, data_dir: PathBuf) -> ExitCode {
                         );
                     }
                     ExitCode::SUCCESS
+                }
+                Err(error) => fail(error, as_json),
+            }
+        }
+
+        SnapshotCommand::Prune {
+            older_than_days,
+            dry_run,
+            json: as_json,
+        } => {
+            let snapshots = SnapshotService::new(".", data_dir);
+            let policy = GcPolicy {
+                orphan_grace: std::time::Duration::from_secs(
+                    older_than_days.saturating_mul(24 * 60 * 60),
+                ),
+                dry_run,
+            };
+            match snapshots.gc(&policy) {
+                Ok(report) => {
+                    if as_json {
+                        println!(
+                            "{}",
+                            json!({ "ok": report.errors.is_empty(), "gc": report })
+                        );
+                    } else {
+                        println!(
+                            "{} {} snapshot(s), {} bytes {}",
+                            if dry_run { "would prune" } else { "pruned" },
+                            report.removed.len(),
+                            report.bytes_reclaimed,
+                            if dry_run { "(dry run)" } else { "reclaimed" }
+                        );
+                        for removed in &report.removed {
+                            println!(
+                                "  {}  {}  {} bytes",
+                                removed.id, removed.reason, removed.bytes
+                            );
+                        }
+                        for error in &report.errors {
+                            eprintln!("rigel: {error}");
+                        }
+                    }
+                    if report.errors.is_empty() {
+                        ExitCode::SUCCESS
+                    } else {
+                        ExitCode::from(1)
+                    }
                 }
                 Err(error) => fail(error, as_json),
             }

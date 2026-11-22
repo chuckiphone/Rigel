@@ -32,6 +32,7 @@
         "minimizable": false,
         "decorations": false,
         "transparent": true,
+        "shadow": false,
         "visible": false,
         "skipTaskbar": true,
         "alwaysOnTop": true
@@ -42,7 +43,7 @@
         "default-src": "'self'",
         "script-src": "'self'",
         "style-src": "'self' 'unsafe-inline'",
-        "img-src": "'self' data: blob:",
+        "img-src": "'self' data: blob: https:",
         "font-src": "'self'",
         "connect-src": "ipc: http://ipc.localhost",
         "object-src": "'none'",

@@ -28,6 +28,31 @@
      darker shade of the same amber so labels clear AA on white. Fills keep --accent. */
   --accent-text: #e9a23b;
   --focus: var(--accent);
+  /* Session sponsor card. Burnt orange from the app's amber family, with a light logo tile and a
+     white CTA; the gradient darkens behind the copy so white text keeps its contrast. */
+  --ad-orange-1: #a94a08;
+  --ad-orange-2: #8d3b05;
+  --ad-orange-3: #6f2c04;
+  --ad-border: rgba(255, 232, 208, 0.2);
+  --ad-highlight: rgba(255, 233, 207, 0.04);
+  --ad-shadow: rgba(35, 11, 1, 0.38);
+  --ad-text: #ffffff;
+  --ad-copy: #fff7ef;
+  --ad-label: #fff7ef;
+  --ad-tile-1: #fff6ea;
+  --ad-tile-2: #f3c58e;
+  --ad-tile-border: rgba(255, 238, 219, 0.58);
+  --ad-tile-highlight: rgba(255, 255, 255, 0.9);
+  --ad-tile-shadow: rgba(54, 20, 2, 0.22);
+  --ad-ink: #7a3403;
+  --ad-badge-center: #ffc76f;
+  --ad-badge-edge: #cf7410;
+  --ad-badge-ring: rgba(255, 239, 222, 0.62);
+  --ad-button: #ffffff;
+  --ad-button-text: #873703;
+  --ad-button-highlight: rgba(255, 255, 255, 0.9);
+  --ad-button-shadow: rgba(54, 20, 2, 0.28);
+  --ad-focus: #ffffff;
   --verified: #4cc38a;
   --danger: #e5484d;
   --scroll-thumb: #333a43;

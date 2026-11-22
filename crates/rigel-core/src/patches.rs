@@ -258,6 +258,10 @@ impl PatchPipeline {
         stop: StopAt,
     ) -> Result<Patch, PatchError> {
         let path = self.resolve(rel)?;
+        // Roadmap 46: hold the path's one writer slot across the read/check/write window. A
+        // second writer registers as waiting and names this agent in the queue snapshot; it
+        // cannot observe the base and write while this patch is between those steps.
+        let _queue = crate::agent::merge_queue::acquire(&self.root, rel, agent_id).await;
         let current_bytes = match fs::read(&path) {
             Ok(bytes) => Some(bytes),
             Err(error) if error.kind() == io::ErrorKind::NotFound => None,
@@ -384,6 +388,8 @@ impl PatchPipeline {
         }
 
         let target = self.resolve(&patch.path)?;
+        let _queue =
+            crate::agent::merge_queue::acquire(&self.root, &patch.path, &patch.agent_id).await;
         let current = match fs::read(&target) {
             Ok(bytes) => sha256_hex(&bytes),
             Err(error) if error.kind() == io::ErrorKind::NotFound => sha256_hex(b""),
@@ -441,6 +447,8 @@ impl PatchPipeline {
         }
 
         let target = self.resolve(&patch.path)?;
+        let _queue =
+            crate::agent::merge_queue::acquire(&self.root, &patch.path, &patch.agent_id).await;
         let bytes = fs::read(&target)?;
         let current_hash = sha256_hex(&bytes);
         if current_hash != patch.result_hash {

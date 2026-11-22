@@ -1,0 +1,45 @@
+{
+  "harness": "muse",
+  "scenarios": {
+    "approval": [],
+    "error": [],
+    "interrupt": [
+      {
+        "event": "delta",
+        "kind": "message",
+        "text": "working"
+      }
+    ],
+    "start": [
+      {
+        "event": "delta",
+        "kind": "message",
+        "text": "po"
+      },
+      {
+        "event": "delta",
+        "kind": "message",
+        "text": "ng"
+      }
+    ],
+    "tool_call": [
+      {
+        "event": "item",
+        "item": {
+          "kind": "command",
+          "body": {
+            "command": "cargo test",
+            "exit_code": 0,
+            "output": "ok"
+          }
+        },
+        "status": null
+      },
+      {
+        "event": "delta",
+        "kind": "message",
+        "text": "All tests passed."
+      }
+    ]
+  }
+}

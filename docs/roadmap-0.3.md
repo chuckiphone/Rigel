@@ -4,10 +4,10 @@
 tree of 6 Nov 2026 and absorbs the deferred round-9 items from [roadmap-0.2.md](roadmap-0.2.md)
 rather than leaving a second list.
 
-**Tally (2026-11-18):** 75 Done · 7 Blocked · 118 Open. The 0.3.0 preview tree ships every Done
+**Tally (2026-11-22):** 92 Done · 7 Blocked · 101 Open. The 0.3.0 preview tree ships every Done
 item. The previous pass closed 53, 60, 64, 67, 69, 70, 75, 78, 80, 106, 107, 130, 140 and 182;
-this pass closed 43, 44, 65 and 84. The open and blocked items below are unchanged by these
-passes.
+this pass closed 43, 44, 45, 46, 47, 48, 49, 52, 55, 56, 57, 58, 61, 62, 63, 65, 66, 68, 74 and 84. The
+remaining open and blocked items below are unchanged by these passes.
 
 **Verified gate (2026-11-08).** `cargo fmt --all -- --check`, `cargo clippy --workspace
 --all-targets -- -D warnings` and `cargo test --workspace --no-fail-fast` pass (53 test binaries,
@@ -101,7 +101,7 @@ done signal, and the eight-state table is the evidence a review will use.
 1. **W1 · P0 · L · Native window driver.** `e2e/wdio.conf.ts` drives the built app through open,
    scripted turn, approval and diff, and a second spec renames an IPC command. — done when
    `npm run test:window` passes on the Windows CI runner and the renamed run fails by name.
-   **Done (2026-11-18):** `npm --prefix ui run test:window` runs six spec files (window, IPC, approval, route, gravity, screenshot) green on Windows, the renamed command fails by name, and the `window` job in `.github/workflows/ci.yml` passed the same suite in hosted run [44213703351](https://github.com/OkVurb/Rigel/actions/runs/44213703351).
+   **Done (2026-11-22):** `npm --prefix ui run test:window` runs eight spec files (window, IPC, approval, route, gravity, screenshot, composer, plugins) green on Windows, the renamed command fails by name, and the `window` job in `.github/workflows/ci.yml` runs the same suite. The suite is 15 tests: approval 1, composer 1, gravity 1, IPC 1, plugins 6, route 2, screenshot 1, window 2.
 
 
 2. **W1 · P0 · M · Migration rehearsal.** `crates/rigel-core/tests/schema.rs` builds a database at
@@ -508,22 +508,71 @@ done signal, and the eight-state table is the evidence a review will use.
 45. **W3 · P1 · L · Guided merge conflicts.** `ui/src/conflict-editor.tsx` is a three-way editor
     with per-hunk accept, a test hint and a stored verdict. — done when a conflicted hunk can never
     be accepted wholesale and the verdict names the reviewer.
+   **Done (2026-11-18):** `ui/src/conflict-editor.tsx` renders every conflict block with its base,
+    ours and theirs and requires one decision per hunk; there is no accept-all, and the write stays
+    disabled until every hunk, the reviewer and the path-derived test hint are answered. The core
+    refuses a marker line, a missing reviewer, a missing test acknowledgement, and a short,
+    duplicate or unknown decision list. Migration `0019_conflict_verdicts` stores the reviewer,
+    choices, test hint and merged hash; `ClaimService::sides` returns that verdict. `cargo test -p
+    rigel-core --test merge` passes 9 tests including the two-hunk and marker-refusal cases, and
+    `ui/tests/conflict.spec.ts` proves the two decisions, hint and named verdict in the rendered
+    editor.
 
 46. **W3 · P1 · L · Merge queue and one writer.** `crates/rigel-core/src/agent/merge_queue.rs`
     serialises writes to one path behind advisory claims. — done when a second writer sees a wait
     state naming the holder and no two writers reach the same path at once.
+   **Done (2026-11-18):** every `PatchPipeline` proposal, apply and revert now takes the path's
+    lease from `agent/merge_queue.rs` before it reads the file. A free lane is granted at once; a
+    second writer is appended with the holder's id and waits for the lease to drop. The Diff view
+    polls `merge_queue` and renders one lane per path with the holder, the waiter and its position,
+    so the wait state is visible in the window. The queue is in memory; the patch journal remains
+    the crash-recovery record, so no migration was needed. `cargo test -p rigel-core --lib
+    agent::merge_queue` proves the holder/waiter state, peak concurrency of one and independent
+    paths; `cargo test -p rigel-core --test merge_queue` holds a lane and proves a real pipeline
+    proposal stays out of the file until released; `ui/tests/mergequeue.spec.ts` asserts the
+    rendered holder and waiting-on names.
 
 47. **W3 · P1 · M · Handoff prompt.** `crates/rigel-cli/src/handoff.rs` packages the task,
     constraints, files, diff summary and open questions. — done when `rigel handoff` output
     round-trips into a new session with the constraints intact and nothing marked done early.
+   **Done (2026-11-18):** `rigel handoff` selects the newest unfinished session (or `--session`),
+    carries the project rule set (`AGENTS.md` winning over `CLAUDE.md`, plus `.cursor/rules`)
+    verbatim with repeatable `--constraint`s, lists the session's `file_change` paths and the
+    current worktree status, and prints a bounded `git diff --stat`. Open questions come from
+    `--open-question` and the latest
+    turn's error rows; the proposed plan is labelled unverified. `--json` exposes the components
+    and the prompt, and `--out` writes it. The prompt says nothing is marked done, labels the last
+    model output unverified, and keeps every open item unchecked. `cargo test -p rigel-cli --test
+    handoff` proves a rules-bearing session round-trips into a new session with the constraint
+    intact, the worktree diff and untracked file present, and no checked boxes.
 
 48. **W3 · P1 · M · Harness parity matrix.** `docs/harness-parity.md` is a tested table of
     approvals, streaming, usage, resume and tools for native, Claude, Codex, Gemini and ACP. — done
     when every cell is pass, fail or not-supported with a date, and no cell is blank.
+    **Done (2026-11-18):** `crates/rigel-adapters/src/parity.rs` generates
+    `docs/harness-parity.md` from `registry::capabilities` and the actual resume path, with every
+    cell dated and one of `pass`, `fail` or `not-supported`. The table covers Native, Claude Code,
+    Codex, Gemini CLI and both ACP spawns (Cursor and Cline). Codex and Claude resume are `fail`
+    because their vendor resume commands exist but the adapters never forward the recorded
+    thread/session id; ACP resume is `not-supported` because the client only calls `session/new`.
+    `rigel harness parity` prints, writes or checks the generated table. `cargo test -p rigel-cli
+    --test harness_parity` compares the checked-in file byte for byte and pins every status;
+    `cargo test -p rigel-adapters parity` checks each cell against the capability flags, so a flag
+    that flips without the table changing fails the gate.
 
 49. **W3 · P2 · L · Unified harness events.** `crates/rigel-adapters/src/event.rs` defines one event
     enum for every adapter. — done when each adapter has a conformance fixture and the renderer has
     no branch on harness name.
+   **Done (2026-11-18):** `crates/rigel-adapters/src/event.rs` defines `HarnessEvent`, the single
+    vocabulary for Claude, Codex, Muse Code and the shared ACP client. Each adapter has a
+    `run_turn_unified` / `prompt_unified` path that converts its own decoder event losslessly;
+    `StreamRenderer` consumes that enum and has no harness argument or harness-name branch. The CLI
+    uses the same renderer for Codex, Claude and Muse, and the window's Claude path and the ACP CLI
+    renderer consume the unified stream too. `crates/rigel-adapters/tests/events.rs` replays all
+    five golden scenarios through every adapter and compares four checked-in conformance fixtures
+    (`tests/fixtures/events/`), proves Cursor, Cline and Gemini emit the same ACP events, and runs
+    every harness fixture through the one renderer. Regenerate deliberately with
+    `RIGEL_UPDATE_EVENTS=1 cargo test -p rigel-adapters --test events`.
 
 50. **W3 · P1 · M · Tool-call repair.** `crates/rigel-core/src/agent/tool_repair.rs` allows one bounded repair for malformed JSON, an
     unknown tool or wrong arguments. — done when a second failure keeps the raw call in the
@@ -544,9 +593,23 @@ done signal, and the eight-state table is the evidence a review will use.
     `cargo test -p rigel-core agent::tokens::tests` -> `3 passed`; `cargo test -p rigel-core
     --test native a_guaranteed_context_overflow_is_refused_before_the_model_runs` -> `1 passed`.
 
-52. **W3 · P2 · M · Prompt caching.** `crates/rigel-core/src/agent/cache.rs` uses provider cache
-    markers where they exist. — done when the transcript shows returned cache reads and writes and
+52. **W3 · P2 · M · Prompt caching.** `crates/rigel-core/src/agent/cache.rs` uses provider cache markers where they exist. — done when the transcript shows returned cache reads and writes and
     no saving is claimed that the provider did not report.
+    **Done (2026-11-18):** `agent/cache.rs` marks the Anthropic Messages body with three ephemeral
+    cache breakpoints (the last tool definition, the system block, and the last content block of
+    the last message) and leaves the fourth of the API's four free; no other provider is sent a
+    marker because those doors cache automatically. The adapter now parses
+    `cache_creation_input_tokens` into a new `Usage::cache_write_tokens` instead of folding it
+    into input, keeps reads in `cached_input_tokens`, and every usage row carries
+    `cache.read_tokens` and `cache.write_tokens` exactly as reported. `cache.saved_micros`
+    appears only when a reported read can be priced from a published row, is labelled
+    `estimated`, and never appears for a provider that reported no read; a reported write is
+    shown but never claimed as a saving. The per-step cost inspector and the turn details render
+    all three. `cargo test -p rigel-core --lib agent::cache` -> 5 passed; `cargo test -p
+    rigel-core --lib agent::anthropic` -> 7 passed (markers on the wire and writes distinct from
+    reads); `cargo test -p rigel-core --test native
+    a_usage_row_shows_reported_cache_reads_and_writes_and_only_a_reported_saving` -> 1 passed
+    (the row, the stored turn and the absence of a claim for a silent provider).
 
 53. **W3 · P0 · M · Prompt section budget.** `crates/rigel-core/src/agent/prompt.rs` reports
     characters and tokens for the system, project, skill and tool sections separately. — done when
@@ -564,18 +627,73 @@ done signal, and the eight-state table is the evidence a review will use.
 55. **W3 · P1 · M · Memory ranking and decay.** `crates/rigel-core/src/memory/rank.rs` scores a fact
     by recency, use and pin. — done when the score is explainable per fact, a pinned fact never
     decays, and the inspector shows the three factors.
+    **Done (2026-11-18):** `memory/rank.rs` treats every non-heading line in committed memory as a
+    fact and scores it from recency (0.50, 30-day half-life), use (0.30, every four recalls
+    halves the gap to one) and pin (0.20). Every score returns all three `Factor` rows with the
+    value, weight, contribution and a sentence of reasoning, so a rank is never a bare number.
+    Pinning holds the recency value at 1.0 rather than only adding the pin weight, so a pinned
+    fact's score is identical today and five years later while an unpinned fact decays.
+    Migration `0020_memory_facts` indexes each fact by agent, topic and text hash; the pin and
+    use counts survive a rewrite, and a deleted line leaves the ranking. `MEMORY.md` and
+    `topics/*.md` are re-read on every rank; a recall increments `uses` only for the facts it
+    returns. `rigel memory rank` prints the three factors and `rigel memory pin` toggles the
+    promise; `ui/src/inspector/memory.tsx` renders the same arithmetic in the session inspector
+    and offers Recall and Pin. `cargo test -p rigel-core --lib memory` -> 18 passed (the factor
+    arithmetic, pinned non-decay, recall counting, pin across a rewrite, deleted facts) and
+    `ui/tests/memory.spec.ts` asserts all three labelled factors and the pin toggle in the
+    rendered panel.
 
 56. **W3 · P1 · S · Cheap-model session titles.** `crates/rigel-core/src/agent/title.rs` generates a
     short title with the cheapest working model. — done when generation never blocks session
     creation and a manual rename always wins over a later automatic title.
+    **Done (2026-11-18):** `agent/title.rs` keeps a price-ordered candidate list (the local
+    Antigravity flash row, then the three cheapest published OpenRouter rows) and falls through
+    on a missing key, a failed call, a 20-second timeout or a reply that is not a title. The
+    first turn spawns the job on Tauri's runtime after the prompt is accepted, so no provider
+    call sits in front of session creation or the turn; `rigel session title --id --prompt` runs
+    the same generator by hand. Migration `0021_session_title_source` records `manual` (including
+    every name that predates this item), `auto`, or no source. `apply_auto_title` writes only
+    while the source is null, so a rename that lands mid-generation wins without a check in the
+    caller and a second automatic title never replaces the first; clearing a manual name opens
+    the door again. The window's `+ session` now starts untitled (a template still supplies its
+    own manual name), so the first prompt is what gets named. `cargo test -p rigel-core --lib
+    agent::title` -> 7 passed, including the hanging-model race, timeout fall-through and the
+    price order; `cargo test -p rigel-core --test sessions` -> 11 passed, including
+    `only_an_untitled_session_accepts_an_automatic_title`.
 
 57. **W3 · P1 · M · Turn summaries.** `crates/rigel-core/src/agent/summary.rs` stores one compact
     summary per turn with provenance to the items it covers. — done when compaction and search both
     consume the stored summary instead of re-deriving it.
+    **Done (2026-11-18):** `agent/summary.rs` builds one deterministic, extractive summary per
+    finished turn — prompt, assistant and user messages, commands with a bounded result window,
+    file changes, MCP calls and errors — under 800 characters and records only the item ids that
+    contributed a line. `SessionService::finish_turn` writes it; migration `0022_turn_summaries`
+    holds one row per turn with a session index and cascades with the turn and session. Compaction
+    joins each dropped turn's stored text (backfilling a pre-migration turn once) rather than
+    walking its items, and `search::workspace` matches summaries before item bodies, returning
+    `from_summary` for the palette's "from the turn summary" row; `rigel session summary --id`
+    prints the stored rows and their provenance. Tests: 3 summary, 3 compact, 1 summaries and 1
+    CLI summary test pass, including a stored summary that replaces the turn's item text and a
+    search that deletes the items and still finds the turn through its summary; the native suite's
+    200-turn compaction case also passes.
 
 58. **W3 · P1 · M · Per-agent model and presets.** `ui/src/agent-row.tsx` gives each agent row its
     own picker and lets a project preset override it. — done when the resolved pair is shown before
     send and a preset change is visible on every affected row.
+    **Done (2026-11-19):** `ui/src/agent-row.tsx` is the roster row: it renders a `ModelControls`
+    picker and a role menu per agent, so a pick belongs to that row instead of the window. Migration
+    `0023_agent_model_config` adds `agents.provider` and `agents.effort`; `set_agent_config` writes
+    the pair together, `apply_role_preset` writes the preset's model/effort and clears the row's
+    provider, and `clear_role_preset` leaves the preset while keeping the pair it resolved to. The
+    precedence is one core ladder (`routing::for_agent`): role preset, then the agent row, then the
+    composer's request, then Settings, and `turn_send` uses it for the model, door and effort. A
+    preset's row shows the preset pair with the picker disabled and a `preset` tag; selecting
+    `custom` keeps the pair and re-enables the picker, so every row that still names a preset
+    resolves the same pair. The composer's `next` chip displays the model, effort and source
+    (`preset`, `agent row`, `composer` or `settings`) before Send, and the quote uses the same pair.
+    Tests: `agent_config` (store, preset override, clear, invalid effort), `dag_persistence` (a stale
+    graph snapshot cannot reopen a blocked dependent) and three `routing::for_agent` precedence
+    cases; the UI build and the agent-row Playwright spec pass.
 
 ## 4. Tools, approvals and security (59–85)
 
@@ -592,14 +710,69 @@ done signal, and the eight-state table is the evidence a review will use.
 61. **W3 · P1 · M · Network policy editor.** `ui/src/settings/network-policy.tsx` edits the kill
     switch, allowlist and disabled sessions. — done when the UI writes the same table the core
     enforces and a test proves the UI cannot persist a rule the core ignores.
+    **Done (2026-11-19):** `NetworkPolicy` in `.rigel/network.json` now holds an ordered `rules` list
+    (`allow` / `deny` against an exact origin, a bare host, a `*.` subdomain wildcard or `*`), a
+    `default` of `ask` or `deny`, the kill switch and `disabled_sessions`; the first matching rule
+    wins and an allow rule still asks the once/session/always question. A legacy `allowlist` loads
+    as allow rules with a deny default, so the old OR semantics survive without a new table. The
+    same `check` decides `fetch_url`, `browser_open` and Exa: a rule refusal carries `RULE_DENY`
+    with its pattern and note, a default refusal carries `DEFAULT_DENY`, and neither reaches the
+    approver or the socket. `rigel network show|check|set` exposes the same file, with exit 1 for a
+    refused URL and exit 2 for an unenforceable policy. `network_get` / `network_set` /
+    `network_check` back Settings → Network; its editor writes through `NetworkPolicy::save`, and
+    validation refuses an empty, path-bearing, unsupported-scheme or over-bound rule before
+    anything is written. Tests: 8 matching/defaulting/round-trip unit tests (including a save that
+    leaves the previous file intact), 2 new real `fetch_url` tests (a deny rule refuses before the
+    approver; an allow rule admits its origin under a default deny), 3 CLI tests through the built
+    binary (`set`/`show`/`check`, the refused bad rule, legacy migration) and the network-policy
+    Playwright spec.
 
 62. **W3 · P1 · M · Egress limits and DNS pinning.** `crates/rigel-core/src/net/egress.rs` applies
     per-origin rate and size caps, resolves once and rejects a changed address. — done when the
     address actually contacted is recorded per request and a rebind fails the request.
+    **Done (2026-11-19):** `EgressLimits` is persisted as `limits` in the existing
+    `.rigel/network.json` (a file without it loads safe defaults), with a fixed window, per-origin
+    and per-agent request counts (`0` means unbounded), a response cap up to 4 MiB, DNS pinning on
+    by default, and private addresses refused by default. `Egress` shares runtime counters across
+    clones; an exhausted limit returns `EGRESS_RATE_LIMIT` or `EGRESS_AGENT_LIMIT` with
+    `retry_after_secs`. The injectable `AddressResolver` is queried twice when pinning; a changed
+    normalized answer is `DNS_REBIND`, loopback/private/link-local/metadata/multicast/reserved
+    answers are `ADDRESS_BLOCKED`, and the pinned `reqwest` client connects only to the validated
+    address. `fetch_url` and `browser_open` report the address they contacted; Exa's POST path
+    uses the same policy, window, address checks and size cap. `browser_open` runs the same
+    preflight and records the pinned address, but the Obscura subprocess makes its own connection,
+    so the engine is only told whether private targets are allowed; that residual gap is stated
+    rather than hidden. `rigel network show` prints the limits, `rigel network check --resolve`
+    is the dry run, and Settings → Network edits the same fields. Tests: 12 `agent::egress` unit
+    tests (window/refill, bounds, address table, safe load) and 8 new `egress_limits` integration
+    tests (pinned success with recorded address, rebind refusal, metadata refusal before consent,
+    origin and agent limits, configured fetch cap, Exa address reporting and size refusal) plus the
+    existing 12 egress tests; CLI network and Playwright specs updated.
 
 63. **W3 · P2 · L · Sandbox profiles.** `crates/rigel-core/src/sandbox/mod.rs` adds Windows Job
     Objects, macOS `sandbox-exec` and Linux namespaces where available. — done when each profile has
     a written containment statement and a test that asserts both what it blocks and what it allows.
+    **Done (2026-11-19):** `SandboxProfile` now has `None`, `JobObject(JobLimits)`,
+    `SandboxExec(SandboxExecPolicy)` and `LinuxNamespaces(LinuxNamespacePolicy)`; every profile
+    returns a `containment()` statement naming both what it blocks and what it allows, and
+    `Sandbox::new` refuses an unavailable profile instead of falling back unsandboxed.
+    `Tools::with_sandbox` installs one for approved commands; `run_command` fails with `SANDBOX`
+    if the profile cannot be prepared or attached, includes the profile and containment statement
+    in its result, and keeps the Job Object handle alive for the child's lifetime. Windows uses
+    `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE` plus optional active-process and job-memory caps; macOS
+    builds an SBPL policy with writes under the configured roots and optional network, and Linux
+    wraps the command in `unshare` with user/mount/PID/network namespaces. Tests: 4
+    `sandbox` unit tests, including real Windows Job Object tests that allow a command to finish
+    and prove a child is killed when the job handle closes; the macOS and Linux runtime tests are
+    `cfg`-gated for their hosts. The real `run_command` path is exercised with a Job Object in
+    `tests/command.rs` (13 tests, including an unavailable profile refusing before the command
+    starts).
+    **Known limitations:** a Windows Job Object is a lifetime/resource boundary, not a filesystem
+    or network sandbox; it allows both. The macOS profile relies on the deprecated
+    `sandbox-exec`, and its runtime test was not executed on this Windows host. The Linux profile
+    requires `unshare` and usable user namespaces; the mount namespace alone does not remount the
+    filesystem, and its runtime test was not executed here. No CLI or window surface was added
+    for selecting a profile; the opt-in is the core `Tools::with_sandbox` API.
 
 64. **W3 · P0 · M · Approval batching and blast radius.** `crates/rigel-core/src/agent/approval_batch.rs`
     groups related requests while keeping each scope separate. — done when the card lists resolved
@@ -619,6 +792,44 @@ done signal, and the eight-state table is the evidence a review will use.
 66. **W3 · P1 · M · Permission matrix.** `ui/src/settings/permissions.tsx` shows per-agent and
     per-role tool grants in one table. — done when a role can narrow a project grant but a test
     proves it cannot silently widen one.
+    **Done (2026-11-19):** `crates/rigel-core/src/permissions.rs` adds the project ceiling in
+    `.rigel/permissions.json` (a missing file keeps the old all-tools behaviour; an empty list is
+    a real denial; malformed or unknown entries are refused). `ProjectPermissions::effective_for_role`
+    is the intersection of the project grant and the role preset, and the matrix returns the same
+    effective sets for every role and every open session's agents. `Tools` now carries a project
+    grant, checks it before the role allowance on both `specs()` and the real `execute` path, and
+    checks the same ceiling before the coordinator's own `spawn_agents`, `assign_agents`,
+    `merge_subagent`, `subagent_results` and chat-tool dispatch. It refreshes at the root of every
+    turn. A spawned child is clamped to the parent's effective grant captured at spawn as well as
+    the project ceiling, its role and its override; the same `intersect_grants` calculation is
+    used by `Tools`, the direct route and the matrix. A role can only remove tools. The Tauri surface
+    adds `permissions_get`, `permissions_set` and (2026-11-19) `permissions_set_agent`, and
+    `ui/src/settings/permissions.tsx` renders one checkbox table with the project ceiling, all
+    four role columns and one column per agent; the save button writes the grant and reloads the
+    matrix. Per-agent overrides are stored in the `agents.tool_overrides` column (migration 0024);
+    `effective_for_agent` and `agent_tool_filter` intersect project, role and override, so an
+    override can only narrow. `Tools::new` reads the project file itself as well as the
+    coordinator reloading it, which closes the direct `rigel serve` command route. Tests: 6
+    `permissions` unit tests and 9 real `Tools`/coordinator tests in
+    `crates/rigel-core/tests/permissions.rs` (a role's requested `edit_file`/`run_command` cannot
+    pass a `read_file`-only project grant, a custom role is still capped, a writable child's
+    worktree tool set inherits the ceiling, an agent override narrows its role without widening
+    it, a parent that lacks `read_file` cannot delegate it to a researcher child, a broader-role
+    child stays clamped to its parent, child role and override still narrow, and the coordinator
+    reads a stored override for its next turn);
+    `ui/tests/permissions.spec.ts` drives the table, narrows `run_command` from the project and
+    from one agent, saves, and proves the role and agent cells go from granted to withheld.
+    `cargo test -p rigel-core --lib permissions` -> 6 passed; `cargo test -p rigel-core --test
+    permissions` -> 9 passed; `cargo test -p rigel-app` -> 30 passed; the UI build and the full
+    Playwright suite pass.
+    **Known limitations:** the matrix grants tool names, not individual commands or MCP tools;
+    those keep their existing approval scopes. An override is a filter on the agent row, not a
+    grant: it can only remove tools the role and project already allow. A malformed policy fails
+    closed for the turn (every tool denied) until the file is fixed and the matrix is saved again.
+    A saved all-tools list freezes the catalog at save time; after a build adds a tool, “Grant
+    every tool” must be saved again to include it. No CLI subcommand was added because item 66
+    names only the settings surface; CLI turns still inherit the coordinator's reload and
+    enforcement.
 
 67. **W3 · P0 · M · Skill script sandbox.** `crates/rigel-core/src/skills/run.rs` runs a skill script
     with declared args, an env allowlist, a cwd jail, a timeout and captured output. — done whena test asserts the child environment is cleared and no app variable leaks through.
@@ -627,6 +838,36 @@ done signal, and the eight-state table is the evidence a review will use.
 68. **W3 · P1 · M · MCP pinning and schema diff.** `crates/rigel-core/src/mcp/pin.rs` records each
     server's version and hash and every tool's schema. — done when an update shows a schema diff and
     the changed tool is not callable until the diff is accepted.
+    **Done (2026-11-19):** `crates/rigel-core/src/mcp/pin.rs` stores
+    `.rigel/mcp-pins.json`: each server's `initialize` version, a SHA-256 of the version and
+    canonicalised tool catalogue, and every tool's full definition and hash. The project-MCP
+    path reads that pin after the real bounded `initialize` → `tools/list` handshake. A missing
+    pin is recorded once as first use; an unchanged hash passes; a changed catalogue returns a
+    diff naming added, removed and schema-changed tools. Added and changed tools stay blocked
+    until the `mcp_schema` card is accepted, and the card shows the before/after definitions and
+    the blocked names. Project/Always acceptance rewrites the pin, This session accepts the
+    catalogue for this MCP process only, and Allow once accepts it for that call. A version-only
+    or removal-only change is pinned without a card because no tool can be called from it.
+    Malformed, unknown-version or unreadable pins fail closed with `MCP_PIN_INVALID`; a failed
+    write fails closed with `MCP_PIN_WRITE`; a refused or timed-out schema card returns
+    `MCP_SCHEMA_DENIED`, and the refusal is recorded with `gate: "R68"`. Tests: 7 `mcp::pin`
+    unit tests (first use, changed/added blocking, removal-only, version-only, canonical hash,
+    session-scoped acceptance, malformed file, duplicate names) and
+    `crates/rigel-mcp/tests/project_mcp.rs::a_changed_tool_is_blocked_until_the_schema_diff_is_accepted`,
+    which drives the real `rigel_approve` path and the fixture MCP server: the first call denies
+    with `MCP_SCHEMA_DENIED`, the second accepts the diff and only then reaches the server and
+    tool cards and allows the call. `cargo test -p rigel-core --lib mcp::pin` -> 7 passed;
+    `cargo test -p rigel-mcp --test project_mcp` -> 3 passed; the UI build passes with the diff
+    block in `ui/src/session/approval-card.tsx`.
+    **Known limitations:** the pin covers project servers reached through the `rigel_approve`
+    permission path; a harness that ignores that path and calls a server directly is outside
+    this gate. There is no `rigel mcp pin` reset/list command: a malformed pin is fixed by
+    repairing or deleting `.rigel/mcp-pins.json`, and the next first use records a fresh pin.
+    The server version is `"unknown"` when its `initialize` response omits `serverInfo.version`;
+    the catalogue hash still covers every tool. The MCP process caches its first `tools/list`, so
+    a server update is detected when that process next lists (normally the next harness
+    connection), not while the same process keeps using the old catalogue. The schema card is part
+    of the existing approval surface, so no new page or dedicated Playwright spec was added.
 
 69. **W3 · P0 · M · MCP transport hardening.** `crates/rigel-core/src/mcp/transport.rs` scrubs the
     stdio environment, requires auth for HTTP, refuses private-network URLs and caps message size.
@@ -671,6 +912,27 @@ done signal, and the eight-state table is the evidence a review will use.
 74. **W3 · P1 · M · Snapshot lifecycle.** `crates/rigel-core/src/snapshot/gc.rs` prunes orphans by
     policy and verifies a restore by comparing per-file hashes. — done when a failed hash compare
     refuses the restore and the report names the differing path.
+    **Done (2026-11-19):** `crates/rigel-core/src/snapshot/gc.rs` adds `GcPolicy` and a
+    filesystem-only collector. It removes only a snapshot directory with no readable manifest, or
+    one whose recorded project root no longer exists, and only after the configured grace
+    (30 days by default). A readable snapshot whose project still exists is never removed here;
+    `--dry-run` reports the same candidates and bytes without deleting them. The CLI exposes this
+    as `rigel snapshot prune [--older-than-days N] [--dry-run] [--json]`.
+    Capture now records a SHA-256 for every copied file. Restore verifies every recorded snapshot
+    file before touching git or the worktree, then verifies each copied target; a mismatch returns
+    `SnapshotError::HashMismatch` with the differing project-relative path, and a pre-copy failure
+    leaves the worktree untouched. `RestoreReport.unverified` names files from older manifests
+    that predate per-file hashes. Tests: `cargo test -p rigel-core --test snapshot` -> 10 passed,
+    including a tampered snapshot copy refused with `path == "a.txt"` and unchanged target
+    bytes, and a GC test proving dry-run behaviour, live-snapshot retention, orphan removal and
+    missing-root removal; `cargo test -p rigel-cli --test snapshot` -> 1 passed through the real
+    CLI binary.
+    **Known limitations:** the collector is not a general retention policy; it deliberately keeps
+    every readable snapshot whose project root exists (retention controls are item 85). Manifests
+    written before this change have no per-file hashes, so restore reports them as `unverified`
+    rather than refusing an otherwise usable snapshot. A post-copy mismatch caused by another
+    process changing the target after the verified copy can leave earlier files restored; the
+    snapshot copy itself is fully checked before any write.
 
 75. **W3 · P0 · M · Keychain parity tests.** `crates/rigel-core/src/credentials/keychain.rs` covers
     Windows Credential Manager, macOS Keychain and Secret Service. — done when each platform has a
@@ -1012,9 +1274,21 @@ done signal, and the eight-state table is the evidence a review will use.
      env and exit codes. — done when `--dry-run` prints the exact command and a script whose contract
      does not match is refused.
 
-153. **W5 · P2 · L · Plugin API.** `crates/rigel-core/src/plugin/mod.rs` loads a subprocess or WASM
-     plugin behind a capability manifest. — done when a plugin without a filesystem capability cannot
-     read a file even when it tries, proven by a fixture.
+153. **W5 · P2 · L · Plugin API and catalogue.** `crates/rigel-core/src/plugin/mod.rs` loads a subprocess
+     plugin behind a capability manifest, and the marketplace installs a curated entry by name. — done
+     when a plugin without a filesystem capability cannot read a file even when it tries, proven by a
+     fixture. **Done (2026-11-22):** the manifest is validated before a byte is copied and its hash is pinned in the receipt; the host starts
+     one child per call with a scrubbed environment and answers only `fs.read`, `fs.write` and
+     `env.get` under the declared roots; a refused request is an error object and never bytes. The
+     fixture is `crates/rigel-core/tests/plugins.rs` plus the real-child test in `plugin::host`, and
+     `plugin_call` is a normal registry tool, so the project matrix, roles, overrides and read-only
+     children apply. Installs record a tree SHA-256; disabling keeps the tree; a pinned install
+     requires a full commit. The catalogue has tiers and capability chips, Settings → Plugins reads
+     the same core, and eight bundled skills are indexed at launch. `e2e/specs/plugins.spec.ts`
+     drives the real window through install, receipt, toggle, tampered-manifest error and removal,
+     while `tests/plugins.rs` proves a disabled plugin leaves the next turn's tool specs. Known limits are named in
+     [plugins.md](plugins.md): no WASM, no hooks, and the broker covers host-mediated requests rather
+     than an OS sandbox, so `network`/`process` are declarations.
 
 154. **W5 · P2 · L · Headless server.** `crates/rigel-cli/src/serve.rs` exposes HTTP and SSE for CI and
      editors. — done when it uses the same approval path and a local token, and a request without the

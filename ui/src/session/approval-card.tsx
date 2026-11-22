@@ -104,6 +104,17 @@ export function ApprovalCard({
   const mcpTools = Array.isArray(detail.tools)
     ? (detail.tools as { name?: string; description?: string }[])
     : [];
+  const mcpSchema =
+    detail.schema_diff && typeof detail.schema_diff === "object"
+      ? (detail.schema_diff as {
+          server_version_before?: string;
+          server_version_after?: string;
+          added?: string[];
+          removed?: string[];
+          changed?: { name?: string; before?: unknown; after?: unknown }[];
+          blocked_tools?: string[];
+        })
+      : null;
   const deliberation =
     detail.deliberation && typeof detail.deliberation === "object"
       ? (detail.deliberation as { note?: string })
@@ -344,8 +355,46 @@ export function ApprovalCard({
               ))}
             </ul>
             <p className="approval-note">
-              Starting the server does not approve any single tool: each tool asks on its own
-              first use.
+              {mcpSchema
+                ? "The tool list above is the new catalogue. Added and changed tools stay blocked until this diff is accepted."
+                : "Starting the server does not approve any single tool: each tool asks on its own first use."}
+            </p>
+          </div>
+        ) : null}
+        {mcpSchema ? (
+          <div className="approval-blast" data-testid="mcp-schema-diff">
+            <p className="fine">
+              MCP schema diff: server version {mcpSchema.server_version_before ?? "unknown"} →{" "}
+              {mcpSchema.server_version_after ?? "unknown"}
+            </p>
+            <ul className="approval-rows">
+              {(mcpSchema.added ?? []).map((name) => (
+                <li key={`added-${name}`}>
+                  <span className="pill danger">added</span> <span className="mono">{name}</span>
+                </li>
+              ))}
+              {(mcpSchema.removed ?? []).map((name) => (
+                <li key={`removed-${name}`}>
+                  <span className="pill">removed</span> <span className="mono">{name}</span>
+                </li>
+              ))}
+              {(mcpSchema.changed ?? []).map((change) => (
+                <li key={`changed-${change.name}`}>
+                  <details>
+                    <summary>
+                      <span className="pill danger">changed</span>{" "}
+                      <span className="mono">{change.name ?? "unknown"}</span>
+                    </summary>
+                    <pre className="mono approval-dry-run-output">
+                      before: {JSON.stringify(change.before, null, 2)}\n after:{" "}
+                      {JSON.stringify(change.after, null, 2)}
+                    </pre>
+                  </details>
+                </li>
+              ))}
+            </ul>
+            <p className="fine">
+              blocked until accepted: {(mcpSchema.blocked_tools ?? []).join(", ") || "none"}
             </p>
           </div>
         ) : null}

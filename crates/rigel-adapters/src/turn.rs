@@ -323,6 +323,7 @@ impl Recorded {
                 let usage = turn.usage.map(|reported| rigel_core::Usage {
                     input_tokens: reported.input_tokens,
                     cached_input_tokens: reported.cached_input_tokens,
+                    cache_write_tokens: 0,
                     output_tokens: reported.output_tokens,
                     reasoning_tokens: reported.reasoning_output_tokens,
                     cost_micros: rigel_core::agent::pricing::cost_micros(
@@ -393,6 +394,7 @@ impl Recorded {
                     rigel_core::Usage {
                         input_tokens: reported.input_tokens,
                         cached_input_tokens: reported.cached_input_tokens,
+                        cache_write_tokens: 0,
                         output_tokens: reported.output_tokens,
                         reasoning_tokens: 0,
                         cost_micros: reported.cost_micros.unwrap_or(estimate),

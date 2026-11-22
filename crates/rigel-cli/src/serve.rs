@@ -1857,6 +1857,13 @@ impl Api {
         .with_network_policy(NetworkPolicy::load(&workspace.project))
         .with_full_access(self.full_access)
         .with_command_approval(Arc::new(ApiApprover { approve }));
+        // This route does not run a coordinator turn, so it must apply the same role and
+        // per-agent override the coordinator would; `Tools::new` already loaded the project
+        // ceiling. An API caller cannot borrow a wider agent than the one it attributes to.
+        tools.restrict_to(rigel_core::permissions::agent_tool_filter(
+            agent.role.as_deref(),
+            agent.tool_overrides.as_deref(),
+        ));
         let mut args = json!({ "command": command });
         if let Some(cwd) = optional_string(&body, "cwd").ok().flatten() {
             args["cwd"] = json!(cwd);

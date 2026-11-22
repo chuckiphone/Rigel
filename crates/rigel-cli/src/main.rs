@@ -19,9 +19,12 @@ mod audit;
 mod claims;
 mod cloud;
 mod doctor;
+mod handoff;
 mod harness;
 mod mail;
+mod network;
 mod phase3;
+mod plugins;
 mod route;
 mod serve;
 mod tools;
@@ -67,10 +70,19 @@ enum Command {
         command: SessionCommand,
     },
 
+    /// Package a session's unfinished work as a prompt for another agent.
+    Handoff(handoff::HandoffArgs),
+
     /// The skill index: search it offline, extend it from the network.
     Skills {
         #[command(subcommand)]
         command: SkillCommand,
+    },
+
+    /// Installed plugins and the curated catalogue.
+    Plugins {
+        #[command(subcommand)]
+        command: plugins::PluginCommand,
     },
 
     /// The native agent: one turn, billed to the session.
@@ -85,7 +97,7 @@ enum Command {
         command: PatchCommand,
     },
 
-    /// Committed memory for one agent.
+    /// Committed memory: read, write, rank and pin facts.
     Memory {
         #[command(subcommand)]
         command: MemoryCommand,
@@ -107,6 +119,12 @@ enum Command {
     Route {
         #[command(subcommand)]
         command: route::RouteCommand,
+    },
+
+    /// The project network policy: show it, explain a URL, or save a validated policy.
+    Network {
+        #[command(subcommand)]
+        command: network::NetworkCommand,
     },
 
     /// Verify the tamper-evident approval chain, or read one command's provenance.
@@ -278,6 +296,29 @@ enum SessionCommand {
         json: bool,
     },
 
+    /// Name an untitled session with the cheapest model that answers.
+    Title {
+        #[arg(long, value_name = "PATH", default_value = ".")]
+        project: PathBuf,
+        #[arg(long)]
+        id: String,
+        /// The first prompt: the title describes this work.
+        #[arg(long)]
+        prompt: String,
+        #[arg(long)]
+        json: bool,
+    },
+
+    /// Show the compact summaries stored when each turn closed.
+    Summary {
+        #[arg(long, value_name = "PATH", default_value = ".")]
+        project: PathBuf,
+        #[arg(long)]
+        id: String,
+        #[arg(long)]
+        json: bool,
+    },
+
     /// End a session.
     End {
         #[arg(long, value_name = "PATH", default_value = ".")]
@@ -429,6 +470,18 @@ enum SkillCommand {
         json: bool,
     },
 
+    /// Index the skills that ship with Rigel, and optionally copy them into the harness stores.
+    Builtin {
+        /// Copy every built-in body into `~/.agents/skills` and `~/.claude/skills` as well.
+        #[arg(long)]
+        install: bool,
+        /// Install into this directory instead of the two default harness stores.
+        #[arg(long, value_name = "DIR")]
+        to: Vec<PathBuf>,
+        #[arg(long)]
+        json: bool,
+    },
+
     /// Delete blobs no row references.
     Gc {
         #[arg(long)]
@@ -440,8 +493,22 @@ fn data_dir(cli: &Cli) -> PathBuf {
     cli.data_dir.clone().unwrap_or_else(default_index_dir)
 }
 
+/// Clap walks the whole command tree, and the run future holds every arm, on the thread that
+/// calls it. The Windows main thread has 1 MiB; a tree this size overflows it in a debug build.
+/// Give the real entry point room instead of tuning each command.
+fn main() -> ExitCode {
+    std::thread::Builder::new()
+        .stack_size(16 * 1024 * 1024)
+        .spawn(entry)
+        .map(|handle| handle.join().unwrap_or_else(|_| ExitCode::from(2)))
+        .unwrap_or_else(|error| {
+            eprintln!("rigel: could not start the command thread: {error}");
+            ExitCode::from(2)
+        })
+}
+
 #[tokio::main]
-async fn main() -> ExitCode {
+async fn entry() -> ExitCode {
     let cli = Cli::parse();
     let dir = data_dir(&cli);
 
@@ -497,9 +564,17 @@ async fn main() -> ExitCode {
 
         Command::Route { command } => route::run(command),
 
+        Command::Network { command } => network::run(command).await,
+
         Command::Session { command } => run_session(command).await,
 
+        // Boxed so this large command future does not inflate `main`'s already large state
+        // machine; the native Windows stack is the limiting factor here.
+        Command::Handoff(args) => Box::pin(handoff::run(args)).await,
+
         Command::Skills { command } => run_skills(&dir, command).await,
+
+        Command::Plugins { command } => plugins::run(&dir, command).await,
 
         Command::Agent { command } => phase3::run_agent(&dir, command).await,
 
@@ -1095,6 +1170,73 @@ async fn run_skills(dir: &Path, command: SkillCommand) -> ExitCode {
             }
         },
 
+        SkillCommand::Builtin {
+            install,
+            to,
+            json: as_json,
+        } => {
+            let seeded = match index.install_builtin().await {
+                Ok(report) => report,
+                Err(error) => return skills_failure(error, as_json),
+            };
+            if !install {
+                if as_json {
+                    println!(
+                        "{}",
+                        json!({
+                            "seeded": seeded,
+                            "skills": rigel_core::skills::builtin::all().iter().map(|skill| json!({
+                                "id": skill.id(),
+                                "name": skill.name,
+                                "path": skill.path(),
+                            })).collect::<Vec<_>>()
+                        })
+                    );
+                } else {
+                    println!(
+                        "indexed {} built-in skills ({}) — pass --install to copy them into the harness stores",
+                        seeded.written,
+                        rigel_core::skills::builtin::all()
+                            .iter()
+                            .map(|skill| skill.slug)
+                            .collect::<Vec<_>>()
+                            .join(", ")
+                    );
+                }
+                return ExitCode::SUCCESS;
+            }
+            let roots = if to.is_empty() {
+                plugins::skill_roots()
+            } else {
+                to
+            };
+            if roots.is_empty() {
+                eprintln!("rigel: no HOME or USERPROFILE to install a skill into; pass --to <dir>");
+                return ExitCode::from(2);
+            }
+            let mut installed = Vec::new();
+            for skill in rigel_core::skills::builtin::all() {
+                match index.install(&skill.id(), &roots).await {
+                    Ok(report) => installed.push(report),
+                    Err(error) => return skills_failure(error, as_json),
+                }
+            }
+            if as_json {
+                println!(
+                    "{}",
+                    json!({ "seeded": seeded, "installed": installed, "roots": roots })
+                );
+            } else {
+                for report in &installed {
+                    println!("{} →", report.name);
+                    for path in &report.paths {
+                        println!("  {}", path.display());
+                    }
+                }
+            }
+            ExitCode::SUCCESS
+        }
+
         SkillCommand::Gc { json: as_json } => {
             let live = match index.live_blobs().await {
                 Ok(live) => live,
@@ -1291,6 +1433,101 @@ async fn run_session(command: SessionCommand) -> ExitCode {
                     }
                     ExitCode::SUCCESS
                 }
+                Err(error) => fail(error),
+            },
+            Err(error) => fail(error),
+        },
+
+        SessionCommand::Title {
+            project,
+            id,
+            prompt,
+            json: as_json,
+        } => {
+            let service = match SessionService::open(&project).await {
+                Ok(service) => service,
+                Err(error) => return fail(error),
+            };
+            let generator = rigel_core::agent::title::cheapest().await;
+            let suggestion = tokio::time::timeout(
+                rigel_core::agent::title::TITLE_TOTAL_TIMEOUT,
+                generator.suggest(&prompt),
+            )
+            .await
+            .ok()
+            .flatten();
+            let Some(suggestion) = suggestion else {
+                eprintln!(
+                    "rigel: no cheap title model answered; set a key for one of {} and try again",
+                    rigel_core::agent::title::CHEAP_TITLE_MODELS
+                        .iter()
+                        .map(|(provider, _)| *provider)
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                );
+                return ExitCode::from(1);
+            };
+            match service.apply_auto_title(&id, &suggestion.title).await {
+                Ok(stored) => {
+                    if as_json {
+                        println!(
+                            "{}",
+                            serde_json::to_string_pretty(&json!({
+                                "title": suggestion.title,
+                                "provider": suggestion.provider,
+                                "model": suggestion.model,
+                                "usage": suggestion.usage,
+                                "stored": stored.is_some(),
+                            }))
+                            .unwrap_or_default()
+                        );
+                    } else {
+                        println!("title   {}", suggestion.title);
+                        println!("model   {}/{}", suggestion.provider, suggestion.model);
+                        println!(
+                            "stored  {}",
+                            if stored.is_some() {
+                                "yes"
+                            } else {
+                                "no; the session already had a name"
+                            }
+                        );
+                    }
+                    ExitCode::SUCCESS
+                }
+                Err(error) => fail(error),
+            }
+        }
+
+        SessionCommand::Summary {
+            project,
+            id,
+            json: as_json,
+        } => match SessionService::open(&project).await {
+            Ok(service) => match service.get(&id).await {
+                Ok(_) => match rigel_core::agent::summary::for_session(service.pool(), &id).await {
+                    Ok(summaries) => {
+                        if as_json {
+                            println!(
+                                "{}",
+                                serde_json::to_string_pretty(&summaries).unwrap_or_default()
+                            );
+                        } else if summaries.is_empty() {
+                            println!("no turn summaries recorded");
+                        } else {
+                            for summary in summaries {
+                                println!(
+                                    "{}  {:>2} items  {}",
+                                    &summary.turn_id[..8.min(summary.turn_id.len())],
+                                    summary.item_ids.len(),
+                                    summary.summary
+                                );
+                            }
+                        }
+                        ExitCode::SUCCESS
+                    }
+                    Err(error) => fail(error),
+                },
                 Err(error) => fail(error),
             },
             Err(error) => fail(error),

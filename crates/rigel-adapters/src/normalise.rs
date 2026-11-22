@@ -13,10 +13,11 @@
 //!   raw event under `body.raw`, so a debug pane can show it and nothing is silently dropped.
 
 use rigel_core::ItemKind;
+use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
 
 /// A decoded harness event already sorted into one of the ten kinds.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct NormalItem {
     pub kind: ItemKind,
     pub body: Value,

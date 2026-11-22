@@ -8,6 +8,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use rigel_core::agent::approval::ApprovalBus;
+use rigel_core::mcp::pin::{Catalog, PinStore};
 use rigel_core::{ApprovalScope, SessionService};
 use rigel_mcp::{McpContext, handle};
 use serde_json::{Value, json};
@@ -45,6 +46,7 @@ async fn context() -> (tempfile::TempDir, McpContext, String) {
         approval_wait: Duration::from_secs(5),
         turn_id: Some(turn.id.clone()),
         tool_lists: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
+        pins: rigel_core::mcp::pin::PinStore::new(tmp.path()),
     };
     (tmp, ctx, turn.id)
 }
@@ -173,4 +175,126 @@ async fn an_approved_project_server_shows_its_tools_and_records_the_run() {
         }),
         "the permitted run is recorded in the transcript: {items:?}"
     );
+}
+
+#[tokio::test]
+async fn a_changed_tool_is_blocked_until_the_schema_diff_is_accepted() {
+    let (tmp, ctx, turn) = context().await;
+    let old = Catalog::new(
+        "1",
+        vec![
+            json!({
+                "name": "echo",
+                "description": "Echo before the update",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": { "text": { "type": "string" } }
+                }
+            }),
+            json!({
+                "name": "dangerous_write",
+                "description": "Write a file in the project",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": { "path": { "type": "string" } }
+                }
+            }),
+        ],
+    )
+    .unwrap();
+    PinStore::new(tmp.path()).accept("demo", &old).unwrap();
+
+    let bus = ApprovalBus::new(&ctx.index_dir);
+    let deny = tokio::spawn(async move {
+        let deadline = Instant::now() + Duration::from_secs(20);
+        while Instant::now() < deadline {
+            for pending in bus.pending() {
+                if pending.kind == "mcp_schema" {
+                    let detail = pending.detail.as_ref().unwrap();
+                    let diff = detail["schema_diff"].as_object().unwrap();
+                    assert_eq!(diff["changed"][0]["name"], "echo");
+                    assert!(
+                        diff["blocked_tools"]
+                            .as_array()
+                            .unwrap()
+                            .iter()
+                            .any(|tool| tool == "echo")
+                    );
+                    assert!(
+                        detail["note"]
+                            .as_str()
+                            .unwrap()
+                            .contains("blocked until this card is accepted")
+                    );
+                    bus.answer(&pending.id, None).unwrap();
+                    return;
+                }
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+        panic!("the schema diff card did not arrive");
+    });
+
+    let refused = decision(handle(&ctx, request()).await.unwrap());
+    deny.await.unwrap();
+    assert_eq!(refused["behavior"], "deny");
+    assert_eq!(refused["code"], "MCP_SCHEMA_DENIED");
+    assert_eq!(refused["server"], "demo");
+    assert_eq!(refused["tool"], "echo");
+
+    let service = SessionService::open(&ctx.project_root).await.unwrap();
+    let items = service.items(&turn).await.unwrap();
+    assert!(
+        items.iter().any(|item| {
+            item.kind == "approval"
+                && item.body["gate"] == "R68"
+                && item.body["decision"] == "deny"
+                && item.body["mcp_tool"] == "echo"
+        }),
+        "the schema refusal is recorded: {items:?}"
+    );
+
+    // The second call sees the same diff. Accepting it at project scope updates the pin and
+    // only then does the ordinary server/tool approval continue.
+    let bus = ApprovalBus::new(&ctx.index_dir);
+    let accept = tokio::spawn(async move {
+        let deadline = Instant::now() + Duration::from_secs(20);
+        let mut schema_answered = false;
+        let mut server_answered = false;
+        while Instant::now() < deadline {
+            for pending in bus.pending() {
+                match pending.kind.as_str() {
+                    "mcp_schema" => {
+                        bus.answer(&pending.id, Some(ApprovalScope::Project))
+                            .unwrap();
+                        schema_answered = true;
+                    }
+                    "mcp_server" => {
+                        assert!(schema_answered, "the schema is accepted first");
+                        bus.answer(&pending.id, Some(ApprovalScope::Project))
+                            .unwrap();
+                        server_answered = true;
+                    }
+                    "mcp_tool" => {
+                        assert!(schema_answered);
+                        assert!(server_answered);
+                        bus.answer(&pending.id, Some(ApprovalScope::Once)).unwrap();
+                        return;
+                    }
+                    _ => {}
+                }
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+        panic!("the schema, server and tool questions did not arrive in order");
+    });
+
+    let allowed = decision(handle(&ctx, request()).await.unwrap());
+    accept.await.unwrap();
+    assert_eq!(allowed["behavior"], "allow");
+    assert_eq!(allowed["tool"], "echo");
+
+    let pin = PinStore::new(tmp.path()).server("demo").unwrap().unwrap();
+    assert_eq!(pin.server_version, "1");
+    assert_eq!(pin.tools["echo"].schema["description"], "Echo one line");
 }

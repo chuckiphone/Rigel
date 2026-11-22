@@ -1,4 +1,4 @@
-import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type {
   CSSProperties,
   MouseEvent as ReactMouseEvent,
@@ -34,6 +34,7 @@ import DiffView from "./diff";
 import HomeView from "./home";
 import AccountView from "./account";
 import McpShelf, { ShelfTabs, type ShelfKind } from "./mcps";
+import PluginShelf from "./pluginShelf";
 import Palette, { type PaletteAction } from "./palette";
 import SessionView from "./session";
 import SettingsView, { type SettingsPage } from "./settings";
@@ -47,9 +48,6 @@ import {
   SHORTCUTS_EVENT,
   type ShortcutMap,
 } from "./shortcuts";
-
-// xterm and its CSS are only needed once the terminal is opened; keep them out of the first paint.
-const TerminalView = lazy(() => import("./terminal"));
 
 /**
  * The status line's answer: which adapter holds the key a native turn would spend. The rows come
@@ -67,7 +65,6 @@ const ICONS = {
   session: "M3 4.5h14M3 9.5h14M3 14.5h9",
   chat: "M6 3.5h8a2.5 2.5 0 0 1 2.5 2.5v5a2.5 2.5 0 0 1-2.5 2.5H9.5L6 16.5v-3H6a2.5 2.5 0 0 1-2.5-2.5V6A2.5 2.5 0 0 1 6 3.5ZM6.5 8.5h.01M10 8.5h.01M13.5 8.5h.01",
   diff: "M6 3v14M14 3v14M3 7h6M11 13h6",
-  terminal: "M3 4.5h14v11H3ZM5.5 8l2.5 2-2.5 2M10.5 12.5h4",
   account: "M10 10.5a3 3 0 1 0 0-6 3 3 0 0 0 0 6ZM4.5 17c.6-2.5 2.8-4 5.5-4s4.9 1.5 5.5 4",
   settings:
     "M10 12.5a2.5 2.5 0 1 0 0-5 2.5 2.5 0 0 0 0 5ZM10 2.5v2M10 15.5v2M2.5 10h2M15.5 10h2",
@@ -80,7 +77,6 @@ type View =
   | "session"
   | "chat"
   | "diff"
-  | "terminal"
   | "account"
   | "settings";
 
@@ -94,10 +90,14 @@ const VIEWS: { id: View; label: string; d: string; phase: string }[] = [
   { id: "session", label: "Session", d: ICONS.session, phase: "P3" },
   { id: "chat", label: "Chat", d: ICONS.chat, phase: "P6" },
   { id: "diff", label: "Diff", d: ICONS.diff, phase: "P5" },
-  { id: "terminal", label: "Terminal", d: ICONS.terminal, phase: "P7" },
-  { id: "account", label: "Account", d: ICONS.account, phase: "P8" },
+  // Settings and Account are a bottom utility pair: Settings sits directly above the account
+  // avatar, separated from the working surfaces by `.rail-settings`'s auto margin.
   { id: "settings", label: "Settings", d: ICONS.settings, phase: "P3" },
+  { id: "account", label: "Account", d: ICONS.account, phase: "P8" },
 ];
+
+/** The working surfaces stay in the left rail; Settings and Account are the bottom-right pair. */
+const RAIL_VIEWS = VIEWS.filter((item) => item.id !== "settings" && item.id !== "account");
 
 /** Rows fetched per page. The index has ~10k skills; the list pages as it scrolls. */
 const PAGE = 250;
@@ -165,9 +165,6 @@ export default function App() {
   // D154: how many unresolved rows the rail badge shows. The Attention view reads the same list.
   const [attention, setAttention] = useState(0);
   const [focus, setFocus] = useState<Focus>(null);
-  // Once visited, the terminal stays mounted (hidden) so switching tabs keeps its shell and
-  // scrollback. It is never started before the first visit.
-  const [terminalMounted, setTerminalMounted] = useState(false);
   const [project, setProject] = useState<ProjectInfo | null>(null);
   const [sessions, setSessions] = useState<Session[]>([]);
   const [total, setTotal] = useState<number | null>(null);
@@ -193,7 +190,6 @@ export default function App() {
   /** One navigation path for the rail, palette and context menu. */
   const go = useCallback((next: View) => {
     if (next !== "chat") setSwarmNotice(null);
-    if (next === "terminal") setTerminalMounted(true);
     if (next === "settings") setSettingsPage("agent");
     setView(next);
   }, []);
@@ -221,7 +217,6 @@ export default function App() {
         setFocusMode((on) => !on);
         return;
       }
-      if (action === "terminal") setTerminalMounted(true);
       if (action === "settings") setSettingsPage("agent");
       setView(action);
     },
@@ -604,10 +599,8 @@ export default function App() {
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
       const target = event.target as HTMLElement | null;
-      const inTerminal = Boolean(target?.closest(".terminal-surface"));
-      // D147: the palette is available everywhere except a terminal, where the shell owns the key.
+      // D147: the palette is one window-wide shortcut.
       if (matchesShortcut(event, shortcuts.palette)) {
-        if (inTerminal) return;
         event.preventDefault();
         setPaletteOpen((open) => !open);
         return;
@@ -623,9 +616,9 @@ export default function App() {
         target?.tagName === "TEXTAREA" ||
         target?.tagName === "SELECT" ||
         target?.isContentEditable === true;
-      // A plain-key binding stays out of fields and the terminal; a modified one may reach them.
+      // A plain-key binding stays out of fields; a modified one may reach them.
       if (matchesShortcut(event, shortcuts.search)) {
-        if (!shortcuts.search.mod && !shortcuts.search.alt && (typing || inTerminal)) return;
+        if (!shortcuts.search.mod && !shortcuts.search.alt && typing) return;
         event.preventDefault();
         searchRef.current?.focus();
       }
@@ -1011,7 +1004,7 @@ ${task}`,
     const target = event.target as HTMLElement;
     if (
       target.closest(
-        "input, textarea, select, [contenteditable='true'], .terminal-host, .ctx-menu",
+        "input, textarea, select, [contenteditable='true'], .ctx-menu",
       )
     ) {
       return;
@@ -1033,7 +1026,7 @@ ${task}`,
             },
             {
               label: "Go to",
-              detail: "Switch surfaces without losing the terminal",
+              detail: "Switch surfaces without losing your place",
               icon: "chevron",
               submenu: [
                 {
@@ -1148,8 +1141,7 @@ ${task}`,
     });
   };
 
-  // The inspector only exists on these surfaces; the diff is one page, and the shelf and the
-  // terminal own their layout.
+  // The inspector only exists on these surfaces; the shelf and diff own their layout.
   const hasInspector = view === "session" || view === "settings" || view === "account";
   const handleTop = native ? 36 : 0;
 
@@ -1178,7 +1170,7 @@ ${task}`,
           <RigelMark />
         </div>
 
-        {VIEWS.map((item) => (
+        {RAIL_VIEWS.map((item) => (
           <button
             key={item.id}
             className={`rail-btn${view === item.id ? " active" : ""}`}
@@ -1265,6 +1257,51 @@ ${task}`,
           ●
         </div>
       </nav>
+
+      {/* A bottom-right pair, outside the rail. Account is first in DOM order so Tab reaches it
+          before Settings; column-reverse keeps Settings visually above the avatar. */}
+      <div className="utility-cluster" role="group" aria-label="Account and settings">
+        <button
+          className={`utility-btn utility-account${view === "account" ? " active" : ""}`}
+          title="Account"
+          aria-label="Account"
+          aria-pressed={view === "account"}
+          onClick={() => go("account")}
+        >
+          <svg
+            width="18"
+            height="18"
+            viewBox="0 0 20 20"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="1.4"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          >
+            <path d={ICONS.account} />
+          </svg>
+        </button>
+        <button
+          className={`utility-btn utility-settings${view === "settings" ? " active" : ""}`}
+          title="Settings"
+          aria-label="Settings"
+          aria-pressed={view === "settings"}
+          onClick={() => go("settings")}
+        >
+          <svg
+            width="18"
+            height="18"
+            viewBox="0 0 20 20"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="1.4"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          >
+            <path d={ICONS.settings} />
+          </svg>
+        </button>
+      </div>
 
       {/* D159: two handles, drawn over the gutters rather than as grid children. */}
       <div
@@ -1365,7 +1402,7 @@ ${task}`,
           onOpenSession={openSessionFromPalette}
           onOpenProject={() => void chooseFolder()}
         />
-      ) : view === "terminal" ? null : view === "session" ? (
+      ) : view === "session" ? (
         <SessionView
           project={sessionProject}
           source={source}
@@ -1429,6 +1466,8 @@ ${task}`,
         />
       ) : view === "shelf" && shelfKind === "mcps" ? (
         <McpShelf project={project?.root ?? null} kind={shelfKind} onKind={setShelfKind} />
+      ) : view === "shelf" && shelfKind === "plugins" ? (
+        <PluginShelf kind={shelfKind} onKind={setShelfKind} onNotice={setNotice} />
       ) : (
       <>
       <aside className="list-pane">
@@ -1877,14 +1916,6 @@ ${task}`,
       </>
       )}
 
-      {terminalMounted ? (
-        <div className="terminal-surface" hidden={view !== "terminal"}>
-          <Suspense fallback={<p className="empty">Loading the terminal…</p>}>
-            <TerminalView project={project?.root ?? null} />
-          </Suspense>
-        </div>
-      ) : null}
-
       <Palette
         open={paletteOpen}
         project={project?.root ?? null}
@@ -1918,8 +1949,10 @@ ${task}`,
             : view === "home"
               ? "Rigel Paper"
               : view === "shelf" && shelfKind === "mcps"
-              ? "MCP catalogue"
-              : `${(total ?? rows.length).toLocaleString()} skills`}
+                ? "MCP catalogue"
+                : view === "shelf" && shelfKind === "plugins"
+                  ? "Plugin catalogue"
+                  : `${(total ?? rows.length).toLocaleString()} skills`}
         </span>
         <span className="sep">·</span>
         <span>

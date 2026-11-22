@@ -115,6 +115,9 @@ pub struct ChatRequest {
 pub struct RawUsage {
     pub input_tokens: u64,
     pub cached_input_tokens: u64,
+    /// Anthropic reports cache writes separately from reads; every other adapter leaves this
+    /// zero because its provider does not report them.
+    pub cache_write_input_tokens: u64,
     pub output_tokens: u64,
     pub reasoning_tokens: u64,
     /// `usage.cost` from the provider, in USD. OpenRouter reports this; most providers do not.
@@ -361,6 +364,7 @@ pub fn usage_from_raw(raw: RawUsage, model: &str) -> Usage {
     Usage {
         input_tokens: raw.input_tokens,
         cached_input_tokens: raw.cached_input_tokens,
+        cache_write_tokens: raw.cache_write_input_tokens,
         output_tokens: raw.output_tokens,
         reasoning_tokens: raw.reasoning_tokens,
         cost_micros: provider_micros.unwrap_or(estimate),

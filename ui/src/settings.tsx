@@ -2,12 +2,11 @@
  * Settings, in pages.
  *
  * The window's settings are not one form: chat providers and harness keys have nothing to do
- * with the terminal's font, and the project's safety caps live in a different database from the
- * app's own preferences. So the nav is a page list — Agent, Providers, Harnesses, Safety,
- * Spending, Terminal, Appearance, Keyboard, Skill shelf, Project rules, Notifications, Updates,
- * Diagnostics — and each
- * page loads only what it shows, saves one field at a time, and states where that field lives
- * (settings.toml in the app data folder, the OS keychain, or the project database).
+ * with the paper's typography, and the project's safety caps live in a different database from
+ * the app's own preferences. So the nav is a grouped page list — Agent, Guardrails, Workspace,
+ * Connections, Window and System — and each page loads only what it shows, saves one field at a
+ * time, and states where that field lives (settings.toml in the app data folder, the OS keychain,
+ * or the project database).
  *
  * Every control here is wired to something the core actually reads. A switch that changes
  * nothing is worse than no switch: it teaches the user not to trust the screen.
@@ -46,6 +45,9 @@ import ConcordPage from "./concord";
 import { ModelControls } from "./modelpicker";
 import { RouteInspector } from "./route-inspector";
 import { CustomProvider } from "./settings/custom-provider";
+import NetworkPolicyEditor from "./settings/network-policy";
+import PermissionsEditor from "./settings/permissions";
+import PluginsPage from "./settings/plugins";
 import { ensurePermission } from "./notify";
 import { applyContrast, applyTheme, type Theme } from "./theme";
 import { useMenu } from "./menu";
@@ -273,29 +275,74 @@ function RoomHarnessCard({
 }
 
 const PAGES = [
-  { id: "agent", label: "Agent", blurb: "Model, reasoning effort, the step budget and the composer" },
-  { id: "providers", label: "Providers", blurb: "Chat adapters, their keys and the local router" },
-  { id: "harnesses", label: "Harnesses", blurb: "External CLIs, what is installed, what they receive" },
-  { id: "safety", label: "Safety", blurb: "Writable agents, the project daily cap and the new-session cap" },
-  { id: "spending", label: "Spending", blurb: "Recorded turns, grouped by day and session" },
-  { id: "terminal", label: "Terminal", blurb: "Font, scrollback and the shell a tab opens" },
-  { id: "appearance", label: "Appearance", blurb: "Dark or light, with the same amber accent" },
-  { id: "sponsors", label: "Sponsors", blurb: "Optional Gravity ads on the paper and in Session, and the publisher key" },
-  { id: "shortcuts", label: "Keyboard", blurb: "Rebindable shortcuts for the palette, focus mode and search" },
-  { id: "shelf", label: "Skill shelf", blurb: "Sources, freshness and indexing a repository" },
-  { id: "cloud", label: "Cloud", blurb: "Your Firebase project, the account and the shelf mirror" },
-  { id: "mail", label: "Email", blurb: "The AgentMail inbox the agent reads and sends from" },
-  { id: "concord", label: "Concord", blurb: "Muse's inbox, delivery receipts and replies" },
-  { id: "rules", label: "Project rules", blurb: "AGENTS.md, CLAUDE.md and memory export" },
-  { id: "notifications", label: "Notifications", blurb: "Desktop events while the window is hidden" },
-  { id: "updates", label: "Updates", blurb: "The signed self-update" },
-  { id: "advanced", label: "Advanced", blurb: "Every preference in one place, with the values Rigel resolved" },
-  { id: "diagnostics", label: "Diagnostics", blurb: "One redacted bundle for a bug report" },
+  { id: "agent", group: "Agent", label: "Agent", blurb: "Model, reasoning effort, the step budget and the composer" },
+  { id: "providers", group: "Agent", label: "Providers", blurb: "Chat adapters, their keys and the local router" },
+  { id: "harnesses", group: "Agent", label: "Harnesses", blurb: "External CLIs, what is installed, what they receive" },
+  { id: "safety", group: "Guardrails", label: "Safety", blurb: "Writable agents, the project daily cap and the new-session cap" },
+  { id: "permissions", group: "Guardrails", label: "Permissions", blurb: "The project tool ceiling, role narrowing and each agent's effective grant" },
+  { id: "network", group: "Guardrails", label: "Network", blurb: "The project kill switch, ordered host rules and disabled sessions" },
+  { id: "spending", group: "Guardrails", label: "Spending", blurb: "Recorded turns, grouped by day and session" },
+  { id: "shelf", group: "Workspace", label: "Skill shelf", blurb: "Sources, freshness and indexing a repository" },
+  { id: "plugins", group: "Workspace", label: "Plugins", blurb: "The searchable catalogue, installed tools and their capabilities" },
+  { id: "rules", group: "Workspace", label: "Project rules", blurb: "AGENTS.md, CLAUDE.md and memory export" },
+  { id: "cloud", group: "Connections", label: "Cloud", blurb: "Your Firebase project, the account and the shelf mirror" },
+  { id: "mail", group: "Connections", label: "Email", blurb: "The AgentMail inbox the agent reads and sends from" },
+  { id: "concord", group: "Connections", label: "Concord", blurb: "Muse's inbox, delivery receipts and replies" },
+  { id: "sponsors", group: "Connections", label: "Sponsors", blurb: "Optional Gravity ads on the paper and in Session, and the publisher key" },
+  { id: "appearance", group: "Window", label: "Appearance", blurb: "Dark or light, with the same amber accent" },
+  { id: "shortcuts", group: "Window", label: "Keyboard", blurb: "Rebindable shortcuts for the palette, focus mode and search" },
+  { id: "notifications", group: "Window", label: "Notifications", blurb: "Desktop events while the window is hidden" },
+  { id: "updates", group: "System", label: "Updates", blurb: "The signed self-update" },
+  { id: "advanced", group: "System", label: "Advanced", blurb: "Every preference in one place, with the values Rigel resolved" },
+  { id: "diagnostics", group: "System", label: "Diagnostics", blurb: "One redacted bundle for a bug report" },
 ] as const;
+
+const PAGE_GROUPS = [...new Set(PAGES.map((item) => item.group))];
+const NOTES_KEY = "rigel.settings.notes";
+
+/** Folded is a preference that survives leaving Settings, not just this visit. */
+function notesOpenFromStore(): boolean {
+  try {
+    return localStorage.getItem(NOTES_KEY) !== "folded";
+  } catch {
+    return true;
+  }
+}
 
 type PageId = (typeof PAGES)[number]["id"];
 
 export type SettingsPage = PageId;
+
+/** One line icon per page. They are decorative; the label and its fact carry the meaning. */
+const PAGE_ICONS: Record<PageId, string> = {
+  agent:
+    "M5 6.5h10v8H5z M7.5 10h.01 M12.5 10h.01 M8 14.5v2 M12 14.5v2 M10 3.5v3",
+  providers:
+    "M9 10a3 3 0 1 0 0 6 3 3 0 0 0 0-6Z M11 10l6.5-6.5 M14.5 6.5l2 2 M16.5 4.5l2 2",
+  harnesses: "M3.5 4.5h13v11h-13z M6 8l2.5 2L6 12 M10.5 12.5h3.5",
+  safety: "M10 3.2 16 5.5v4.6c0 3.6-2.6 5.8-6 6.9-3.4-1.1-6-3.3-6-6.9V5.5z",
+  permissions: "M5.5 9h9v7.5h-9z M7.5 9V7a2.5 2.5 0 0 1 5 0v2 M10 12v2",
+  network:
+    "M10 3a7 7 0 1 0 0 14 7 7 0 0 0 0-14Z M3 10h14 M10 3c2.2 2.2 2.2 11.8 0 14 M10 3c-2.2 2.2-2.2 11.8 0 14",
+  spending: "M3 16.5h14 M5.5 13v-3 M10 13V6 M14.5 13V8.5",
+  appearance:
+    "M10 6.5a3.5 3.5 0 1 0 0 7 3.5 3.5 0 0 0 0-7Z M10 2.5v1.5 M10 16v1.5 M2.5 10H4 M16 10h1.5 M4.7 4.7l1 1 M14.3 14.3l1 1 M15.3 4.7l-1 1 M5.7 14.3l-1 1",
+  sponsors: "M4 8v4l9 4V4L4 8Z M6.5 12v3.5h2.5V13.5 M14.5 8.5a3 3 0 0 1 0 3",
+  shortcuts:
+    "M3.5 6.5h13v8h-13z M6 9h.01 M9 9h.01 M12 9h.01 M15 9h.01 M7 13h6",
+  shelf: "M10 3 3.5 6.5 10 10l6.5-3.5L10 3Z M3.5 10 10 13.5l6.5-3.5 M3.5 13.5 10 17l6.5-3.5",
+  plugins:
+    "M7.5 3.5h2v2a1.5 1.5 0 1 0 3 0v-2h2a1 1 0 0 1 1 1v2.5h-2a1.5 1.5 0 1 0 0 3h2v2.5a1 1 0 0 1-1 1h-2.5v-2a1.5 1.5 0 1 0-3 0v2H6.5a1 1 0 0 1-1-1V11.5h2a1.5 1.5 0 1 0 0-3h-2V4.5a1 1 0 0 1 1-1Z",
+  cloud: "M6.5 15.5h7a3.5 3.5 0 0 0 .4-7 4.2 4.2 0 0 0-8-1.2A3.2 3.2 0 0 0 6.5 15.5Z",
+  mail: "M3.5 5.5h13v9h-13z M3.5 6.5 10 11l6.5-4.5",
+  concord: "M4 4.5h8.5v6H8l-2.5 2v-2H4z M9 12.5h2.5l2.5 2v-2h2v-5",
+  rules: "M5.5 3.5h6l3 3v10h-9z M11.5 3.5v3h3 M7.5 9.5h5 M7.5 12.5h5",
+  notifications:
+    "M10 3a4 4 0 0 1 4 4c0 2.7.8 4 1.8 5H4.2C5.2 11 6 9.7 6 7a4 4 0 0 1 4-4Z M8.5 14.5a1.5 1.5 0 0 0 3 0",
+  updates: "M10 3v8 M6.5 8 10 11.5 13.5 8 M4 14.5v2h12v-2",
+  advanced: "M4 6h12 M4 10h12 M4 14h12 M7 4v4 M13 8v4 M9 12v4",
+  diagnostics: "M3 10h3l1.5-4 3 8 1.5-4h5",
+};
 
 /** Extra words the search should understand, beyond a page's label and blurb. */
 const SETTINGS_KEYWORDS: Record<PageId, string> = {
@@ -304,10 +351,13 @@ const SETTINGS_KEYWORDS: Record<PageId, string> = {
   harnesses:
     "claude codex cursor cline gemini cli installed path kimi kilo codebuddy minimax room sign in login key",
   safety: "writable agents daily cap budget permissions",
+  permissions: "tool grants matrix roles agents project ceiling allow deny",
+  network: "network egress fetch allowlist denylist rules kill switch disabled sessions origins hosts",
   spending: "cost usage tokens spend money",
-  terminal: "font size scrollback shell powershell bash",
   appearance: "theme dark light scale density compact display",
-  shortcuts: "keyboard keys bindings rebind shortcut palette focus search",    shelf: "skills sources refresh index repository stale roblox",
+  shortcuts: "keyboard keys bindings rebind shortcut palette focus search",
+  shelf: "skills sources refresh index repository stale roblox",
+  plugins: "marketplace catalogue install enable disable capabilities manifest tools skills pinned",
   sponsors: "gravity ads sponsored advertising publisher key home card opt in",
   cloud: "firebase firestore account sign in login sessions publishing push pull shelf mirror",
   mail: "email agentmail inbox key send",
@@ -566,6 +616,17 @@ export default function SettingsView({
   onNotice,
 }: Props) {
   const [page, setPage] = useState<PageId>(initialPage);
+  const [notesOpen, setNotesOpen] = useState(notesOpenFromStore);
+  const toggleNotes = useCallback(() => {
+    setNotesOpen((open) => {
+      try {
+        localStorage.setItem(NOTES_KEY, open ? "folded" : "open");
+      } catch {
+        // A blocked store folds for this visit only.
+      }
+      return !open;
+    });
+  }, []);
 
   // Q294: a settings page has an address. Opening `#settings/safety` from a note or a second
   // window lands on that page, and the address follows the sidebar so it can be copied.
@@ -1460,6 +1521,8 @@ export default function SettingsView({
           text: `${heldKeys}/${providers.length}`,
           dot: keys?.native_ready ? "idle" : "failed",
         };
+      case "plugins":
+        return { text: "catalogue", dot: null };
       case "harnesses":
         return {
           text: `${installed} found`,
@@ -1470,13 +1533,12 @@ export default function SettingsView({
           text: safety ? `${safety.writable_agents} writable` : "…",
           dot: null,
         };
+      case "permissions":
+        return { text: "project ceiling", dot: null };
+      case "network":
+        return { text: "project policy", dot: null };
       case "spending":
         return { text: spend ? dollars(spend.total_micros) : "…", dot: null };
-      case "terminal":
-        return {
-          text: settings ? `${settings.terminal_font_size}px` : "…",
-          dot: null,
-        };
       case "appearance":
         return { text: settings?.theme ?? "dark", dot: null };
       case "shortcuts":
@@ -2101,58 +2163,6 @@ export default function SettingsView({
     </section>
   );
 
-  const terminalPage = (
-    <>
-      <section className="settings-section">
-        <h3>Appearance</h3>
-        <div className="settings-field-grid">
-          <Field
-            label="Font size"
-            value={settings?.terminal_font_size ?? 13}
-            min={10}
-            max={20}
-            unit="px"
-            disabled={!settings}
-            hint="Integral sizes only: a fractional advance is what makes a terminal look blurry."
-            onSave={(next) => void patch({ terminal_font_size: Number(next) })}
-          />
-          <Field
-            label="Scrollback"
-            value={settings?.terminal_scrollback ?? 8_000}
-            min={1_000}
-            max={100_000}
-            unit="lines"
-            disabled={!settings}
-            hint="Kept per tab in memory, not on disk."
-            onSave={(next) => void patch({ terminal_scrollback: Number(next) })}
-          />
-        </div>
-        <p className="fine">
-          Both apply to an open tab as soon as they are saved; the shell itself starts the next
-          time a tab opens.
-        </p>
-      </section>
-
-      <section className="settings-section">
-        <h3>The shell</h3>
-        <div className="settings-field-grid">
-          <Field
-            label="Program"
-            value={settings?.terminal_shell ?? ""}
-            placeholder="OS default — powershell.exe on Windows, $SHELL elsewhere"
-            disabled={!settings}
-            hint="An absolute path, or anything on PATH. The tab's status line names what actually opened."
-            onSave={(next) => void patch({ terminal_shell: String(next) })}
-          />
-        </div>
-        <p className="fine">
-          Press <strong>Restart</strong> on the Terminal page to open a new tab with a new program.
-          Keys go straight to the PTY: the app does not parse or approve them.
-        </p>
-      </section>
-    </>
-  );
-
   const shelfPage = (
     <>
       <section className="settings-section">
@@ -2570,7 +2580,7 @@ export default function SettingsView({
           Dark is the default. System follows the OS light/dark preference and keeps following it
           while the window is open. Both themes keep the single amber accent: light uses a darker
           shade of the same hue for text and icons, so every label still clears AA on white. The
-          terminal palette switches with the window without restarting the shell.
+          paper's ink and stock follow the theme too, without becoming a second palette.
         </p>
       </section>
 
@@ -2633,9 +2643,9 @@ export default function SettingsView({
           ))}
         </div>
         <p className="fine">
-          Scale zooms the window, not the terminal: a PTY cell is measured, so its font stays the
-          size the Terminal page set. Compact rows keep every line and close the gaps between
-          them; the inspector folds away before the transcript is squeezed.
+          Scale zooms the whole window. Compact rows keep every line and close the gaps between
+          them; the inspector folds away before the transcript is squeezed, and the Settings notes
+          rail has its own fold control.
         </p>
       </section>
     </>
@@ -3408,16 +3418,6 @@ export default function SettingsView({
           page: "sponsors",
         },
         {
-          label: "Terminal",
-          value:
-            settings.terminal_font_size +
-            "px · " +
-            settings.terminal_scrollback +
-            " lines · " +
-            (settings.terminal_shell || "OS default"),
-          page: "terminal",
-        },
-        {
           label: "Skill sources",
           value: settings.skills_auto_update ? "auto-refresh" : "manual refresh",
           page: "shelf",
@@ -3584,8 +3584,8 @@ export default function SettingsView({
         </p>
       ) : null}
       <p className="fine">
-        Saved on this machine. Shortcuts survive a restart and apply on every surface; the palette
-        still stays out of a terminal, where the shell owns the keyboard.
+        Saved on this machine. Shortcuts survive a restart and apply on every surface; a field
+        that is capturing a binding keeps its keys until you confirm or cancel.
       </p>
     </section>
   );
@@ -3601,11 +3601,9 @@ export default function SettingsView({
       <p className="fine">
         Gravity matches one text ad to the day's edition or the open session and pays the publisher
         for impressions and clicks. On Home the card is a small classified strip at the foot of the
-        paper; in Session it sits above the composer. Both are labelled <strong>Advertisement</strong>,
+        paper; in Session it sits above the composer. Both are labelled as sponsored content,
         and both are off until you turn them on. While they are off, Rigel makes no ad request at
-        all. The constellation companion above the Session composer is local, not an ad, and stays
-        when the switch is off. Click it to choose among all six constellations; the choice stays on
-        this machine. The shared Firebase broker holds the publisher key; this machine never does.
+        all. The shared Firebase broker holds the publisher key; this machine never does.
       </p>
       <label className="toggle">
         <input
@@ -3667,16 +3665,20 @@ export default function SettingsView({
         return harnessesPage;
       case "safety":
         return safetyPage;
+      case "permissions":
+        return <PermissionsEditor project={project} session={session} onNotice={onNotice} />;
+      case "network":
+        return <NetworkPolicyEditor project={project} session={session} onNotice={onNotice} />;
       case "spending":
         return spendingPage;
-      case "terminal":
-        return terminalPage;
       case "appearance":
         return appearancePage;
       case "shortcuts":
         return shortcutsPage;
       case "shelf":
         return shelfPage;
+      case "plugins":
+        return <PluginsPage onNotice={onNotice} />;
       case "cloud":
         return cloudPage;
       case "mail":
@@ -3753,61 +3755,83 @@ export default function SettingsView({
           {shownPages.length === 0 ? (
             <p className="empty settings-no-match">No setting matches “{filter.trim()}”.</p>
           ) : null}
-          {shownPages.map((item) => {
-            const meta = navMeta(item.id);
+          {PAGE_GROUPS.map((group) => {
+            const items = shownPages.filter((item) => item.group === group);
+            if (items.length === 0) return null;
             return (
-              <button
-                key={item.id}
-                role="option"
-                aria-selected={page === item.id}
-                className={`row${page === item.id ? " on" : ""}`}
-                onClick={() => setPage(item.id)}
-                onContextMenu={(event) =>
-                  contextMenu.open(event, {
-                    eyebrow: "Settings",
-                    title: item.label,
-                    subtitle: item.blurb,
-                    sections: [
-                      {
-                        label: "Page",
-                        items: [
-                          {
-                            label: page === item.id ? "Current page" : "Open page",
-                            detail: item.blurb,
-                            icon: "open",
-                            disabled: page === item.id,
-                            onSelect: () => setPage(item.id),
-                          },
-                          {
-                            label: "Copy page name",
-                            icon: "copy",
-                            onSelect: () => void copyText(item.label, "Page name"),
-                          },
-                          {
-                            label: "Search settings",
-                            detail: filter ? `Filter: ${filter}` : "Every page in one list",
-                            icon: "search",
-                            hint: formatShortcut(shortcuts.search),
-                            onSelect: () => settingsSearch.current?.focus(),
-                          },
-                        ],
-                      },
-                    ],
-                    footer: `${shownPages.length} of ${PAGES.length} pages shown`,
-                  })
-                }
-              >
-                <span className="row-text">
-                  <span className="row-name">
-                    {item.label}
-                    <span className="nav-meta" title={meta.text}>
-                      {meta.dot ? <span className={`status-dot ${meta.dot}`} /> : null}
-                      {meta.text}
-                    </span>
-                  </span>
-                  <span className="row-desc">{item.blurb}</span>
-                </span>
-              </button>
+              <div className="settings-group" key={group} role="group" aria-label={group}>
+                <p className="settings-group-label">{group}</p>
+                {items.map((item) => {
+                  const meta = navMeta(item.id);
+                  return (
+                    <button
+                      key={item.id}
+                      role="option"
+                      aria-selected={page === item.id}
+                      className={`row${page === item.id ? " on" : ""}`}
+                      title={`${item.label} — ${item.blurb}`}
+                      onClick={() => setPage(item.id)}
+                      onContextMenu={(event) =>
+                        contextMenu.open(event, {
+                          eyebrow: "Settings",
+                          title: item.label,
+                          subtitle: item.blurb,
+                          sections: [
+                            {
+                              label: "Page",
+                              items: [
+                                {
+                                  label: page === item.id ? "Current page" : "Open page",
+                                  detail: item.blurb,
+                                  icon: "open",
+                                  disabled: page === item.id,
+                                  onSelect: () => setPage(item.id),
+                                },
+                                {
+                                  label: "Copy page name",
+                                  icon: "copy",
+                                  onSelect: () => void copyText(item.label, "Page name"),
+                                },
+                                {
+                                  label: "Search settings",
+                                  detail: filter ? `Filter: ${filter}` : "Every page in one list",
+                                  icon: "search",
+                                  hint: formatShortcut(shortcuts.search),
+                                  onSelect: () => settingsSearch.current?.focus(),
+                                },
+                              ],
+                            },
+                          ],
+                          footer: `${shownPages.length} of ${PAGES.length} pages shown`,
+                        })
+                      }
+                    >
+                      <svg
+                        className="settings-row-icon"
+                        viewBox="0 0 20 20"
+                        fill="none"
+                        stroke="currentColor"
+                        strokeWidth="1.35"
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        aria-hidden="true"
+                      >
+                        <path d={PAGE_ICONS[item.id]} />
+                      </svg>
+                      <span className="row-text">
+                        <span className="row-name">
+                          {item.label}
+                          <span className="nav-meta" title={meta.text}>
+                            {meta.dot ? <span className={`status-dot ${meta.dot}`} /> : null}
+                            {meta.text}
+                          </span>
+                        </span>
+                        <span className="row-desc">{item.blurb}</span>
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
             );
           })}
         </div>
@@ -3827,6 +3851,19 @@ export default function SettingsView({
             <p className="eyebrow">RIGEL · SETTINGS</p>
             <h2>{active.label}</h2>
             <p className="lede">{active.blurb}</p>
+          </div>
+          <div className="detail-actions">
+            <button
+              type="button"
+              className="chip settings-notes-toggle"
+              aria-expanded={notesOpen}
+              aria-controls="settings-notes"
+              title={notesOpen ? "Fold the notes rail" : "Show the notes rail"}
+              onClick={toggleNotes}
+            >
+              <span aria-hidden>▤</span>
+              {notesOpen ? "Fold notes" : "Notes"}
+            </button>
           </div>
         </header>
 
@@ -3848,7 +3885,23 @@ export default function SettingsView({
         {body}
       </main>
 
-      <aside className="inspector">
+      <aside
+        id="settings-notes"
+        className={`inspector settings-notes${notesOpen ? "" : " folded"}`}
+        aria-label="Settings notes"
+      >
+        <div className="settings-notes-head">
+          <h3>Notes</h3>
+          <button
+            type="button"
+            className="link"
+            aria-expanded={notesOpen}
+            aria-controls="settings-notes"
+            onClick={toggleNotes}
+          >
+            Fold
+          </button>
+        </div>
         {page === "providers" || page === "harnesses" ? (
           <>
             <div>
@@ -3896,24 +3949,6 @@ export default function SettingsView({
             </p>
           </div>
         ) : null}
-        {page === "terminal" ? (
-          <>
-            <div>
-              <h3>Where the shell runs</h3>
-              <p className="fine">
-                A real PTY opens in the project root with <code>TERM=xterm-256color</code>. Closing
-                the tab kills the process; switching tabs does not.
-              </p>
-            </div>
-            <div>
-              <h3>No approval step</h3>
-              <p className="fine">
-                The terminal is yours: Rigel does not parse or approve what you type there, and it
-                is not part of a turn's transcript.
-              </p>
-            </div>
-          </>
-        ) : null}
         {page === "appearance" ? (
           <>
             <div>
@@ -3927,17 +3962,17 @@ export default function SettingsView({
             <div>
               <h3>What follows it</h3>
               <p className="fine">
-                Surfaces, borders, text, scrollbars and the native controls read the same tokens,
-                and the terminal carries two ANSI palettes. No page is left on the old surface and
-                no shell is restarted.
+                Surfaces, borders, text, scrollbars and the native controls read the same tokens.
+                The paper keeps its own ink and stock, but its rules and accents come from the
+                same amber family.
               </p>
             </div>
             <div>
               <h3>Measured, not flipped</h3>
               <p className="fine">
                 On light, the faintest metadata is 5.26:1 on the background and 4.90:1 on raised;
-                amber text is 4.71:1 there; verified is 4.84:1. The terminal's dimmest text slot
-                is 5.49:1 on white.
+                amber text is 4.71:1 there; verified is 4.84:1. The paper's soft ink is 6.4:1 on
+                its stock, so the small caps stay readable.
               </p>
             </div>
           </>

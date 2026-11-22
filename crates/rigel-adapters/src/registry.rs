@@ -24,12 +24,12 @@ use tokio::process::Command;
 use crate::claude::ClaudeConfig;
 use crate::codex::{CodexConfig, auth_mode};
 use crate::muse::{MuseConfig, auth_mode as muse_auth_mode};
-use crate::{AuthMode, Capabilities, Harness, HarnessInfo, credential_spec};
+use crate::{AuthMode, Capabilities, Harness, HarnessInfo, ResumeSupport, credential_spec};
 
 /// The cache file name; the caller supplies the directory.
 pub const CACHE_FILE: &str = "adapters.json";
 
-const CACHE_VERSION: u32 = 1;
+const CACHE_VERSION: u32 = 2;
 const PROBE_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// The six external harnesses, in the order Settings lists them.
@@ -140,6 +140,9 @@ pub fn capabilities(harness: Harness, version: Option<&str>) -> Capabilities {
             programmatic_approval: true,
             worktree: true,
             nested_agents: false,
+            usage: true,
+            resume: ResumeSupport::VendorOnly,
+            tools: true,
         },
         Harness::Claude => Capabilities {
             acp: false,
@@ -148,6 +151,10 @@ pub fn capabilities(harness: Harness, version: Option<&str>) -> Capabilities {
             // Claude's worktrees are host-managed, not a CLI flag.
             worktree: false,
             nested_agents: version.is_some_and(|version| at_least(version, [2, 1, 219])),
+            usage: true,
+            // `--resume` exists, but the adapter has no field that carries a session id into it.
+            resume: ResumeSupport::VendorOnly,
+            tools: true,
         },
         Harness::Muse => Capabilities {
             acp: false,
@@ -158,6 +165,10 @@ pub fn capabilities(harness: Harness, version: Option<&str>) -> Capabilities {
             // Muse documents worktrees for subagents, but Rigel does not drive them yet.
             worktree: false,
             nested_agents: false,
+            // The published journal carries no token counts.
+            usage: false,
+            resume: ResumeSupport::Unsupported,
+            tools: true,
         },
         Harness::Cursor => Capabilities {
             acp: true,
@@ -166,6 +177,9 @@ pub fn capabilities(harness: Harness, version: Option<&str>) -> Capabilities {
             worktree: true,
             // ACP child sessions need the client to advertise the capability; P4.3 does not yet.
             nested_agents: false,
+            usage: true,
+            resume: ResumeSupport::Unsupported,
+            tools: true,
         },
         Harness::Cline => Capabilities {
             acp: true,
@@ -173,6 +187,9 @@ pub fn capabilities(harness: Harness, version: Option<&str>) -> Capabilities {
             programmatic_approval: true,
             worktree: true,
             nested_agents: false,
+            usage: true,
+            resume: ResumeSupport::Unsupported,
+            tools: true,
         },
         Harness::Gemini => Capabilities {
             acp: true,
@@ -181,8 +198,20 @@ pub fn capabilities(harness: Harness, version: Option<&str>) -> Capabilities {
             // Gemini CLI documents no worktree flag of its own, so Rigel does not promise one.
             worktree: false,
             nested_agents: false,
+            usage: true,
+            resume: ResumeSupport::Unsupported,
+            tools: true,
         },
-        Harness::Native => Capabilities::default(),
+        Harness::Native => Capabilities {
+            acp: false,
+            json_stream: true,
+            programmatic_approval: true,
+            worktree: true,
+            nested_agents: true,
+            usage: true,
+            resume: ResumeSupport::Wired,
+            tools: true,
+        },
     }
 }
 

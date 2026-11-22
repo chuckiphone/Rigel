@@ -31,6 +31,15 @@ pub const MAX_CLAIM_TEXT_BYTES: usize = 1024 * 1024;
 /// How many of one agent's patches the conflict view will walk forward (D79). A longer chain is
 /// still a chain; it is just not worth an unbounded query to render one conflict.
 const MAX_PATCH_CHAIN: usize = 64;
+/// A verdict is a person's name, not free-form prose. The limit keeps a pasted log out of the
+/// audit row and still leaves room for a full name or handle.
+pub const MAX_REVIEWER_CHARS: usize = 120;
+/// The test hint is a command or a short sentence, and it is stored beside the verdict.
+pub const MAX_TEST_HINT_CHARS: usize = 500;
+
+/// The one verdict a conflict merge can record. It is deliberately not an approval vocabulary:
+/// the reviewer accepted a specific merged text, and that text is hashed in the same row.
+pub const CONFLICT_VERDICT_ACCEPTED: &str = "accepted";
 
 #[derive(Debug, thiserror::Error)]
 pub enum ClaimError {
@@ -57,6 +66,36 @@ pub enum ClaimError {
 
     #[error("merge error: {0}")]
     Merge(#[from] crate::merge::MergeError),
+
+    #[error("the verdict must name the reviewer")]
+    ReviewerMissing,
+
+    #[error("the reviewer name is {chars} characters; the limit is {MAX_REVIEWER_CHARS}")]
+    ReviewerTooLong { chars: usize },
+
+    #[error("the test hint is missing")]
+    TestHintMissing,
+
+    #[error("the test hint is {chars} characters; the limit is {MAX_TEST_HINT_CHARS}")]
+    TestHintTooLong { chars: usize },
+
+    #[error("confirm the test hint before writing the merge")]
+    TestsNotAcknowledged,
+
+    #[error("the merged text still contains an unresolved conflict marker")]
+    UnresolvedMarkers,
+
+    #[error("the verdict has {given} hunk decision(s); the merge has {expected}")]
+    VerdictCount { expected: usize, given: usize },
+
+    #[error("hunk {index} has decision {choice:?}, which is not ours, theirs or edited")]
+    UnknownHunkChoice { index: usize, choice: String },
+
+    #[error("hunk index {index} is outside the merge's {hunks} conflicted hunk(s)")]
+    HunkIndexOutOfRange { index: usize, hunks: usize },
+
+    #[error("hunk {index} has more than one decision")]
+    DuplicateHunkDecision { index: usize },
 
     #[error("database error: {0}")]
     Database(#[from] sqlx::Error),
@@ -147,6 +186,50 @@ pub struct ConflictSides {
     pub merged_patch_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub merged_hash: Option<String>,
+    /// The reviewer's stored answer, once a guided merge has been written.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub verdict: Option<ConflictVerdict>,
+}
+
+/// One side of a conflict hunk, as the guided editor renders it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ConflictHunk {
+    pub base: String,
+    pub ours: String,
+    pub theirs: String,
+}
+
+/// One per-hunk decision. The UI sends one of these for every conflict block; the core refuses
+/// a short, repeated or unknown list rather than guessing what an unmentioned hunk should be.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ConflictHunkDecision {
+    pub index: usize,
+    /// `ours`, `theirs` or `edited`.
+    pub choice: String,
+}
+
+/// What the person writing the merge asserts. This is the command input; it becomes a
+/// [`ConflictVerdict`] only after the file has been written.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ConflictVerdictInput {
+    pub reviewer: String,
+    pub decisions: Vec<ConflictHunkDecision>,
+    pub test_hint: String,
+    pub tests_acknowledged: bool,
+}
+
+/// The stored answer to a conflict merge. It names the reviewer, keeps the per-hunk choices and
+/// the test hint that was on screen, and hashes the merged file the verdict was about.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ConflictVerdict {
+    pub reviewer: String,
+    pub verdict: String,
+    pub hunks: usize,
+    pub decisions: Vec<ConflictHunkDecision>,
+    pub test_hint: String,
+    pub tests_acknowledged: bool,
+    pub merged_hash: String,
+    pub created_at: i64,
 }
 
 /// The text [`ClaimService::merge`] would write, before anything is written.
@@ -159,6 +242,8 @@ pub struct MergedConflict {
     /// How many blocks need a human.
     pub conflicts: usize,
     pub clean: bool,
+    /// The base, ours and theirs text for each conflict block, in order.
+    pub hunks: Vec<ConflictHunk>,
 }
 
 /// What a merged resolution did. `patch` is `None` when the file already held the text.
@@ -167,6 +252,7 @@ pub struct MergeResolution {
     pub path: String,
     pub patch: Option<Patch>,
     pub unchanged: bool,
+    pub verdict: ConflictVerdict,
 }
 
 /// The captured sides, before they are stored.
@@ -176,6 +262,68 @@ struct ConflictCapture {
     ours: Option<ConflictText>,
     theirs: Option<ConflictText>,
     note: Option<String>,
+}
+
+/// Refuse a verdict that does not answer the merge it is attached to.
+///
+/// This is the last line of defence for the guided editor: a marker block is not a resolution,
+/// a skipped hunk is not a decision, and a verdict without a person's name cannot be audited.
+fn validate_verdict(
+    merge: &crate::merge::MergeResult,
+    merged: &str,
+    verdict: &ConflictVerdictInput,
+) -> Result<(), ClaimError> {
+    if verdict.reviewer.trim().is_empty() {
+        return Err(ClaimError::ReviewerMissing);
+    }
+    let reviewer_chars = verdict.reviewer.trim().chars().count();
+    if reviewer_chars > MAX_REVIEWER_CHARS {
+        return Err(ClaimError::ReviewerTooLong {
+            chars: reviewer_chars,
+        });
+    }
+    if verdict.test_hint.trim().is_empty() {
+        return Err(ClaimError::TestHintMissing);
+    }
+    let hint_chars = verdict.test_hint.trim().chars().count();
+    if hint_chars > MAX_TEST_HINT_CHARS {
+        return Err(ClaimError::TestHintTooLong { chars: hint_chars });
+    }
+    if !verdict.tests_acknowledged {
+        return Err(ClaimError::TestsNotAcknowledged);
+    }
+    if crate::merge::has_conflict_markers(merged) {
+        return Err(ClaimError::UnresolvedMarkers);
+    }
+    if verdict.decisions.len() != merge.hunks.len() {
+        return Err(ClaimError::VerdictCount {
+            expected: merge.hunks.len(),
+            given: verdict.decisions.len(),
+        });
+    }
+
+    let mut seen = vec![false; merge.hunks.len()];
+    for decision in &verdict.decisions {
+        if decision.index >= merge.hunks.len() {
+            return Err(ClaimError::HunkIndexOutOfRange {
+                index: decision.index,
+                hunks: merge.hunks.len(),
+            });
+        }
+        if seen[decision.index] {
+            return Err(ClaimError::DuplicateHunkDecision {
+                index: decision.index,
+            });
+        }
+        seen[decision.index] = true;
+        if !matches!(decision.choice.as_str(), "ours" | "theirs" | "edited") {
+            return Err(ClaimError::UnknownHunkChoice {
+                index: decision.index,
+                choice: decision.choice.clone(),
+            });
+        }
+    }
+    Ok(())
 }
 
 #[derive(Clone)]
@@ -831,6 +979,7 @@ impl ClaimService {
                 ),
                 merged_patch_id: None,
                 merged_hash: None,
+                verdict: self.verdict(id).await?,
             });
         };
 
@@ -847,7 +996,47 @@ impl ClaimService {
             note,
             merged_patch_id: patch_id,
             merged_hash,
+            verdict: self.verdict(id).await?,
         })
+    }
+
+    /// The stored verdict for a conflict, if one was written. It is returned with the sides so
+    /// a resolved row can still answer "who accepted this, and which hunk did they choose?".
+    pub async fn verdict(&self, id: &str) -> Result<Option<ConflictVerdict>, ClaimError> {
+        type VerdictRow = (String, String, i64, String, String, i64, String, i64);
+        let row: Option<VerdictRow> = sqlx::query_as(
+            "SELECT reviewer, verdict, hunks, decisions_json, test_hint,
+                    tests_acknowledged, merged_hash, created_at
+             FROM conflict_verdicts WHERE conflict_id = ?",
+        )
+        .bind(id)
+        .fetch_optional(&self.pool)
+        .await?;
+        let Some((
+            reviewer,
+            verdict,
+            hunks,
+            decisions_json,
+            test_hint,
+            tests_acknowledged,
+            merged_hash,
+            created_at,
+        )) = row
+        else {
+            return Ok(None);
+        };
+        let decisions: Vec<ConflictHunkDecision> = serde_json::from_str(&decisions_json)
+            .map_err(|error| ClaimError::Database(sqlx::Error::Decode(Box::new(error))))?;
+        Ok(Some(ConflictVerdict {
+            reviewer,
+            verdict,
+            hunks: hunks as usize,
+            decisions,
+            test_hint,
+            tests_acknowledged: tests_acknowledged != 0,
+            merged_hash,
+            created_at,
+        }))
     }
 
     /// One conflict row by id, resolved or not.
@@ -895,6 +1084,15 @@ impl ClaimService {
             merged: result.merged,
             conflicts: result.conflicts,
             clean: result.clean,
+            hunks: result
+                .hunks
+                .into_iter()
+                .map(|hunk| ConflictHunk {
+                    base: hunk.base,
+                    ours: hunk.ours,
+                    theirs: hunk.theirs,
+                })
+                .collect(),
         })
     }
 
@@ -909,12 +1107,23 @@ impl ClaimService {
         session_id: &str,
         id: &str,
         merged: &str,
+        verdict: &ConflictVerdictInput,
     ) -> Result<MergeResolution, ClaimError> {
         let conflict = self.conflict(id).await?;
         if conflict.resolved_at.is_some() {
             return Err(ClaimError::ConflictClosed(id.to_string()));
         }
         let sides = self.sides(id).await?;
+        let (base, ours, theirs) = match (&sides.base, &sides.ours, &sides.theirs) {
+            (Some(base), Some(ours), Some(theirs)) => (base, ours, theirs),
+            _ => {
+                return Err(ClaimError::SidesUnavailable(sides.note.unwrap_or_else(
+                    || "a side is missing and Rigel will not invent it".to_string(),
+                )));
+            }
+        };
+        let computed = crate::merge::three_way(&base.text, &ours.text, &theirs.text)?;
+        validate_verdict(&computed, merged, verdict)?;
 
         let (current_text, current_hash) = match pipeline.read(&conflict.path) {
             Ok(pair) => pair,
@@ -939,17 +1148,20 @@ impl ClaimService {
         }
 
         if merged == current_text {
-            self.finish_merge(
-                id,
-                None,
-                &current_hash,
-                "merged: the file already held the merged text",
-            )
-            .await?;
+            let stored = self
+                .finish_merge(
+                    id,
+                    None,
+                    &current_hash,
+                    "merged: the file already held the merged text",
+                    verdict,
+                )
+                .await?;
             return Ok(MergeResolution {
                 path: conflict.path,
                 patch: None,
                 unchanged: true,
+                verdict: stored,
             });
         }
 
@@ -963,17 +1175,20 @@ impl ClaimService {
                 StopAt::Never,
             )
             .await?;
-        self.finish_merge(
-            id,
-            Some(&patch.id),
-            &patch.result_hash,
-            "merged the three versions",
-        )
-        .await?;
+        let stored = self
+            .finish_merge(
+                id,
+                Some(&patch.id),
+                &patch.result_hash,
+                "merged the three versions",
+                verdict,
+            )
+            .await?;
         Ok(MergeResolution {
             path: conflict.path,
             patch: Some(patch),
             unchanged: false,
+            verdict: stored,
         })
     }
 
@@ -983,15 +1198,32 @@ impl ClaimService {
         patch_id: Option<&str>,
         merged_hash: &str,
         resolution: &str,
-    ) -> Result<(), ClaimError> {
+        verdict: &ConflictVerdictInput,
+    ) -> Result<ConflictVerdict, ClaimError> {
+        let now = now_ms();
+        let reviewer = verdict.reviewer.trim().to_string();
+        let test_hint = verdict.test_hint.trim().to_string();
+        let decisions_json = serde_json::to_string(&verdict.decisions)
+            .map_err(|error| ClaimError::Database(sqlx::Error::Decode(Box::new(error))))?;
+        let stored = ConflictVerdict {
+            reviewer,
+            verdict: CONFLICT_VERDICT_ACCEPTED.to_string(),
+            hunks: verdict.decisions.len(),
+            decisions: verdict.decisions.clone(),
+            test_hint,
+            tests_acknowledged: verdict.tests_acknowledged,
+            merged_hash: merged_hash.to_string(),
+            created_at: now,
+        };
+        let mut transaction = self.pool.begin().await?;
         sqlx::query(
             "UPDATE claim_conflicts SET resolved_at = ?, resolution = ?
              WHERE id = ? AND resolved_at IS NULL",
         )
-        .bind(now_ms())
+        .bind(now)
         .bind(resolution)
         .bind(id)
-        .execute(&self.pool)
+        .execute(&mut *transaction)
         .await?;
         sqlx::query(
             "UPDATE conflict_sides SET merged_patch_id = ?, merged_hash = ? WHERE conflict_id = ?",
@@ -999,9 +1231,27 @@ impl ClaimService {
         .bind(patch_id)
         .bind(merged_hash)
         .bind(id)
-        .execute(&self.pool)
+        .execute(&mut *transaction)
         .await?;
-        Ok(())
+        sqlx::query(
+            "INSERT INTO conflict_verdicts
+               (conflict_id, reviewer, verdict, hunks, decisions_json, test_hint,
+                tests_acknowledged, merged_hash, created_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        )
+        .bind(id)
+        .bind(&stored.reviewer)
+        .bind(&stored.verdict)
+        .bind(stored.hunks as i64)
+        .bind(&decisions_json)
+        .bind(&stored.test_hint)
+        .bind(stored.tests_acknowledged as i64)
+        .bind(&stored.merged_hash)
+        .bind(stored.created_at)
+        .execute(&mut *transaction)
+        .await?;
+        transaction.commit().await?;
+        Ok(stored)
     }
 
     /// A project-relative path, or an error naming the reason. Normalisation is what makes two

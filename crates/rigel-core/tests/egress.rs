@@ -8,8 +8,8 @@ use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
 use rigel_core::{
-    BudgetService, Cancels, ItemKind, NetworkPolicy, OriginApprover, OriginDecision, OriginRequest,
-    SessionService, StopAt, Tools,
+    BudgetService, Cancels, EgressLimits, ItemKind, NetworkAction, NetworkDefault, NetworkPolicy,
+    NetworkRule, OriginApprover, OriginDecision, OriginRequest, SessionService, StopAt, Tools,
 };
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
@@ -69,6 +69,24 @@ async fn build_tools(
         StopAt::Never,
     )
     .with_origin_approval(approver)
+    .with_network_policy(NetworkPolicy {
+        limits: EgressLimits {
+            allow_private_addresses: true,
+            ..EgressLimits::default()
+        },
+        ..NetworkPolicy::default()
+    })
+}
+
+async fn build_tools_with_closed_policy(
+    root: &std::path::Path,
+    index: &std::path::Path,
+    approver: Arc<dyn OriginApprover>,
+    policy: NetworkPolicy,
+) -> Tools {
+    build_tools(root, index, approver)
+        .await
+        .with_network_policy(policy)
 }
 
 fn response(status: &str, content_type: &str, body: &str) -> String {
@@ -107,18 +125,21 @@ async fn build_tools_with_policy(
     root: &std::path::Path,
     index: &std::path::Path,
     approver: Arc<dyn OriginApprover>,
-    policy: NetworkPolicy,
+    mut policy: NetworkPolicy,
 ) -> Tools {
-    build_tools(root, index, approver)
-        .await
-        .with_network_policy(policy)
+    policy.limits.allow_private_addresses = true;
+    build_tools_with_closed_policy(root, index, approver, policy).await
 }
 
 async fn fetch(tools: &Tools, url: &str) -> rigel_core::ToolOutcome {
+    fetch_as(tools, "agent", url).await
+}
+
+async fn fetch_as(tools: &Tools, agent: &str, url: &str) -> rigel_core::ToolOutcome {
     tools
         .execute(
             "session",
-            "agent",
+            agent,
             "fetch_url",
             serde_json::json!({ "url": url }),
         )
@@ -164,6 +185,69 @@ async fn an_allowlist_admits_its_origin_and_refuses_another() {
     let refused = fetch(&tools, "http://127.0.0.1:1/other").await;
     assert!(!refused.ok);
     assert_eq!(refused.body["error"]["code"], "NOT_ALLOWLISTED");
+    assert_eq!(approver.calls.load(Ordering::SeqCst), 1);
+}
+
+#[tokio::test]
+async fn a_deny_rule_refuses_before_the_approver_or_socket() {
+    let tmp = tempfile::tempdir().unwrap();
+    let approver = Recorder::new(OriginDecision::AllowOnce);
+    let mut policy = NetworkPolicy::new(true, Vec::new());
+    policy.rules = vec![NetworkRule {
+        action: NetworkAction::Deny,
+        pattern: "127.0.0.1".to_string(),
+        note: Some("loopback is not a document source".to_string()),
+    }];
+    let tools = build_tools_with_policy(
+        tmp.path(),
+        &tmp.path().join("index"),
+        approver.clone(),
+        policy,
+    )
+    .await;
+
+    // Nothing listens on port 1: only a policy refusal keeps this from being a NETWORK error.
+    let refused = fetch(&tools, "http://127.0.0.1:1/secret").await;
+    assert!(!refused.ok);
+    assert_eq!(refused.body["error"]["code"], "RULE_DENY");
+    assert!(
+        refused.body["error"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("loopback"),
+        "the rule note travels to the refusal"
+    );
+    assert_eq!(approver.calls.load(Ordering::SeqCst), 0);
+}
+
+#[tokio::test]
+async fn an_allow_rule_admits_a_origin_under_a_default_deny() {
+    let tmp = tempfile::tempdir().unwrap();
+    let (base, _) = serve(vec![response("200 OK", "text/plain", "allowed by rule")]).await;
+    let approver = Recorder::new(OriginDecision::AllowOnce);
+    let mut policy = NetworkPolicy::new(true, Vec::new());
+    policy.default = NetworkDefault::Deny;
+    policy.rules = vec![NetworkRule {
+        action: NetworkAction::Allow,
+        pattern: base.clone(),
+        note: None,
+    }];
+    let tools = build_tools_with_policy(
+        tmp.path(),
+        &tmp.path().join("index"),
+        approver.clone(),
+        policy,
+    )
+    .await;
+
+    let allowed = fetch(&tools, &format!("{base}/page")).await;
+    assert!(allowed.ok, "{:?}", allowed.body);
+    assert_eq!(allowed.body["text"], "allowed by rule");
+    assert_eq!(approver.calls.load(Ordering::SeqCst), 1);
+
+    let refused = fetch(&tools, "http://127.0.0.1:1/other").await;
+    assert!(!refused.ok);
+    assert_eq!(refused.body["error"]["code"], "DEFAULT_DENY");
     assert_eq!(approver.calls.load(Ordering::SeqCst), 1);
 }
 

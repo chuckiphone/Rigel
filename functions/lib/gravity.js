@@ -18,9 +18,11 @@ const DEV_ORIGINS = new Set([
   'http://localhost:5000',
   'http://localhost:5173',
   'http://localhost:4173',
+  'http://localhost:8080',
   'http://127.0.0.1:5000',
   'http://127.0.0.1:5173',
   'http://127.0.0.1:4173',
+  'http://127.0.0.1:8080',
 ]);
 
 const MAX_BODY_CHARS = 24_000;
@@ -164,8 +166,8 @@ function context(body) {
   return result;
 }
 
-/** Drop fields the card cannot use, and never forward an insecure tracking URL. */
-function publicAd(ad) {
+/** Drop fields the card cannot use, and never forward an insecure tracking or artwork URL. */
+function publicAd(ad, test = false) {
   if (!ad || typeof ad !== 'object') return null;
   const clickUrl = https(ad.clickUrl);
   if (!clickUrl) return null;
@@ -179,7 +181,12 @@ function publicAd(ad) {
     impUrl: https(ad.impUrl),
     placement: text(ad.placement, 64),
     placement_id: text(ad.placement_id, 64),
+    test: Boolean(test),
   };
+  const favicon = https(ad.favicon);
+  const brandImage = https(ad.brandImage);
+  if (favicon) result.favicon = favicon;
+  if (brandImage) result.brandImage = brandImage;
   if (!result.adText && !result.title) return null;
   return result;
 }
@@ -266,7 +273,10 @@ function createGravityHandler({ getAds, test, log = () => {} }) {
       return;
     }
 
-    const ads = (Array.isArray(result.ads) ? result.ads : []).map(publicAd).filter(Boolean).slice(0, 1);
+    const ads = (Array.isArray(result.ads) ? result.ads : [])
+      .map((ad) => publicAd(ad, test))
+      .filter(Boolean)
+      .slice(0, 1);
     respond(response, 200, { ads, test: Boolean(test) }, headers);
   };
 }

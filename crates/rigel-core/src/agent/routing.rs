@@ -219,6 +219,87 @@ pub fn explain(
     })
 }
 
+/// Which rung of the agent/turn ladder supplied the resolved pair.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum AgentRouteSource {
+    /// A named role preset owns the row; its model and effort win outright.
+    Preset,
+    /// The agent row has its own picker pair.
+    Agent,
+    /// The composer's request carries the pair.
+    Request,
+    /// Nothing more specific was set; Settings is the default.
+    Saved,
+}
+
+/// The pair a turn will actually use, before the door is validated by [`resolve`].
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AgentRoute {
+    pub model: Option<String>,
+    pub provider: Option<String>,
+    pub effort: String,
+    pub source: AgentRouteSource,
+}
+
+fn named(value: Option<&str>) -> Option<&str> {
+    value.map(str::trim).filter(|value| !value.is_empty())
+}
+
+/// Resolve the ladder for one agent turn: preset, then the agent's own picker, then the
+/// composer's request, then Settings. The role preset is deliberately first: applying one is the
+/// explicit choice, and the row's picker is disabled while it is active so the display cannot
+/// promise a pair the next turn would not send.
+#[allow(clippy::too_many_arguments)]
+pub fn for_agent(
+    role: Option<&str>,
+    agent_model: Option<&str>,
+    agent_provider: Option<&str>,
+    agent_effort: Option<&str>,
+    requested_model: Option<&str>,
+    requested_provider: Option<&str>,
+    requested_effort: Option<&str>,
+    saved_model: &str,
+    saved_provider: &str,
+    saved_effort: &str,
+) -> AgentRoute {
+    if let Some(preset) = super::roles::preset(role) {
+        return AgentRoute {
+            model: Some(preset.model.to_string()),
+            // A preset's model is resolved through the saved door, exactly as it was before
+            // per-agent pickers: it carries no provider of its own.
+            provider: None,
+            effort: preset.effort.to_string(),
+            source: AgentRouteSource::Preset,
+        };
+    }
+    if let Some(model) = named(agent_model) {
+        return AgentRoute {
+            model: Some(model.to_string()),
+            provider: named(agent_provider).map(str::to_string),
+            effort: named(agent_effort)
+                .or_else(|| named(requested_effort))
+                .unwrap_or(saved_effort)
+                .to_string(),
+            source: AgentRouteSource::Agent,
+        };
+    }
+    if let Some(model) = named(requested_model) {
+        return AgentRoute {
+            model: Some(model.to_string()),
+            provider: named(requested_provider).map(str::to_string),
+            effort: named(requested_effort).unwrap_or(saved_effort).to_string(),
+            source: AgentRouteSource::Request,
+        };
+    }
+    AgentRoute {
+        model: named(Some(saved_model)).map(str::to_string),
+        provider: named(Some(saved_provider)).map(str::to_string),
+        effort: saved_effort.to_string(),
+        source: AgentRouteSource::Saved,
+    }
+}
+
 /// The door a bare id unmistakably belongs to: a non-gateway, key-based door with a namespace of
 /// its own. Vertex is excluded on purpose — `google/gemini…` is also OpenRouter's spelling, so a
 /// model id must never be able to select it.
@@ -410,6 +491,85 @@ mod tests {
         let route = resolve("groq", "", Some("groq"), Some("openai/gpt-oss-120b")).unwrap();
         assert_eq!(route.provider, "groq");
         assert_eq!(route.model, "openai/gpt-oss-120b");
+    }
+
+    #[test]
+    fn a_role_preset_beats_the_agents_own_picker() {
+        let route = for_agent(
+            Some("reviewer"),
+            Some("openai/gpt-5-nano"),
+            Some("openrouter"),
+            Some("low"),
+            Some("anthropic/claude-sonnet-4.5"),
+            Some("openrouter"),
+            Some("low"),
+            "gpt-5.6-sol-medium",
+            "omniroute",
+            "medium",
+        );
+        assert_eq!(route.source, AgentRouteSource::Preset);
+        assert_eq!(route.model.as_deref(), Some("openai/gpt-5.4-mini"));
+        assert_eq!(
+            route.provider, None,
+            "a preset resolves through the saved door"
+        );
+        assert_eq!(route.effort, "high");
+    }
+
+    #[test]
+    fn an_agent_picker_beats_the_composer_and_keeps_its_provider() {
+        let route = for_agent(
+            Some("worker"),
+            Some("anthropic/claude-sonnet-4.5"),
+            Some("openrouter"),
+            Some("low"),
+            Some("openai/gpt-5-nano"),
+            Some("groq"),
+            Some("high"),
+            "gpt-5.6-sol-medium",
+            "omniroute",
+            "medium",
+        );
+        assert_eq!(route.source, AgentRouteSource::Agent);
+        assert_eq!(route.model.as_deref(), Some("anthropic/claude-sonnet-4.5"));
+        assert_eq!(route.provider.as_deref(), Some("openrouter"));
+        assert_eq!(route.effort, "low", "the row's own effort wins");
+    }
+
+    #[test]
+    fn an_unconfigured_agent_falls_to_the_request_then_settings() {
+        let requested = for_agent(
+            Some("worker"),
+            None,
+            None,
+            None,
+            Some("openai/gpt-5-nano"),
+            Some("openrouter"),
+            Some("high"),
+            "gpt-5.6-sol-medium",
+            "omniroute",
+            "medium",
+        );
+        assert_eq!(requested.source, AgentRouteSource::Request);
+        assert_eq!(requested.model.as_deref(), Some("openai/gpt-5-nano"));
+        assert_eq!(requested.effort, "high");
+
+        let saved = for_agent(
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            "gpt-5.6-sol-medium",
+            "omniroute",
+            "medium",
+        );
+        assert_eq!(saved.source, AgentRouteSource::Saved);
+        assert_eq!(saved.model.as_deref(), Some("gpt-5.6-sol-medium"));
+        assert_eq!(saved.provider.as_deref(), Some("omniroute"));
+        assert_eq!(saved.effort, "medium");
     }
 
     #[test]

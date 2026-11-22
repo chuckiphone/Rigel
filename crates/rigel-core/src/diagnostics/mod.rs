@@ -353,6 +353,7 @@ mod tests {
             id: "s-1".to_string(),
             project_root: "C:/work/demo".to_string(),
             title: Some("fix sk-session-key".to_string()),
+            title_source: Some("manual".to_string()),
             status: crate::session::SessionStatus::Active,
             budget_cents: Some(500),
             spend_cents: 1,

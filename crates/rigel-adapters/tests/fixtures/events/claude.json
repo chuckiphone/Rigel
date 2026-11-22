@@ -1,0 +1,136 @@
+{
+  "harness": "claude",
+  "scenarios": {
+    "approval": [
+      {
+        "event": "started",
+        "session_id": "cs-9c3",
+        "model": "claude-sonnet-4.5",
+        "transport": null
+      },
+      {
+        "event": "delta",
+        "kind": "message",
+        "text": "I need to run the tests."
+      },
+      {
+        "event": "message",
+        "text": "I need to run the tests."
+      },
+      {
+        "event": "item",
+        "item": {
+          "kind": "command",
+          "body": {
+            "command": "cargo test",
+            "input": {
+              "command": "cargo test",
+              "description": "Run the test suite"
+            },
+            "operation": "execute",
+            "tool": "Bash",
+            "tool_use_id": "toolu_02"
+          }
+        },
+        "status": null
+      }
+    ],
+    "error": [
+      {
+        "event": "started",
+        "session_id": "cs-9c4",
+        "model": "claude-sonnet-4.5",
+        "transport": null
+      },
+      {
+        "event": "delta",
+        "kind": "message",
+        "text": "Starting the refactor."
+      }
+    ],
+    "interrupt": [
+      {
+        "event": "started",
+        "session_id": "cs-9c5",
+        "model": "claude-sonnet-4.5",
+        "transport": null
+      },
+      {
+        "event": "delta",
+        "kind": "message",
+        "text": "Patching src/"
+      },
+      {
+        "event": "message",
+        "text": "Patching src/"
+      }
+    ],
+    "start": [
+      {
+        "event": "started",
+        "session_id": "cs-9c1",
+        "model": "claude-sonnet-4.5",
+        "transport": null
+      },
+      {
+        "event": "delta",
+        "kind": "message",
+        "text": "The file "
+      },
+      {
+        "event": "delta",
+        "kind": "message",
+        "text": "is small."
+      },
+      {
+        "event": "message",
+        "text": "The file is small."
+      }
+    ],
+    "tool_call": [
+      {
+        "event": "started",
+        "session_id": "cs-9c2",
+        "model": "claude-sonnet-4.5",
+        "transport": null
+      },
+      {
+        "event": "delta",
+        "kind": "message",
+        "text": "Reading src/lib.rs."
+      },
+      {
+        "event": "message",
+        "text": "Reading src/lib.rs."
+      },
+      {
+        "event": "item",
+        "item": {
+          "kind": "file_change",
+          "body": {
+            "input": {
+              "file_path": "src/lib.rs"
+            },
+            "operation": "read",
+            "path": "src/lib.rs",
+            "tool": "Read",
+            "tool_use_id": "toolu_01"
+          }
+        },
+        "status": null
+      },
+      {
+        "event": "item",
+        "item": {
+          "kind": "file_change",
+          "body": {
+            "ok": true,
+            "result": "fn main() {}\n",
+            "tool_use_id": "toolu_01"
+          }
+        },
+        "status": null
+      }
+    ]
+  }
+}

@@ -23,14 +23,17 @@ pub mod memory;
 pub mod merge;
 pub mod migrate;
 pub mod patches;
+pub mod permissions;
 pub mod pins;
 pub mod plan;
+pub mod plugin;
 pub mod process;
 pub mod provenance;
 pub mod redaction;
 pub mod resume;
 pub mod rules;
 pub mod safety;
+pub mod sandbox;
 pub mod search;
 pub mod session;
 pub mod skills;
@@ -46,12 +49,15 @@ pub mod tree;
 pub mod update;
 pub mod worktree;
 pub use agent::{
-    AgentError, ApprovalScope, Cancels, ChatMessage, ChatRequest, CommandApprover, CommandDecision,
-    CommandRequest, Coordinator, DEFAULT_MAX_STEPS, Deliberation, Deliberator, Delta, Finding,
-    Model, ModelDeliberator, ModelError, NetworkPolicy, NoDeliberation, OpenRouterModel,
-    OriginApprover, OriginDecision, OriginRequest, POLICIES, PlanAgent, PlanApprover, PlanDecision,
-    PlanRequest, Policy, Position, Scopes, ScriptedModel, ServerStatus, SkillScript, StopReason,
-    SubagentPolicy, ToolCall, ToolOutcome, ToolSpec, Tools, TurnRun, classify,
+    AddressResolver, AgentError, ApprovalScope, Cancels, ChatMessage, ChatRequest, CommandApprover,
+    CommandDecision, CommandRequest, Coordinator, DEFAULT_MAX_STEPS, Deliberation, Deliberator,
+    Delta, DenyOrigins, Egress, EgressCounters, EgressError, EgressLimits, EgressResponse, Fetched,
+    Finding, MergeQueueEntry, MergeQueueState, MergeQueueView, Model, ModelDeliberator, ModelError,
+    NetworkAction, NetworkCheck, NetworkDecision, NetworkDefault, NetworkPolicy, NetworkRule,
+    NoDeliberation, OpenRouterModel, OriginApprover, OriginDecision, OriginRequest, POLICIES,
+    PinnedResolution, PlanAgent, PlanApprover, PlanDecision, PlanRequest, Policy, Position,
+    QueueLease, Scopes, ScriptedModel, ServerStatus, SkillScript, StopReason, SubagentPolicy,
+    SystemResolver, ToolCall, ToolOutcome, ToolSpec, Tools, TurnRun, classify,
 };
 pub use agentmail::{
     Mail, MailConfig, MailError, MailStatus, MessageBody, MessageSummary, SentMail, ThreadSummary,
@@ -66,8 +72,10 @@ pub use budget::{
     TurnQuote, quote_turn, utc_day,
 };
 pub use claims::{
-    CLAIM_TTL, Claim, ClaimConflict, ClaimError, ClaimResult, ClaimService, ConflictSides,
-    ConflictText, MERGE_AUTHOR, MergeResolution, MergedConflict, STALE_AFTER, UnverifiedChange,
+    CLAIM_TTL, CONFLICT_VERDICT_ACCEPTED, Claim, ClaimConflict, ClaimError, ClaimResult,
+    ClaimService, ConflictHunk, ConflictHunkDecision, ConflictSides, ConflictText, ConflictVerdict,
+    ConflictVerdictInput, MAX_REVIEWER_CHARS, MAX_TEST_HINT_CHARS, MERGE_AUTHOR, MergeResolution,
+    MergedConflict, STALE_AFTER, UnverifiedChange,
 };
 pub use cloud::{
     Cloud, CloudConfig, CloudError, CloudStatus, Endpoints, MemorySessionStore, PullReport,
@@ -75,21 +83,34 @@ pub use cloud::{
 };
 pub use comments::{CommentError, HunkComment, HunkComments};
 pub use domain::{AgentEvent, CostSource, EventSink, ItemKind, NullSink, Usage};
+pub use memory::rank::{Fact, Factor, RankedFact, Score};
 pub use memory::{
     DenyMemory, MemoryApprover, MemoryDecision, MemoryError, MemoryFile, MemoryRequest,
     MemoryService, WriteMode,
 };
-pub use merge::{MergeError, MergeResult, three_way};
+pub use merge::{MergeError, MergeHunk, MergeResult, has_conflict_markers, three_way};
 pub use migrate::{INDEX_MIGRATIONS, MigrateError, Migration, PROJECT_MIGRATIONS, apply, now_ms};
 pub use patches::{
     AttributedHunk, HunkHeader, Patch, PatchError, PatchPipeline, Recovery, RecoveryState, StopAt,
     apply_patch_text, parse_diff_hunks, reverse_patch,
 };
+pub use permissions::{
+    AgentGrant, AgentPermissionRow, PermissionError, PermissionMatrix, ProjectPermissions,
+    RoleGrant,
+};
 pub use pins::{PinError, SkillPinReview, SkillPinView};
+pub use plugin::{
+    Broker, Capabilities, Catalog, CatalogEntry, CatalogKind, CatalogTier, InstallReport,
+    InstalledPlugin, PluginError, PluginHost, PluginManifest, PluginReply, PluginRuntime,
+    PluginStore, PluginTool,
+};
 pub use provenance::{Provenance, ProvenanceError};
 pub use resume::{ResumeError, ResumeOutcome};
 pub use safety::{
     AppliedReview, DecisionError, MergeReview, MergeReviews, Verdict, apply_review, diff_sha,
+};
+pub use sandbox::{
+    JobLimits, LinuxNamespacePolicy, Sandbox, SandboxError, SandboxExecPolicy, SandboxProfile,
 };
 pub use search::{MAX_HITS, PatchHit, SessionHit, TurnHit, WorkspaceHits};
 pub use session::{
@@ -105,6 +126,7 @@ pub use snapshot::{
     FileEntry, MAX_SNAPSHOT_BYTES, MAX_SNAPSHOT_FILES, Manifest, RestoreReport, Snapshot,
     SnapshotError, SnapshotKind, SnapshotService,
 };
+pub use snapshot::{GcPolicy, GcRemoved, GcReport};
 pub use storage::{StorageError, Store, default_index_dir};
 pub use templates::{
     MAX_TEMPLATES, SessionTemplate, SessionTemplates, TemplateAgent, TemplateError, TemplateSkill,

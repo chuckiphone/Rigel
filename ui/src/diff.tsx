@@ -20,12 +20,23 @@ import {
   type ConflictSides,
   type CoordinationView,
   type HunkComment,
+  type MergeQueueEntry,
+  type MergeQueueView,
   type MergedConflict,
   type Patch,
   type Provenance,
   type WritableAgentView,
   type WritableDiffView,
 } from "./api";
+import {
+  ConflictEditor,
+  conflictDecisions,
+  conflictReviewBlocker,
+  conflictTestHint,
+  emptyConflictReview,
+  resolvedConflictText,
+  type ConflictReviewState,
+} from "./conflict-editor";
 import { useMenu } from "./menu";
 
 /** One rendered line of a hunk, with the number the reader would find in the new file. */
@@ -430,9 +441,13 @@ const PREVIEW_SIDES: ConflictSides = {
 const PREVIEW_MERGE: MergedConflict = {
   id: "cf-preview-1",
   path: "ui/src/session.tsx",
-  merged: "export function pane() {\n<<<<<<< ours\n  return 2;\n=======\n  return 3;\n>>>>>>> theirs\n}\n",
-  conflicts: 1,
+  merged: "export function pane() {\n<<<<<<< ours\n  return 2;\n=======\n  return 3;\n>>>>>>> theirs\n}\n\nexport function title() {\n<<<<<<< ours\n  return \"ours\";\n=======\n  return \"theirs\";\n>>>>>>> theirs\n}\n",
+  conflicts: 2,
   clean: false,
+  hunks: [
+    { base: "  return 1;", ours: "  return 2;", theirs: "  return 3;" },
+    { base: '  return "base";', ours: '  return "ours";', theirs: '  return "theirs";' },
+  ],
 };
 
 const PREVIEW_PATCHES: Patch[] = [
@@ -542,6 +557,27 @@ const PREVIEW_WRITABLE: WritableAgentView[] = [
   PREVIEW_OPEN_REVIEW,
 ];
 
+const PREVIEW_QUEUE: MergeQueueView = {
+  entries: [
+    {
+      path: "crates/rigel-core/src/retry.rs",
+      writer_id: "a1f4c9d2-0c11-4f7e-9d33-5c2b8e6a1f04",
+      holder_id: "a1f4c9d2-0c11-4f7e-9d33-5c2b8e6a1f04",
+      state: "writing",
+      position: 0,
+      since: Date.now() - 1_400,
+    },
+    {
+      path: "crates/rigel-core/src/retry.rs",
+      writer_id: "b7e30211-8a4d-4c62-ae19-77d0f3b6c2a8",
+      holder_id: "a1f4c9d2-0c11-4f7e-9d33-5c2b8e6a1f04",
+      state: "waiting",
+      position: 1,
+      since: Date.now() - 600,
+    },
+  ],
+};
+
 const PREVIEW_WORKTREE: WritableDiffView = {
   agent_id: "c4d18e77-2b90-4a51-8f0e-6d3a9b5c7e21",
   files: ["crates/rigel-core/src/retry.rs"],
@@ -586,9 +622,13 @@ export default function DiffView({
   const [opened, setOpened] = useState<string | null>(null);
   const [sides, setSides] = useState<ConflictSides | null>(null);
   const [merged, setMerged] = useState<MergedConflict | null>(null);
-  const [mergedText, setMergedText] = useState("");
+  const [review, setReview] = useState<ConflictReviewState>(emptyConflictReview);
+  const [mergeNotice, setMergeNotice] = useState<string | null>(null);
   const [writable, setWritable] = useState<WritableAgentView[]>(() =>
     tauri ? [] : PREVIEW_WRITABLE,
+  );
+  const [queue, setQueue] = useState<MergeQueueView>(() =>
+    tauri ? { entries: [] } : PREVIEW_QUEUE,
   );
   const [worktree, setWorktree] = useState<Record<string, WritableDiffView>>({});
   const [openWorktree, setOpenWorktree] = useState<string | null>(null);
@@ -616,15 +656,23 @@ export default function DiffView({
     const load = async () => {
       if (!tauri) return;
       try {
-        const [next, nextPatches, nextHunks, nextComments, nextWritable, nextBookmarks] =
-          await Promise.all([
-            api.claimList(project),
-            session ? api.listPatches(project, session) : Promise.resolve([]),
-            session ? api.patchHunks(project, session) : Promise.resolve([]),
-            session ? api.hunkComments(project, session) : Promise.resolve([]),
-            session ? api.writableList(project, session) : Promise.resolve([]),
-            session ? api.listBookmarks(project, session) : Promise.resolve([]),
-          ]);
+        const [
+          next,
+          nextPatches,
+          nextHunks,
+          nextComments,
+          nextWritable,
+          nextBookmarks,
+          nextQueue,
+        ] = await Promise.all([
+          api.claimList(project),
+          session ? api.listPatches(project, session) : Promise.resolve([]),
+          session ? api.patchHunks(project, session) : Promise.resolve([]),
+          session ? api.hunkComments(project, session) : Promise.resolve([]),
+          session ? api.writableList(project, session) : Promise.resolve([]),
+          session ? api.listBookmarks(project, session) : Promise.resolve([]),
+          api.mergeQueue(project),
+        ]);
         if (alive) {
           setView(next);
           setPatches(nextPatches);
@@ -632,6 +680,7 @@ export default function DiffView({
           setComments(nextComments);
           setWritable(nextWritable);
           setBookmarks(nextBookmarks);
+          setQueue(nextQueue);
         }
       } catch (problem) {
         if (alive) setError(problem instanceof Error ? problem.message : String(problem));
@@ -732,6 +781,27 @@ export default function DiffView({
 
   const name = (id: string | null) =>
     id ? (id === "user" ? "you" : names.get(id) ?? id.slice(0, 8)) : "unattributed";
+  // A queue lane names the writer and keeps the short id: two children of one role are not
+  // interchangeable when the question is who is holding the file.
+  const laneName = (id: string) => {
+    const label = names.get(id);
+    return label ? `${label} ${id.slice(0, 8)}` : id.slice(0, 8);
+  };
+  const queueLanes = useMemo(() => {
+    const byPath = new Map<string, MergeQueueEntry[]>();
+    for (const entry of queue.entries) {
+      const rows = byPath.get(entry.path) ?? [];
+      rows.push(entry);
+      byPath.set(entry.path, rows);
+    }
+    return [...byPath.entries()].map(([path, rows]) => ({
+      path,
+      holder: rows.find((row) => row.state === "writing") ?? null,
+      waiting: rows
+        .filter((row) => row.state === "waiting")
+        .sort((one, two) => one.position - two.position),
+    }));
+  }, [queue]);
   const hunksByPath = useMemo(() => {
     const map = new Map<string, AttributedHunk[]>();
     for (const hunk of hunks) {
@@ -762,11 +832,13 @@ export default function DiffView({
       setOpened(null);
       setSides(null);
       setMerged(null);
+      setReview(emptyConflictReview());
       return;
     }
     setOpened(conflict.id);
     setSides(null);
     setMerged(null);
+    setReview(emptyConflictReview());
     setError(null);
     if (!tauri) {
       setSides(PREVIEW_SIDES);
@@ -788,7 +860,7 @@ export default function DiffView({
     try {
       const result = tauri ? await api.mergeConflict(project, conflict.id) : PREVIEW_MERGE;
       setMerged(result);
-      setMergedText(result.merged);
+      setReview(emptyConflictReview());
     } catch (problem) {
       setError(problem instanceof Error ? problem.message : String(problem));
     } finally {
@@ -797,6 +869,13 @@ export default function DiffView({
   };
 
   const writeMerge = async (conflict: ClaimConflict) => {
+    const blocker = merged ? conflictReviewBlocker(merged, review) : "Compute the merge first.";
+    if (!merged || blocker) {
+      setError(blocker);
+      return;
+    }
+    const mergedText = resolvedConflictText(merged, review);
+    const reviewer = review.reviewer.trim();
     // The desktop needs an open session to write; the browser preview has none and only demos.
     if (tauri) {
       if (!session) return;
@@ -805,8 +884,20 @@ export default function DiffView({
     }
     try {
       if (tauri && session) {
-        await api.resolveMergedConflict(project, session, conflict.id, mergedText);
+        await api.resolveMergedConflict(project, session, conflict.id, mergedText, {
+          reviewer,
+          decisions: conflictDecisions(merged, review),
+          test_hint: conflictTestHint(conflict.path),
+          tests_acknowledged: review.testsAcknowledged,
+        });
       }
+      setMergeNotice(
+        `Merged ${conflict.path} — accepted by ${reviewer}; ${
+          merged.conflicts === 0
+            ? "the three-way merge was clean"
+            : `${merged.conflicts} conflict hunk${merged.conflicts === 1 ? "" : "s"} decided`
+        }.`,
+      );
       setView((current) => ({
         ...current,
         conflicts: current.conflicts.filter((row) => row.id !== conflict.id),
@@ -814,7 +905,7 @@ export default function DiffView({
       setOpened(null);
       setSides(null);
       setMerged(null);
-      setMergedText("");
+      setReview(emptyConflictReview());
     } catch (problem) {
       setError(problem instanceof Error ? problem.message : String(problem));
     } finally {
@@ -940,6 +1031,7 @@ export default function DiffView({
   };
 
   const total = patches.reduce((sum, patch) => sum + (patch.status === "applied" ? 1 : 0), 0);
+  const mergeBlocker = merged ? conflictReviewBlocker(merged, review) : null;
 
   return (
     <main id="main" tabIndex={-1} className="detail diff-view">
@@ -1001,6 +1093,12 @@ Open this pull request from ${plan.branch} into ${plan.base} with gh?`,
           : "Claims are advisory: another agent may still write a claimed file. Rigel records the collision and shows both sides; no write is ever refused."}
       </p>
 
+      {mergeNotice ? (
+        <p className="notice merge-verdict" role="status">
+          {mergeNotice}
+        </p>
+      ) : null}
+
       {view.conflicts.length > 0 ? (
         <section className="conflict-strip" aria-label="Conflicts">
           <h3>Conflicts</h3>
@@ -1023,20 +1121,6 @@ Open this pull request from ${plan.branch} into ${plan.base} with gh?`,
               <div className="conflict-actions">
                 <button
                   className="chip"
-                  disabled={busy === conflict.id}
-                  onClick={() => void resolve(conflict, "kept the writer's version")}
-                >
-                  Keep the writer's
-                </button>
-                <button
-                  className="chip"
-                  disabled={busy === conflict.id}
-                  onClick={() => void resolve(conflict, "restored the base")}
-                >
-                  Mark for restore
-                </button>
-                <button
-                  className="chip"
                   disabled={busy === conflict.id && opened !== conflict.id}
                   onClick={() => void openSides(conflict)}
                 >
@@ -1048,31 +1132,30 @@ Open this pull request from ${plan.branch} into ${plan.base} with gh?`,
                   {sides?.note ? <p className="conflict-note">{sides.note}</p> : null}
                   {!sides ? (
                     <p className="empty">Reading the three versions…</p>
-                  ) : (
-                    <div className="conflict-sides">
-                      {(
-                        [
-                          ["base", sides.base],
-                          ["ours", sides.ours],
-                          ["theirs", sides.theirs],
-                        ] as const
-                      ).map(([label, side]) => (
-                        <div className="conflict-side" key={label}>
-                          <header>
-                            <strong>{label}</strong>
-                            <span className="mono">
-                              {side ? `${side.hash.slice(0, 8)}…` : "missing"}
-                            </span>
-                          </header>
-                          {side ? (
-                            <pre className="conflict-text">{side.text}</pre>
-                          ) : (
-                            <p className="empty">Rigel could not rebuild this side.</p>
-                          )}
-                        </div>
-                      ))}
+                  ) : null}
+                  {sides && (!sides.base || !sides.ours || !sides.theirs) ? (
+                    <div className="conflict-actions">
+                      <p className="fine">
+                        This conflict cannot be merged because Rigel could not rebuild one of
+                        the three versions. Mark the row after inspecting the file; no merge is
+                        written.
+                      </p>
+                      <button
+                        className="chip"
+                        disabled={busy === conflict.id}
+                        onClick={() => void resolve(conflict, "kept the writer's version")}
+                      >
+                        Mark the writer's version
+                      </button>
+                      <button
+                        className="chip"
+                        disabled={busy === conflict.id}
+                        onClick={() => void resolve(conflict, "restored the base")}
+                      >
+                        Mark for restore
+                      </button>
                     </div>
-                  )}
+                  ) : null}
                   {sides?.base && sides.ours && sides.theirs ? (
                     <div className="conflict-actions">
                       <button
@@ -1081,16 +1164,6 @@ Open this pull request from ${plan.branch} into ${plan.base} with gh?`,
                         onClick={() => void mergeSides(conflict)}
                       >
                         {busy === conflict.id ? "merging…" : "three-way merge"}
-                      </button>
-                      <button
-                        className="chip"
-                        disabled={!merged || busy === conflict.id || (tauri && !session)}
-                        title={
-                          tauri && !session ? "Open a session to write the merged file" : undefined
-                        }
-                        onClick={() => void writeMerge(conflict)}
-                      >
-                        write merged file
                       </button>
                       {merged ? (
                         <span className={`pill ${merged.clean ? "applied" : "failed"}`}>
@@ -1102,19 +1175,29 @@ Open this pull request from ${plan.branch} into ${plan.base} with gh?`,
                     </div>
                   ) : null}
                   {merged ? (
-                    <label className="conflict-editor">
-                      <span className="faint">
-                        Edit the merge, then write it. The write is a patch: it only applies if the
-                        file is still what it was when the merge was shown.
-                      </span>
-                      <textarea
-                        className="merged-text"
-                        value={mergedText}
-                        rows={Math.min(18, Math.max(4, mergedText.split("\n").length))}
-                        spellCheck={false}
-                        onChange={(event) => setMergedText(event.target.value)}
-                      />
-                    </label>
+                    <>
+                      <ConflictEditor merge={merged} review={review} onChange={setReview} />
+                      <div className="conflict-write">
+                        <button
+                          className="primary"
+                          disabled={
+                            Boolean(mergeBlocker) || busy === conflict.id || (tauri && !session)
+                          }
+                          title={
+                            tauri && !session
+                              ? "Open a session to write the merged file"
+                              : (mergeBlocker ?? undefined)
+                          }
+                          onClick={() => void writeMerge(conflict)}
+                        >
+                          {busy === conflict.id ? "writing…" : "write reviewed merge"}
+                        </button>
+                        <span className="fine">
+                          {mergeBlocker ??
+                            "The write is a patch: it only applies if the file is still what it was when the merge was shown."}
+                        </span>
+                      </div>
+                    </>
                   ) : null}
                 </div>
               ) : null}
@@ -1155,6 +1238,45 @@ Open this pull request from ${plan.branch} into ${plan.base} with gh?`,
             .
           </p>
         ) : null}
+      </section>
+
+      <section className="merge-queue" aria-label="Merge queue">
+        <h3>Merge queue</h3>
+        <p className="fine">
+          One writer per path. A second writer waits, names the holder and starts only after that
+          writer is out of the file; no two writers check and write the same path at once.
+        </p>
+        {queue.entries.length === 0 ? (
+          <p className="empty">No writer is queued. The next write takes its path's lane.</p>
+        ) : (
+          <ul className="queue-list">
+            {queueLanes.map((lane) => (
+              <li className="queue-lane" key={lane.path}>
+                <div className="queue-head">
+                  <span className="mono queue-path">{lane.path}</span>
+                  <span className="pill running">writing</span>
+                  <span className="faint">{lane.waiting.length} waiting</span>
+                </div>
+                {lane.holder ? (
+                  <p className="queue-holder" role="status">
+                    <strong>{laneName(lane.holder.writer_id)}</strong> holds this path; the write
+                    is in flight.
+                  </p>
+                ) : null}
+                {lane.waiting.map((entry) => (
+                  <p
+                    className="queue-wait"
+                    role="status"
+                    key={`${entry.path}-${entry.writer_id}`}
+                  >
+                    <strong>{laneName(entry.writer_id)}</strong> is waiting on{" "}
+                    <strong>{laneName(entry.holder_id)}</strong> · position {entry.position}.
+                  </p>
+                ))}
+              </li>
+            ))}
+          </ul>
+        )}
       </section>
 
       <section className="writable-block">

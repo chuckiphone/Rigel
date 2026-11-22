@@ -1087,6 +1087,10 @@ Sources: [Codex non-interactive](https://developers.openai.com/codex/non-interac
 [Cursor skills](https://cursor.com/docs/skills) · [Cline CLI](https://docs.cline.bot/cli/cli-reference) ·
 [Cline SDK](https://docs.cline.bot/sdk/clinecore) · [Cline ACP](https://docs.cline.bot/usage/acp)
 
+The live approvals, streaming, usage, resume and tools rows are generated and tested in
+[harness-parity.md](harness-parity.md). Change the capability flags in
+`crates/rigel-adapters/src/registry.rs`; never edit that table by hand.
+
 Versions observed: Codex CLI **0.162.1** (21 Oct probe; 0.163.0 was recorded on 15 Oct, so it moves);
 Claude Code **2.1.251** (21 Oct `omniroute status`); Cursor **3.24.12**; Cline CLI **3.0.73**
 (15 Oct, unverified since). Record `--version` output in `adapters.json` at first run and pin fixtures
@@ -1667,6 +1671,17 @@ The names above are the design vocabulary; the registered commands are snake_cas
 Event channel `rigel://events`: `AgentEvent` (normalised), `SessionUpdated`, `ClaimChanged`,
 `ConflictDetected`, `BudgetWarning`, `BudgetExceeded`, `ApprovalRequested`, `ApprovalResolved`,
 `HarnessAvailability`. The UI subscribes once and routes by `type`.
+
+Below that channel, every external adapter also speaks one vocabulary: `HarnessEvent` in
+`crates/rigel-adapters/src/event.rs`. It carries starts, message and reasoning deltas, final
+messages, notices, normalised items, ACP tool updates, plans, usage, requested/resolved approvals
+and unmapped updates. Claude, Codex and Muse expose `run_turn_unified`; the shared ACP client
+exposes `prompt_unified`. `StreamRenderer` is the one terminal renderer for those events and takes
+no harness name, so the CLI's Codex, Claude and Muse paths cannot drift into three renderers. The
+conformance gate is `crates/rigel-adapters/tests/events.rs`: five golden scenarios per adapter into
+four checked-in fixtures, Cursor/Cline/Gemini compared for the same ACP events, and every fixture
+run through the same renderer. A normal test run never writes the fixtures; regenerate them with
+`RIGEL_UPDATE_EVENTS=1 cargo test -p rigel-adapters --test events` after reading the diff.
 
 ### 7.4 Adapter trait
 

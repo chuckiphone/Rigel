@@ -19,13 +19,62 @@ test("composer history recalls a sent prompt and a snippet fills its placeholder
   await expect(composer).toHaveValue("First prompt for history");
 
   await composer.fill("");
-  await page.getByRole("button", { name: "Snippets" }).click();
+  await page.getByRole("button", { name: "Add context" }).click();
   await page.getByRole("menuitem", { name: /Review the diff/ }).click();
   await expect(composer).toHaveValue(/Review the current diff for \{risk\}/);
 
   // Inserting selects the first placeholder, so typing replaces it rather than appending.
   await page.keyboard.type("the rollback path");
   await expect(composer).toHaveValue(/for the rollback path\./);
+});
+
+test("the composer exposes Build, Plan, Mission and Skills with context, queue and stop", async ({
+  page,
+}) => {
+  await page.goto("/");
+  await page.getByRole("button", { name: "Session", exact: true }).click();
+
+  const modes = page.getByRole("group", { name: "Composer mode" });
+  const build = modes.getByRole("button", { name: "Build", exact: true });
+  const plan = modes.getByRole("button", { name: "Plan", exact: true });
+  await expect(build).toHaveAttribute("aria-pressed", "true");
+  await expect(modes.getByRole("button", { name: /Mission/ })).toBeVisible();
+  await expect(modes.getByRole("button", { name: /Session skills/ })).toBeVisible();
+
+  await expect(page.getByRole("button", { name: /^Context/ })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Stop turn" })).toBeDisabled();
+  await expect(page.getByRole("button", { name: "Local", exact: true })).toHaveCount(0);
+
+  await page.getByRole("button", { name: /Message queue/ }).click();
+  await expect(page.getByRole("menu", { name: "Message queue" })).toContainText(
+    "No prompts waiting",
+  );
+
+  await plan.click();
+  await expect(plan).toHaveAttribute("aria-pressed", "true");
+  await expect(build).toHaveAttribute("aria-pressed", "false");
+});
+
+test("while a preview turn runs, Send queues the draft and Stop is live", async ({ page }) => {
+  await page.goto("/?live=1");
+  await page.getByRole("button", { name: "Session", exact: true }).click();
+
+  const composer = page.getByPlaceholder(/A turn is running/);
+  await expect(composer).toBeEnabled();
+  await composer.fill("Follow up after this turn");
+
+  const send = page.getByRole("button", { name: "Queue message" });
+  await expect(send).toBeEnabled();
+  await expect(page.getByRole("button", { name: "Stop turn" })).toBeEnabled();
+  await send.click();
+
+  await expect(composer).toHaveValue("");
+  const queue = page.getByRole("button", { name: "Message queue: 1 waiting" });
+  await expect(queue).toBeVisible();
+  await queue.click();
+  await expect(page.getByRole("menu", { name: "Message queue" })).toContainText(
+    "Follow up after this turn",
+  );
 });
 
 // D153: the preflight is a range from recorded bills, shows only once the sample is big enough,

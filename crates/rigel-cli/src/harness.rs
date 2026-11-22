@@ -22,8 +22,8 @@ use clap::Subcommand;
 use rigel_adapters::registry::{self, CACHE_FILE};
 use rigel_adapters::{
     Adapter, AdapterError, ApprovalDecision, ApprovalRequest, Approver, ClaudeAdapter,
-    ClaudeConfig, ClaudeEvent, CodexAdapter, CodexConfig, CodexEvent, MuseAdapter, MuseConfig,
-    MuseEvent, PermissionMode, Recorded, Transport, write_mcp_config,
+    ClaudeConfig, CodexAdapter, CodexConfig, MuseAdapter, MuseConfig, PermissionMode, Recorded,
+    RenderLine, StreamRenderer, Transport, write_mcp_config,
 };
 use rigel_core::agent::approval::{ApprovalBus, PendingApproval};
 use rigel_core::credentials::KeychainCredentialStore;
@@ -84,12 +84,74 @@ pub enum HarnessCommand {
         #[arg(long)]
         refresh: bool,
     },
+
+    /// Print or check the generated harness parity matrix.
+    Parity {
+        #[arg(long)]
+        json: bool,
+        /// Write the Markdown here instead of stdout. With `--check`, this is the file compared.
+        #[arg(long, value_name = "FILE")]
+        out: Option<PathBuf>,
+        /// Compare `docs/harness-parity.md` (or `--out`) with the generated table.
+        #[arg(long)]
+        check: bool,
+    },
 }
 
 pub async fn run_harness(command: HarnessCommand, dir: &std::path::Path) -> ExitCode {
     match command {
         HarnessCommand::Probe { json, refresh } => probe_harnesses(dir, json, refresh).await,
+        HarnessCommand::Parity { json, out, check } => parity(json, out, check),
     }
+}
+
+/// The matrix is generated from capability flags, so this command is the one place to refresh
+/// or validate the checked-in Markdown. It is deliberately synchronous and tiny; the CLI's large
+/// async state machine stays unchanged.
+fn parity(as_json: bool, out: Option<PathBuf>, check: bool) -> ExitCode {
+    let markdown = rigel_adapters::parity::markdown();
+    if check {
+        let path = out.unwrap_or_else(|| PathBuf::from("docs/harness-parity.md"));
+        let actual = match std::fs::read_to_string(&path) {
+            Ok(actual) => actual.replace("\r\n", "\n"),
+            Err(error) => {
+                eprintln!("rigel: could not read {}: {error}", path.display());
+                return ExitCode::from(2);
+            }
+        };
+        if actual != markdown {
+            eprintln!(
+                "rigel: {} is stale; run `rigel harness parity --out {}`",
+                path.display(),
+                path.display()
+            );
+            return ExitCode::from(1);
+        }
+        println!("harness parity: up to date ({})", path.display());
+        return ExitCode::SUCCESS;
+    }
+
+    if let Some(path) = out {
+        if let Err(error) = std::fs::write(&path, &markdown) {
+            eprintln!("rigel: could not write {}: {error}", path.display());
+            return ExitCode::from(2);
+        }
+        println!("wrote {}", path.display());
+        return ExitCode::SUCCESS;
+    }
+
+    if as_json {
+        println!(
+            "{}",
+            serde_json::json!({
+                "checked": rigel_adapters::parity::CHECKED,
+                "rows": rigel_adapters::parity::matrix(),
+            })
+        );
+    } else {
+        print!("{markdown}");
+    }
+    ExitCode::SUCCESS
 }
 
 async fn probe_harnesses(dir: &std::path::Path, as_json: bool, refresh: bool) -> ExitCode {
@@ -334,34 +396,26 @@ async fn run_muse_turn(
         };
 
     let adapter = MuseAdapter::new(config);
-    let mut items = Vec::new();
-    let mut notices = vec![
-        "muse reports token counts only in its session log; no usage row was written".to_string(),
-    ];
-    let mut streamed = false;
+    let mut renderer = StreamRenderer::default();
+    renderer
+        .push_notice("muse reports token counts only in its session log; no usage row was written");
 
     let outcome = adapter
-        .run_turn(&prompt, |event| match event {
-            MuseEvent::Delta { text } => {
-                if !as_json {
-                    streamed = true;
-                    print!("{text}");
-                    let _ = std::io::stdout().flush();
-                }
-            }
-            MuseEvent::Item(item) => items.push(item),
-            MuseEvent::Notice { message } => {
-                if !notices.contains(&message) {
-                    notices.push(message);
-                }
+        .run_turn_unified(&prompt, |event| {
+            let lines = renderer.apply(event);
+            if !as_json {
+                print_render(lines);
             }
         })
         .await;
 
-    if streamed && !as_json {
+    if renderer.streamed && !as_json {
         println!();
     }
 
+    let items = std::mem::take(&mut renderer.items);
+    let notices = std::mem::take(&mut renderer.notices);
+    let streamed = renderer.streamed;
     recorded.record_items(&items, &[]).await;
     let _ = recorded.finish_muse(&outcome).await;
 
@@ -624,52 +678,36 @@ async fn run(options: RunOptions) -> ExitCode {
         println!("  {estimate_line}");
     }
 
-    let mut notices = Vec::new();
-    let mut items = Vec::new();
-    let mut approvals = Vec::new();
-    let mut streamed = false;
+    let mut renderer = StreamRenderer::default();
 
     let outcome = adapter
-        .run_turn(&prompt, |event| match event {
-            CodexEvent::Delta { text } => {
-                if !as_json {
-                    streamed = true;
-                    print!("{text}");
-                    let _ = std::io::stdout().flush();
-                }
+        .run_turn_unified(&prompt, |event| {
+            let lines = renderer.apply(event);
+            if !as_json {
+                print_render(lines);
             }
-            CodexEvent::Notice { message } => {
-                if !notices.contains(&message) {
-                    notices.push(message);
-                }
-            }
-            // P4.8: every normalised item is reported, so `rigel codex run --json` shows the
-            // commands and file changes a turn actually made.
-            CodexEvent::Item(item) => items.push(item),
-            CodexEvent::Approval { request, decision } => {
-                if !as_json {
-                    println!(
-                        "  approval  {} ({}) -> {}",
-                        request.title,
-                        request.kind.as_deref().unwrap_or("tool"),
-                        decision_name(decision)
-                    );
-                }
-                approvals.push(json!({
-                    "id": request.tool_call_id,
-                    "title": request.title,
-                    "kind": request.kind,
-                    "decision": decision_name(decision),
-                }));
-            }
-            CodexEvent::Started { .. } | CodexEvent::Message { .. } => {}
         })
         .await;
 
-    if streamed && !as_json {
+    if renderer.streamed && !as_json {
         println!();
     }
 
+    let items = std::mem::take(&mut renderer.items);
+    let notices = std::mem::take(&mut renderer.notices);
+    let approvals = renderer
+        .approvals
+        .iter()
+        .map(|record| {
+            json!({
+                "id": record.tool_call_id,
+                "title": record.title,
+                "kind": record.kind,
+                "decision": decision_name(record.decision),
+            })
+        })
+        .collect::<Vec<_>>();
+    let streamed = renderer.streamed;
     recorded.record_items(&items, &approvals).await;
     let recorded_usage = recorded.finish_codex(&outcome, &model_name).await;
 
@@ -950,36 +988,27 @@ async fn run_claude_turn(options: ClaudeRunOptions) -> ExitCode {
     let pump = tokio::spawn(pump_approvals(bus, stop.clone(), as_json));
 
     let adapter = ClaudeAdapter::new(config);
-    let mut notices = Vec::new();
-    let mut items = Vec::new();
-    let mut streamed = false;
+    let mut renderer = StreamRenderer::default();
 
     let outcome = adapter
-        .run_turn(&prompt, |event| match event {
-            ClaudeEvent::Delta { text } => {
-                if !as_json {
-                    streamed = true;
-                    print!("{text}");
-                    let _ = std::io::stdout().flush();
-                }
+        .run_turn_unified(&prompt, |event| {
+            let lines = renderer.apply(event);
+            if !as_json {
+                print_render(lines);
             }
-            ClaudeEvent::Notice { message } => {
-                if !notices.contains(&message) {
-                    notices.push(message);
-                }
-            }
-            ClaudeEvent::Item(item) => items.push(item),
-            ClaudeEvent::Started { .. } | ClaudeEvent::Message { .. } => {}
         })
         .await;
 
     stop.store(true, Ordering::Relaxed);
     let _ = pump.await;
 
-    if streamed && !as_json {
+    if renderer.streamed && !as_json {
         println!();
     }
 
+    let items = std::mem::take(&mut renderer.items);
+    let notices = std::mem::take(&mut renderer.notices);
+    let streamed = renderer.streamed;
     recorded.record_items(&items, &[]).await;
     let recorded_usage = recorded.finish_claude(&outcome, &model_name).await;
 
@@ -1060,6 +1089,27 @@ fn decision_name(decision: ApprovalDecision) -> &'static str {
         ApprovalDecision::RejectOnce => "reject_once",
         ApprovalDecision::RejectAlways => "reject_always",
         ApprovalDecision::Cancel => "cancelled",
+    }
+}
+
+/// The one terminal renderer for every streaming harness. It consumes the unified event enum and
+/// has no harness-name branch; `as_json` suppresses every line but the transcript state is still
+/// accumulated for the JSON document.
+fn print_render(lines: Vec<RenderLine>) {
+    for line in lines {
+        match line {
+            RenderLine::Text(text) => {
+                print!("{text}");
+                let _ = std::io::stdout().flush();
+            }
+            RenderLine::Line(line) => println!("{line}"),
+            RenderLine::Approval(record) => println!(
+                "  approval  {} ({}) -> {}",
+                record.title,
+                record.kind.as_deref().unwrap_or("tool"),
+                decision_name(record.decision)
+            ),
+        }
     }
 }
 

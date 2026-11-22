@@ -110,7 +110,8 @@ impl AnthropicModel {
             "stream": true,
         });
         if let Some(system) = system {
-            body["system"] = json!(system);
+            // A block, not a bare string: Anthropic carries `cache_control` on the block.
+            body["system"] = json!([{ "type": "text", "text": system }]);
         }
         if !request.tools.is_empty() {
             body["tools"] = Value::Array(
@@ -131,6 +132,9 @@ impl AnthropicModel {
         if let Some(effort) = &request.effort {
             body["output_config"] = json!({ "effort": effort });
         }
+        // Three cache breakpoints, where this API supports them: the last tool, the system
+        // block and the last message block. A provider that caches automatically gets none.
+        super::cache::mark_anthropic(&mut body);
         body
     }
 
@@ -188,8 +192,11 @@ impl AnthropicModel {
                                 .unwrap_or(0)
                         };
                         usage.cached_input_tokens = field("cache_read_input_tokens");
+                        usage.cache_write_input_tokens = field("cache_creation_input_tokens");
+                        // Writes are billed at the input rate here: the local table has no
+                        // cache-write discount, so charging them as uncached is conservative.
                         usage.input_tokens = field("input_tokens")
-                            + field("cache_creation_input_tokens")
+                            + usage.cache_write_input_tokens
                             + usage.cached_input_tokens;
                         usage.output_tokens = field("output_tokens");
                         emitted = true;
@@ -695,14 +702,28 @@ mod tests {
             body.get("thinking").is_none(),
             "adaptive thinking needs none"
         );
-        assert_eq!(body["system"], json!("be brief"));
+        assert_eq!(body["system"][0]["text"], json!("be brief"));
+        assert_eq!(body["system"][0]["type"], json!("text"));
+        assert_eq!(
+            body["system"][0]["cache_control"]["type"],
+            json!("ephemeral")
+        );
         assert_eq!(body["max_tokens"], json!(512));
         assert_eq!(body["stream"], json!(true));
         // The model list travels without the OpenAI wrapper.
         assert_eq!(body["tools"][0]["name"], json!("read_file"));
         assert_eq!(body["tools"][0]["input_schema"]["type"], json!("object"));
         assert_eq!(body["tool_choice"]["type"], json!("auto"));
+        assert_eq!(
+            body["tools"][0]["cache_control"]["type"],
+            json!("ephemeral")
+        );
         assert_eq!(body["messages"][0]["role"], json!("user"));
+        assert_eq!(
+            body["messages"][0]["content"][0]["cache_control"]["type"],
+            json!("ephemeral"),
+            "the conversation prefix is cached too"
+        );
     }
 
     #[test]
@@ -814,9 +835,10 @@ mod tests {
         assert_eq!(collected.calls[0].arguments, "{\"path\":\"b.txt\"}");
         assert_eq!(collected.calls[1].name, "list_files");
         assert_eq!(collected.calls[1].arguments, "{\"path\":\"src\"}");
-        // Input counts the cache fields; the read is marked cached; thinking is reported.
+        // Input counts the cache fields; reads and writes stay distinct; thinking is reported.
         assert_eq!(collected.usage.input_tokens, 20);
         assert_eq!(collected.usage.cached_input_tokens, 5);
+        assert_eq!(collected.usage.cache_write_input_tokens, 4);
         assert_eq!(collected.usage.output_tokens, 9);
         assert_eq!(collected.usage.reasoning_tokens, 3);
         assert_eq!(
@@ -842,7 +864,11 @@ mod tests {
             request.contains("\"model\":\"claude-opus-5-5\""),
             "{request}"
         );
-        assert!(request.contains("\"system\":\"be brief\""), "{request}");
+        assert!(request.contains("\"be brief\""), "{request}");
+        assert!(
+            request.contains("\"cache_control\":{\"type\":\"ephemeral\"}"),
+            "{request}"
+        );
         assert!(request.contains("\"type\":\"tool_result\""), "{request}");
         assert!(!request.contains("temperature"), "{request}");
     }

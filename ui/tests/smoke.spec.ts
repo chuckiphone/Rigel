@@ -1,8 +1,9 @@
 import { expect, test } from "@playwright/test";
 
-// P7.3's five surfaces, exercised the way a person reaches them: the rail on the left. Home is
-// the landing surface now, so the walk starts there and opens Shelf from the rail.
-test("every surface renders from the rail", async ({ page }) => {
+// P7.3's five surfaces, exercised the way a person reaches them: the rail on the left for the
+// working surfaces, and the bottom-right utility pair for Settings. Home is the landing surface
+// now, so the walk starts there and opens Shelf from the rail.
+test("every surface renders from its navigation", async ({ page }) => {
   await page.goto("/");
 
   // Home: the paper's masthead, a lead story and the rack of earlier issues.
@@ -23,7 +24,7 @@ test("every surface renders from the rail", async ({ page }) => {
   await page.getByRole("button", { name: "Session", exact: true }).click();
   await expect(page.getByRole("region", { name: "Transcript" })).toBeVisible();
   await expect(page.getByText("Browser preview: sample transcript.")).toBeVisible();
-  await expect(page.getByRole("button", { name: "Swarm" })).toBeVisible();
+  await expect(page.getByRole("button", { name: /Mission/ })).toBeVisible();
 
   await page.getByRole("button", { name: "Chat" }).click();
   await expect(page.getByRole("heading", { name: "# general" })).toBeVisible();
@@ -34,10 +35,6 @@ test("every surface renders from the rail", async ({ page }) => {
   await expect(page.getByRole("heading", { name: "One tree, several agents" })).toBeVisible();
   await expect(page.getByRole("region", { name: "Conflicts" })).toBeVisible();
   await expect(page.getByText("SUBAGENT WORKTREES")).toBeVisible();
-
-  await page.getByRole("button", { name: "Terminal" }).click();
-  await expect(page.getByRole("heading", { name: "Terminal", exact: true }).first()).toBeVisible();
-  await expect(page.getByText("The preview echoes locally.")).toBeVisible();
 
   // Settings is a page list: the model control is on Agent, the sources are on Skill shelf and
   // the notification switches are on their own page.

@@ -2545,6 +2545,7 @@ mod tests {
             id: "sess-1".to_string(),
             project_root: "C:\\Users\\someone\\work\\rigel".to_string(),
             title: Some("Fix the build".to_string()),
+            title_source: Some("manual".to_string()),
             status: SessionStatus::Idle,
             budget_cents: Some(500),
             spend_cents: 3,

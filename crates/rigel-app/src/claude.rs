@@ -11,7 +11,7 @@
 use std::path::PathBuf;
 use std::time::Duration;
 
-use rigel_adapters::{ClaudeAdapter, ClaudeConfig, ClaudeEvent, Recorded, write_mcp_config};
+use rigel_adapters::{ClaudeAdapter, ClaudeConfig, HarnessEvent, Recorded, write_mcp_config};
 use rigel_core::{Agent, AgentEvent, ItemKind, SessionService, Turn, credentials};
 use tauri::Emitter;
 use tokio::io::BufReader;
@@ -115,22 +115,24 @@ pub fn start(app: tauri::AppHandle, request: ClaudeTurn) -> Result<(), String> {
             let mut items = Vec::new();
             let sink = app.clone();
             let delta_turn = recorded.turn.id.clone();
-            let outcome = runtime.block_on(adapter.run_turn(&prompt, |event| match event {
-                ClaudeEvent::Delta { text } => {
-                    let _ = sink.emit(
-                        "rigel://events",
-                        AgentEvent::Delta {
-                            turn_id: delta_turn.clone(),
-                            kind: ItemKind::Message,
-                            text,
-                        },
-                    );
-                }
-                ClaudeEvent::Item(item) => items.push(item),
-                ClaudeEvent::Notice { .. }
-                | ClaudeEvent::Started { .. }
-                | ClaudeEvent::Message { .. } => {}
-            }));
+            let outcome =
+                runtime.block_on(adapter.run_turn_unified(&prompt, |event| match event {
+                    HarnessEvent::Delta {
+                        kind: ItemKind::Message,
+                        text,
+                    } => {
+                        let _ = sink.emit(
+                            "rigel://events",
+                            AgentEvent::Delta {
+                                turn_id: delta_turn.clone(),
+                                kind: ItemKind::Message,
+                                text,
+                            },
+                        );
+                    }
+                    HarnessEvent::Item { item, .. } => items.push(item),
+                    _ => {}
+                }));
 
             runtime.block_on(recorded.record_items(&items, &[]));
             let usage = runtime.block_on(recorded.finish_claude(&outcome, &model_name));
@@ -286,6 +288,7 @@ fn serve(
             return 1;
         }
 
+        let pins = rigel_core::mcp::pin::PinStore::new(&project);
         let ctx = rigel_mcp::McpContext {
             project_root: project,
             session_id: session,
@@ -296,6 +299,7 @@ fn serve(
             tool_lists: std::sync::Arc::new(tokio::sync::Mutex::new(
                 std::collections::HashMap::new(),
             )),
+            pins,
         };
         let stdin = BufReader::new(tokio::io::stdin());
         match rigel_mcp::serve(ctx, stdin, tokio::io::stdout()).await {

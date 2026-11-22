@@ -2,11 +2,19 @@
 
 Every release, newest first. The heading is the version its `v*` tag publishes.
 
-## 0.3.0 — 2026-11-06 (preview)
+## 0.3.0 — 2026-11-22
 
-A preview of the 0.3 tree for testing inside the desktop app. It keeps the 0.2.0 feature set and
-adds the work completed for 0.3 wave 1.
+The 0.3 release. It keeps the 0.2.0 feature set and ships the work completed for the 0.3 tree,
+including the plugin marketplace, the grouped Settings window and the polished Rigel Paper.
 
+- feat(ui): give the composer one amber active state instead of a green Build button, and move the changed-skill badge into the same accent family
+- feat(ui): fold the Settings notes rail with a remembered preference and group the twenty pages under Agent, Guardrails, Workspace, Connections, Window and System
+- feat(ui): refine the Rigel Paper with a warmer stock, a flagline, an amber masthead rule, a pull-quote prompt, section ornaments and a front-page archive
+- refactor(ui): remove the Terminal surface, its rail tab, palette action, Settings page, xterm dependency and dead styles
+- feat(plugins): add a subprocess plugin API with a validated manifest, a capability broker, a per-install tree receipt and an agent `plugin_call` that the permission matrix governs
+- feat(plugins): add a curated offline catalogue and a Settings → Plugins marketplace with tiers, capability chips, pinned installs, enable/disable and broken-install reporting
+- fix(plugins): pin the manifest hash in the receipt, keep a tampered install removable, and prove the marketplace in the real window with `e2e/specs/plugins.spec.ts`
+- feat(skills): ship eight native skills (SkillEvaluator, Headroom, AG-UI, mcptoon, llmfit, Semble, Cognee evaluate-only, Blender MCP), indexed at launch and installable into the harness stores; all eight pass SkillEvaluator tier 1 with grade A
 - feat(swarm): add Rigel, the Muse big boss, and let Swarm choose any chat model for the coordinator
 - feat(concord): read and reply to Concord work from Settings, with awaiting/all filters and receipts
 - test(window): drive the built app through open, turn, approval and diff with the native window runner
@@ -16,6 +24,22 @@ adds the work completed for 0.3 wave 1.
 - feat(agent): a subagent DAG and write-mode children that merge only through a reviewed worktree
 - feat(agent): route inspection, launch provider health, local and custom doors, aliases and a project routing policy
 - feat(agent): context compaction, token estimation, tool-call repair, a prompt-section budget and per-step cost
+- feat(agent): give each roster row its own model, provider and effort, with a role preset overriding it and the next turn's pair shown before send
+- feat(agent): edit ordered network allow/deny rules, a default decision and disabled sessions in Settings → Network, enforced by every egress tool and `rigel network`
+- feat(agent): cap egress per origin and per agent, pin DNS to the validated address, refuse private targets by default and record the contacted address on every request
+- feat(core): add opt-in sandbox profiles for approved commands: Windows Job Objects, macOS sandbox-exec and Linux namespaces, each with a two-sided containment statement
+- feat(agent): add a project tool permission matrix; roles narrow the project grant, can never widen it, and Settings → Permissions shows the effective grants for every role and agent
+- feat(agent): let each agent narrow its role with a per-agent tool override, stored in the session and shown as checkboxes in the permission matrix; no override can widen the role or project grant
+- fix(agent): clamp a spawned child's tools to its parent's effective grant at spawn, so a custom or writable parent cannot delegate a capability it lacks
+- feat(mcp): pin each project server's version and tool schemas, and block added or changed tools until the schema diff is accepted
+- feat(snapshot): record per-file hashes, verify them before restore, and prune only old orphan snapshots with `rigel snapshot prune`
+- feat(agent): store one compact, provenance-carrying summary per turn and read it from compaction and palette search
+- feat(agent): send Anthropic prompt-cache breakpoints and show provider-reported cache reads, writes and savings
+- feat(memory): rank committed facts by recency, use and pin, with a non-decaying pin and the three factors in the inspector
+- feat(sessions): name an untitled session with the cheapest working model, without delaying the turn and without replacing a manual rename
+- feat(cli): package an unfinished session as a rules-preserving handoff prompt
+- feat(adapters): generate and test a dated harness parity matrix
+- feat(adapters): unify Claude, Codex, Muse and ACP events behind one tested renderer
 - feat(security): pre-write secret scanning, an untrusted-content firewall, MCP transport hardening and a file jail
 - feat(api): `rigel serve` exposes the coordinator over loopback HTTP with OpenAPI 3.1 and SSE
 - feat(ui): the Rigel Paper home surface, recovery and subagent views, design tokens and accessibility audits

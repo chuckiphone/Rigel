@@ -25,6 +25,7 @@
  */
 
 import { execFileSync, spawn } from "node:child_process";
+import { createServer as createHttpServer } from "node:http";
 import { createServer } from "node:net";
 import {
   existsSync,
@@ -48,6 +49,40 @@ const APP = path.join(ROOT, "target", "debug", "rigel-app.exe");
 const DRIVER = path.join(process.env.USERPROFILE ?? "", ".cargo", "bin", "tauri-driver.exe");
 const PORT = 4446;
 const NATIVE_PORT = 9516;
+// The Gravity spec uses the local harness broker. Keep its URL in one place so the app and the
+// spec agree even when the caller has not exported either variable.
+let GRAVITY_BROKER = (
+  process.env.RIGEL_GRAVITY_BROKER_URL ?? "http://127.0.0.1:5000"
+).replace(/\/+$/, "");
+let GRAVITY_ENDPOINT =
+  process.env.RIGEL_GRAVITY_ENDPOINT ?? `${GRAVITY_BROKER}/api/gravity-ad`;
+const GRAVITY_CONFIGURED = Boolean(
+  process.env.RIGEL_GRAVITY_BROKER_URL || process.env.RIGEL_GRAVITY_ENDPOINT,
+);
+// A fixture fill for the cold path: no publisher key, no Functions process, and no network call
+// to Gravity's ad engine. The tracking URLs still point at Gravity's trusted host, so the Rust
+// impression receipt and click-through remain real rather than mocked in the renderer.
+const GRAVITY_FIXTURE_CACHED = {
+  title: "Run coding agents on your existing AI subscriptions",
+  brand: "Openllm",
+  text: "Run coding agents and clients on your existing AI subscriptions with OpenLLM's developer-focused gateway.",
+  cta: "Get Started",
+  click: "https://trygravity.ai",
+  impression: "https://trygravity.ai",
+  favicon: "https://github.com/neondatabase.png?size=200",
+};
+const GRAVITY_FIXTURE_AD = {
+  adText: GRAVITY_FIXTURE_CACHED.text,
+  title: GRAVITY_FIXTURE_CACHED.title,
+  brandName: GRAVITY_FIXTURE_CACHED.brand,
+  cta: GRAVITY_FIXTURE_CACHED.cta,
+  url: "https://openllm.sh",
+  favicon: GRAVITY_FIXTURE_CACHED.favicon,
+  clickUrl: GRAVITY_FIXTURE_CACHED.click,
+  impUrl: GRAVITY_FIXTURE_CACHED.impression,
+  placement: "below_response",
+  placement_id: "rigel-sponsor",
+};
 // Chosen from the OS's free-port pool in main(). A PID-derived port in a narrow range can land in
 // a Windows excluded range on a hosted runner, leaving WebView2 unable to bind its debug socket.
 let CDP_PORT = 9300 + (process.pid % 300);
@@ -136,6 +171,12 @@ function prepareWorkspace() {
   // here so the real window test proves the spawned card without driving the Settings UI first.
   const appData = path.join(WORK, "appdata", "Rigel");
   mkdirSync(appData, { recursive: true });
+  // Route spec: Groq is a real non-gateway door with no model namespace of its own, so it accepts
+  // the saved llama id (`model-only`) but refuses a bare DeepSeek id, which then repairs to the
+  // door that owns it. Other specs keep the default pair.
+  const savedPair = spec?.endsWith("route.spec.ts")
+    ? ['provider = "groq"', 'model = "llama-4"']
+    : [];
   writeFileSync(
     path.join(appData, "settings.toml"),
     [
@@ -143,6 +184,7 @@ function prepareWorkspace() {
       "default_budget_cents = 500",
       "gravity_ads = true",
       "gravity_test_ads = true",
+      ...savedPair,
       "",
     ].join(String.fromCharCode(10)),
   );
@@ -231,6 +273,104 @@ async function waitForDriver(timeoutMs = 30_000) {
   throw new Error(`tauri-driver did not become ready on port ${PORT}`);
 }
 
+/** Fail before launching WebView2 when an explicitly configured broker is not answering. */
+async function waitForGravityBroker(broker = GRAVITY_BROKER, timeoutMs = 10_000) {
+  const deadline = Date.now() + timeoutMs;
+  let last = "not reachable";
+  while (Date.now() < deadline) {
+    try {
+      const response = await fetch(`${broker}/api/test-state`, { cache: "no-store" });
+      if (response.ok) {
+        const body = await response.json();
+        console.log(`gravity broker: ${broker} (fill=${body.fill})`);
+        return;
+      }
+      last = `HTTP ${response.status}`;
+    } catch (error) {
+      last = error instanceof Error ? error.message : String(error);
+    }
+    await new Promise((resolve) => setTimeout(resolve, 250));
+  }
+  throw new Error(
+    `the Gravity spec needs the configured local broker at ${broker}/api/test-state (${last})`,
+  );
+}
+
+/** One quick look, so a live broker is reused rather than shadowed by the fixture. */
+async function gravityBrokerState(broker) {
+  try {
+    const response = await fetch(`${broker}/api/test-state`, {
+      cache: "no-store",
+      signal: AbortSignal.timeout(1_500),
+    });
+    if (!response.ok) return null;
+    const body = await response.json();
+    return body && typeof body.fill === "boolean" ? body : null;
+  } catch {
+    return null;
+  }
+}
+
+/** The broker replacement for a cold machine: a real remote mark, served on a free loopback port. */
+function startGravityFixture() {
+  return new Promise((resolve, reject) => {
+    let fill = process.env.RIGEL_GRAVITY_EXPECT_NO_FILL !== "1";
+    let noArt = process.env.RIGEL_GRAVITY_NO_ART === "1";
+    const server = createHttpServer((request, response) => {
+      const chunks = [];
+      request.on("data", (chunk) => chunks.push(chunk));
+      request.on("end", () => {
+        const url = new URL(request.url || "/", "http://127.0.0.1");
+        const send = (status, body) => {
+          response.writeHead(status, {
+            "cache-control": "no-store",
+            "content-type": "application/json; charset=utf-8",
+          });
+          response.end(JSON.stringify(body));
+        };
+        if (url.pathname === "/api/test-state") {
+          send(200, { fill, cached: fill ? GRAVITY_FIXTURE_CACHED : null, noArt });
+          return;
+        }
+        if (url.pathname === "/api/test-mode" && request.method === "POST") {
+          try {
+            const next = JSON.parse(Buffer.concat(chunks).toString("utf8"));
+            if (typeof next.fill === "boolean") fill = next.fill;
+            if (typeof next.noArt === "boolean") noArt = next.noArt;
+          } catch {
+            // Keep the current mode.
+          }
+          send(200, { fill, noArt });
+          return;
+        }
+        if (url.pathname === "/api/gravity-ad") {
+          if (request.method !== "POST") {
+            send(405, { error: "method_not_allowed" });
+            return;
+          }
+          const ad = noArt
+            ? {
+                ...GRAVITY_FIXTURE_AD,
+                favicon: "http://cdn.example/northstar.png",
+                brandImage: "",
+                brandName: "Northstar Analytics",
+              }
+            : GRAVITY_FIXTURE_AD;
+          send(200, { ads: fill ? [ad] : [], test: true });
+          return;
+        }
+        send(404, { error: "not_found" });
+      });
+    });
+    server.once("error", reject);
+    server.listen(0, "127.0.0.1", () => {
+      const address = server.address();
+      const port = typeof address === "object" && address !== null ? address.port : 0;
+      resolve({ server, url: `http://127.0.0.1:${port}` });
+    });
+  });
+}
+
 function stopTree(child) {
   if (!child || child.exitCode !== null) return;
   if (process.platform === "win32") {
@@ -246,6 +386,7 @@ function stopTree(child) {
 
 async function main() {
   ensureModuleLink();
+  let gravityFixture = null;
   if (!skipBuild) {
     // The Tauri CLI parses `CI`; `CI=1` is valid for most tools but not for it.
     run("cargo", ["tauri", "build", "--debug", "--no-bundle"], {
@@ -254,6 +395,22 @@ async function main() {
     });
   }
   if (!existsSync(APP)) throw new Error(`missing app binary: ${APP}`);
+  if (spec?.endsWith("gravity.spec.ts")) {
+    if (GRAVITY_CONFIGURED) {
+      await waitForGravityBroker();
+    } else {
+      const existing = await gravityBrokerState(GRAVITY_BROKER);
+      if (existing) {
+        console.log(`gravity broker: ${GRAVITY_BROKER} (existing, fill=${existing.fill})`);
+      } else {
+        const fixture = await startGravityFixture();
+        gravityFixture = fixture.server;
+        GRAVITY_BROKER = fixture.url;
+        GRAVITY_ENDPOINT = `${fixture.url}/api/gravity-ad`;
+        console.log(`gravity broker: ${GRAVITY_BROKER} (fixture)`);
+      }
+    }
+  }
 
   if (!spec) {
     const specs = readdirSync(path.join(ROOT, "e2e", "specs"))
@@ -307,6 +464,11 @@ async function main() {
     RIGEL_E2E_PROJECT: PROJECT,
     RIGEL_E2E_SCRIPT: path.join(WORK, "script.json"),
     RIGEL_INDEX_DIR: path.join(WORK, "index"),
+    RIGEL_GRAVITY_ENDPOINT: GRAVITY_ENDPOINT,
+    RIGEL_GRAVITY_BROKER_URL: GRAVITY_BROKER,
+    // The Gravity spec clicks a sponsored card; record the click without opening the developer's
+    // real browser window and tab.
+    RIGEL_E2E_SUPPRESS_EXTERNAL_BROWSER: "1",
     APPDATA: path.join(WORK, "appdata"),
     LOCALAPPDATA: path.join(WORK, "localappdata"),
     // USERPROFILE and HOME stay real: redirecting them stops WebView2 from opening the debug
@@ -328,6 +490,9 @@ async function main() {
     cwd: ROOT,
     env,
     stdio: ["ignore", "pipe", "pipe"],
+    // A debug build is a console binary; without this Windows opens a terminal for the app (and
+    // its control API logs) on every run. The pipes still carry stdout/stderr to this log.
+    windowsHide: true,
   });
   app.stdout.on("data", (chunk) => process.stdout.write(`app: ${chunk}`));
   app.stderr.on("data", (chunk) => process.stderr.write(`app: ${chunk}`));
@@ -343,6 +508,7 @@ async function main() {
       cwd: ROOT,
       env,
       stdio: ["ignore", "pipe", "pipe"],
+      windowsHide: true,
     });
     driver.stdout.on("data", (chunk) => process.stdout.write(`driver: ${chunk}`));
     driver.stderr.on("data", (chunk) => process.stderr.write(`driver: ${chunk}`));
@@ -363,6 +529,9 @@ async function main() {
   } finally {
     stopTree(driver);
     stopTree(app);
+    if (gravityFixture) {
+      await new Promise((resolve) => gravityFixture.close(() => resolve()));
+    }
   }
   console.log(`\nwindow e2e exit: ${exitCode}`);
   process.exit(exitCode);

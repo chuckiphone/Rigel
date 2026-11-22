@@ -33,10 +33,8 @@ faint **5.5:1**, and the high-contrast metadata pair **9.46:1** (`#aeb5be` on `#
 The light-theme measurements are recorded beside the token block and in
 `docs/qa/reduced-motion.md`.
 
-**Documented colour exceptions:** `ui/src/terminal.tsx` holds the xterm ANSI palette, which
-needs concrete hex values rather than CSS variables; `ui/src/api.ts` holds fixture provider
-badge colours used by the offline harness. No other file in `ui/src` may introduce a colour
-literal.
+**Documented colour exception:** `ui/src/api.ts` holds fixture provider badge colours used by the
+offline harness. No other file in `ui/src` may introduce a colour literal.
 
 ## Type
 

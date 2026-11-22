@@ -383,6 +383,17 @@ export const previewTranscript: TurnTranscript[] = showDegraded
   ? [...previewTranscriptBase, { turn: degradedTurn, items: degradedItems }]
   : previewTranscriptBase;
 
+/** Browser preview: a running turn, so the queue and stop controls are inspectable. */
+export const previewLiveTurn: Turn = {
+  ...turnOne,
+  id: "turn-preview-live",
+  seq: 4,
+  status: "running",
+  completed_at: null,
+  usage: null,
+  stop_reason: null,
+};
+
 /** Roadmap 42: the first node finished, the dependent is running and the edge is explicit. */
 export const previewSubagentGraph: SubagentGraph[] = [
   {
@@ -455,6 +466,124 @@ export const previewPatches: Patch[] = [
     created_at: ago(5),
     applied_at: ago(5),
     reverted_at: null,
+  },
+];
+
+/** Roadmap 55: the memory inspector's sample, with all three factors explained. */
+export const previewMemoryFacts = [
+  {
+    id: "agent-preview-worker:memory:8f31c2a4d09b17e6",
+    agent_id: "agent-preview-worker",
+    topic: "memory",
+    text: "Never force-push a shared branch.",
+    pinned: true,
+    uses: 6,
+    last_used_at: Date.now() - 2 * 86_400_000,
+    updated_at: Date.now() - 40 * 86_400_000,
+    score: {
+      total: 0.894,
+      method: "weighted recency/use/pin; 30-day recency half-life",
+      now: Date.now(),
+      factors: [
+        {
+          name: "recency",
+          value: 1,
+          weight: 0.5,
+          contribution: 0.5,
+          reason: "pinned: recency is held at full value and does not decay",
+        },
+        {
+          name: "use",
+          value: 0.646,
+          weight: 0.3,
+          contribution: 0.194,
+          reason: "recalled 6 time(s); every 4 recalls halves the remaining gap",
+        },
+        {
+          name: "pin",
+          value: 1,
+          weight: 0.2,
+          contribution: 0.2,
+          reason: "pinned by the user",
+        },
+      ],
+    },
+  },
+  {
+    id: "agent-preview-worker:memory:1b9e47c60afd2358",
+    agent_id: "agent-preview-worker",
+    topic: "memory",
+    text: "The parser lives in crates/rigel-core and uses sqlx.",
+    pinned: false,
+    uses: 3,
+    last_used_at: Date.now() - 86_400_000,
+    updated_at: Date.now(),
+    score: {
+      total: 0.622,
+      method: "weighted recency/use/pin; 30-day recency half-life",
+      now: Date.now(),
+      factors: [
+        {
+          name: "recency",
+          value: 1,
+          weight: 0.5,
+          contribution: 0.5,
+          reason: "updated 0.0 days ago; 30-day half-life",
+        },
+        {
+          name: "use",
+          value: 0.405,
+          weight: 0.3,
+          contribution: 0.122,
+          reason: "recalled 3 time(s); every 4 recalls halves the remaining gap",
+        },
+        {
+          name: "pin",
+          value: 0,
+          weight: 0.2,
+          contribution: 0,
+          reason: "not pinned",
+        },
+      ],
+    },
+  },
+  {
+    id: "agent-preview-worker:build:4d0c8b7a92e15f36",
+    agent_id: "agent-preview-worker",
+    topic: "build",
+    text: "Build scripts run with cargo fmt before clippy.",
+    pinned: false,
+    uses: 0,
+    last_used_at: null,
+    updated_at: Date.now() - 90 * 86_400_000,
+    score: {
+      total: 0.063,
+      method: "weighted recency/use/pin; 30-day recency half-life",
+      now: Date.now(),
+      factors: [
+        {
+          name: "recency",
+          value: 0.125,
+          weight: 0.5,
+          contribution: 0.0625,
+          reason: "updated 90.0 days ago; 30-day half-life",
+        },
+        {
+          name: "use",
+          value: 0,
+          weight: 0.3,
+          contribution: 0,
+          reason: "never recalled",
+        },
+        {
+          name: "pin",
+          value: 0,
+          weight: 0.2,
+          contribution: 0,
+          reason: "not pinned",
+        },
+      ],
+    },
   },
 ];
 

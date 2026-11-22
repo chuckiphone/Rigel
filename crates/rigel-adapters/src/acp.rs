@@ -33,6 +33,7 @@ use std::time::{Duration, Instant};
 use async_trait::async_trait;
 use rigel_core::ItemKind;
 use rigel_core::credentials::{CredentialStore, Secret, get_from};
+use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::process::{Child, ChildStdin, ChildStdout};
@@ -144,7 +145,7 @@ impl AcpConfig {
 }
 
 /// One option the agent offered for an approval, straight from its `options` array.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ApprovalOption {
     pub option_id: String,
     pub name: String,
@@ -153,7 +154,7 @@ pub struct ApprovalOption {
 
 /// What the agent wants to do, as much as the protocol says. `raw_input` is the tool's argument
 /// object; P4.10 renders it verbatim beside the scope buttons.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ApprovalRequest {
     pub tool_call_id: String,
     pub title: String,
@@ -162,7 +163,8 @@ pub struct ApprovalRequest {
     pub options: Vec<ApprovalOption>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum ApprovalDecision {
     AllowOnce,
     AllowAlways,
@@ -472,6 +474,30 @@ impl AcpClient {
 
     /// One prompt turn. Returns when the agent answers with a stop reason.
     pub async fn prompt<F>(&mut self, text: &str, mut on_event: F) -> Result<AcpTurn, AdapterError>
+    where
+        F: FnMut(AcpEvent),
+    {
+        self.prompt_events(text, &mut on_event).await
+    }
+
+    /// The same turn through the unified vocabulary item 49 defines. ACP consumers that should
+    /// not care which of Cursor, Cline or Gemini is behind the client use this entry point.
+    pub async fn prompt_unified<F>(
+        &mut self,
+        text: &str,
+        mut on_event: F,
+    ) -> Result<AcpTurn, AdapterError>
+    where
+        F: FnMut(crate::HarnessEvent),
+    {
+        self.prompt(text, |event| on_event(event.into())).await
+    }
+
+    async fn prompt_events<F>(
+        &mut self,
+        text: &str,
+        on_event: &mut F,
+    ) -> Result<AcpTurn, AdapterError>
     where
         F: FnMut(AcpEvent),
     {

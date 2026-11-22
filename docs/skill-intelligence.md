@@ -125,6 +125,27 @@ Ship a small, curated set so the app is useful before the user searches. Two are
 
 > Do not silently bundle either. Both appear as curated entries in the Discover view, badged **Curated**, installable in one click, and removable like anything else. Nobody's machine gets modified on first launch.
 
+### Bundled skills and the quality gate
+
+Eight skills now ship inside the binary as reviewed `SKILL.md` bodies, indexed as
+`builtin:<slug>` at window launch: SkillEvaluator, Headroom, AG-UI, mcptoon, llmfit, Semble,
+Cognee (evaluate only) and Blender MCP. Indexing writes only to the local shelf. Copying them
+into `~/.agents/skills` and `~/.claude/skills` is a separate `rigel skills builtin --install`.
+
+NVIDIA **SkillEvaluator** (Apache-2.0) was installed and run on the folder on 22 Nov 2026:
+
+```bash
+for dir in skills/builtin/*/; do skillevaluator quality-check "$dir"; done
+```
+
+All eight pass the required check with grade A, between **90.0 and 96.2 / 100**. The findings
+left are advisory: some descriptions could name when *not* to use the skill, and some entries
+lack a troubleshooting section or worked example. Two licence notes in the original shortlist
+were corrected by the pinned repositories: Headroom is Apache-2.0, not unverified.
+
+The static check is a floor, not a certificate. It does not execute a skill's commands, and the
+bundled bodies tell the agent to check a CLI's `--help` rather than trust a remembered flag.
+
 ---
 
 ## 4. How this changes the ranked feature list

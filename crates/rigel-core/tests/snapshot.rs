@@ -3,7 +3,7 @@
 use std::path::Path;
 use std::process::Command;
 
-use rigel_core::{MAX_SNAPSHOT_FILES, SnapshotError, SnapshotKind, SnapshotService};
+use rigel_core::{GcPolicy, MAX_SNAPSHOT_FILES, SnapshotError, SnapshotKind, SnapshotService};
 
 fn git(root: &Path, args: &[&str]) -> bool {
     Command::new("git")
@@ -241,4 +241,86 @@ fn list_returns_the_snapshot_with_its_label_and_files() {
     assert_eq!(listed.len(), 1);
     assert_eq!(listed[0].id, snapshot.id);
     assert_eq!(listed[0].files.len(), 1);
+}
+
+#[test]
+fn a_tampered_snapshot_file_refuses_restore_and_names_the_path() {
+    let tmp = tempfile::tempdir().unwrap();
+    std::fs::write(tmp.path().join("a.txt"), "the protected bytes\n").unwrap();
+    let (snapshots, _data) = service(tmp.path());
+    let snapshot = snapshots.capture("hash check").unwrap();
+
+    // The snapshot copy is the input restore trusts; tamper with it rather than the worktree.
+    std::fs::write(
+        snapshot.directory.join("files").join("a.txt"),
+        "tampered snapshot bytes\n",
+    )
+    .unwrap();
+    std::fs::write(tmp.path().join("a.txt"), "current worktree\n").unwrap();
+
+    match snapshots.restore(&snapshot.id, tmp.path()) {
+        Err(SnapshotError::HashMismatch { path, .. }) => assert_eq!(path, "a.txt"),
+        other => panic!("expected HashMismatch, got {other:?}"),
+    }
+    assert_eq!(
+        std::fs::read_to_string(tmp.path().join("a.txt")).unwrap(),
+        "current worktree\n",
+        "a failed hash check must not partially restore the tree"
+    );
+}
+
+#[test]
+fn gc_prunes_only_orphans_after_the_policy_grace_and_honours_dry_run() {
+    let project = tempfile::tempdir().unwrap();
+    let data = tempfile::tempdir().unwrap();
+    std::fs::write(project.path().join("a.txt"), "live\n").unwrap();
+    let snapshots = SnapshotService::new(project.path(), data.path());
+    let live = snapshots.capture("live").unwrap();
+
+    let orphan = snapshots.base().join("orphan-without-manifest");
+    std::fs::create_dir_all(&orphan).unwrap();
+    std::fs::write(orphan.join("partial-copy"), "not a manifest").unwrap();
+
+    let policy = GcPolicy {
+        orphan_grace: std::time::Duration::from_secs(1),
+        dry_run: true,
+    };
+    let report = snapshots.gc_at(i64::MAX / 2, &policy).unwrap();
+    assert_eq!(report.removed.len(), 1);
+    assert_eq!(report.removed[0].id, "orphan-without-manifest");
+    assert!(report.kept.contains(&live.id));
+    assert!(orphan.exists(), "a dry run does not delete anything");
+
+    let report = snapshots
+        .gc_at(
+            i64::MAX / 2,
+            &GcPolicy {
+                dry_run: false,
+                ..policy
+            },
+        )
+        .unwrap();
+    assert_eq!(report.removed.len(), 1);
+    assert!(!orphan.exists());
+    assert!(
+        snapshots
+            .list()
+            .unwrap()
+            .iter()
+            .any(|manifest| manifest.id == live.id),
+        "a live snapshot is never removed"
+    );
+
+    std::fs::remove_dir_all(project.path()).unwrap();
+    let report = snapshots
+        .gc_at(
+            i64::MAX / 2,
+            &GcPolicy {
+                dry_run: false,
+                ..policy
+            },
+        )
+        .unwrap();
+    assert_eq!(report.removed.len(), 1);
+    assert_eq!(report.removed[0].id, live.id);
 }

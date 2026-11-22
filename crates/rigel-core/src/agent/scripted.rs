@@ -58,6 +58,8 @@ pub struct ScriptUsage {
     #[serde(default)]
     pub cached_input_tokens: u64,
     #[serde(default)]
+    pub cache_write_tokens: u64,
+    #[serde(default)]
     pub output_tokens: u64,
     #[serde(default)]
     pub reasoning_tokens: u64,
@@ -171,6 +173,7 @@ impl Model for ScriptedModel {
             on_delta(Delta::Usage(RawUsage {
                 input_tokens: usage.input_tokens,
                 cached_input_tokens: usage.cached_input_tokens,
+                cache_write_input_tokens: usage.cache_write_tokens,
                 output_tokens: usage.output_tokens,
                 reasoning_tokens: usage.reasoning_tokens,
                 cost_usd: usage.cost_usd,

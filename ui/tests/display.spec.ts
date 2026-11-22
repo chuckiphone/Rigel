@@ -5,7 +5,7 @@ import { expect, test } from "@playwright/test";
 test("scale, density and a pane width are applied from the window", async ({ page }) => {
   await page.goto("/");
   await page
-    .getByRole("navigation", { name: "Primary" })
+    .getByRole("group", { name: "Account and settings" })
     .getByRole("button", { name: "Settings", exact: true })
     .click();
   await page.getByRole("option", { name: /^Appearance/ }).click();

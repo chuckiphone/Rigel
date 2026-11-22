@@ -48,6 +48,13 @@ Every project write goes through `PatchPipeline` (`patches.rs`), in this order:
 never applied automatically; a target already at `result_hash` is marked applied without a second
 write. `StopAt` is the seam the crash tests use to stop at exactly those two points.
 
+The pipeline also takes the per-path lease in `agent/merge_queue.rs` before it reads the file for
+the compare-and-swap. A second writer registers behind the holder and is admitted only when that
+lease drops, so two agents cannot both be inside the read/check/write window for one path. The
+Diff view polls the live lanes and shows the holder and each waiter by name; a lane is per path,
+so different files still move in parallel. The queue is in memory: a process crash ends its leases,
+and the journal above is what makes an interrupted write recoverable.
+
 ## A turn
 
 `Coordinator::run_turn` reserves one cent from the session budget, builds the request (system
@@ -69,6 +76,13 @@ tree every 250 ms, hashes only files whose size or mtime moved, and names the wr
 all of them with `ambiguous` set. A parse of declared tool use and a body scan (`toolchain.rs`)
 say what a skill needs, with the line that said so.
 
+The Diff view's guided merge (`ui/src/conflict-editor.tsx`) turns the three captured sides into one
+card per conflicted hunk, with base, ours and theirs visible and an explicit choice required for
+each. The core refuses to write a marker block, a verdict without a reviewer or test
+acknowledgement, and a decision list that does not cover every hunk. Migration 0019 stores the
+reviewer, per-hunk choices, test hint and merged hash in `conflict_verdicts`; the file write still
+goes through the CAS patch pipeline.
+
 Budgets are per session with per-agent attribution. Spend is micro-dollars; the cap is enforced
 locally within one turn, and `rigel doctor` reconciles the ledger against the summed turns.
 
@@ -89,9 +103,12 @@ Closing the window hides it instead of ending the process: agents, chat wrappers
 keep running, and a tray icon opens the same window or quits. The tray is built before the close
 handler starts hiding anything; a machine where the tray cannot be created keeps Close as Quit so
 the app can never become an invisible orphan. The explicit Quit path sets the shutdown flag first,
-which is also how an update install is allowed to close the window it is replacing. On Windows the
-chat server starts under `pythonw.exe` with unbuffered stdout, so the sidecar's console never
-appears while its session-token line is still read normally.
+which is also how an update install is allowed to close the window it is replacing. The tray window
+sets `shadow: false`: a frameless transparent window on Windows otherwise paints the native window
+shadow as a large clipped shape over the panel. The panel provides its own border and depth, and
+the tray surface hides body overflow so only the agents list scrolls. On Windows the chat server
+starts under `pythonw.exe` with unbuffered stdout, so the sidecar's console never appears while its
+session-token line is still read normally.
 
 ## Updates
 

@@ -4,7 +4,10 @@
 //! same checks: a scrubbed stdio environment, no unauthenticated HTTP, no private-network
 //! URL, and a bounded message.
 
+pub mod pin;
 pub mod transport;
+
+pub use pin::{Catalog, PinError, PinObservation, PinStore, SchemaDiff};
 
 pub use transport::{
     ENVIRONMENT_ALLOWLIST, MAX_MESSAGE_BYTES, TransportError, check_http, check_message,

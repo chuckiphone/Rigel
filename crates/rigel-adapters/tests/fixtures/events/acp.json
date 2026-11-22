@@ -1,0 +1,79 @@
+{
+  "harness": "acp",
+  "scenarios": {
+    "approval": [
+      {
+        "event": "delta",
+        "kind": "message",
+        "text": "I need to delete the build directory."
+      },
+      {
+        "event": "tool_call_update",
+        "tool_call_id": "call-4",
+        "status": "completed",
+        "text": "removed 42 files"
+      }
+    ],
+    "error": [
+      {
+        "event": "delta",
+        "kind": "message",
+        "text": "Starting."
+      }
+    ],
+    "interrupt": [
+      {
+        "event": "delta",
+        "kind": "message",
+        "text": "working"
+      }
+    ],
+    "start": [
+      {
+        "event": "delta",
+        "kind": "message",
+        "text": "Reading "
+      },
+      {
+        "event": "delta",
+        "kind": "message",
+        "text": "the file."
+      },
+      {
+        "event": "usage",
+        "used": 5300,
+        "size": 200000,
+        "cost_micros": 4500
+      }
+    ],
+    "tool_call": [
+      {
+        "event": "item",
+        "item": {
+          "kind": "command",
+          "body": {
+            "kind": "execute",
+            "operation": "execute",
+            "raw_input": {
+              "command": "cargo test"
+            },
+            "title": "Run the test suite",
+            "tool_call_id": "call-3"
+          }
+        },
+        "status": "pending"
+      },
+      {
+        "event": "tool_call_update",
+        "tool_call_id": "call-3",
+        "status": "completed",
+        "text": "ok. 102 passed"
+      },
+      {
+        "event": "delta",
+        "kind": "message",
+        "text": "All green."
+      }
+    ]
+  }
+}

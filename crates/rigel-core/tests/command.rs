@@ -142,6 +142,63 @@ async fn an_approved_command_runs_and_records_its_exit_code() {
     assert!(outcome.body["approval_id"].as_str().is_some());
 }
 
+#[cfg(windows)]
+#[tokio::test]
+async fn an_approved_command_runs_inside_the_job_object_and_reports_it() {
+    let tmp = tempfile::tempdir().unwrap();
+    let approver = Recorder::new(CommandDecision::ALLOW_ONCE);
+    let tools =
+        tools(tmp.path(), approver)
+            .await
+            .with_sandbox(rigel_core::SandboxProfile::job_object(
+                rigel_core::JobLimits::default(),
+            ));
+
+    let outcome = run(
+        &tools,
+        serde_json::json!({ "command": "echo rigel-sandbox-ok & ping -n 2 127.0.0.1 > NUL" }),
+    )
+    .await;
+
+    assert!(outcome.ok, "{:?}", outcome.body);
+    assert_eq!(outcome.body["sandbox"]["profile"], "windows-job-object");
+    assert!(
+        outcome.body["sandbox"]["containment"]
+            .as_str()
+            .unwrap()
+            .contains("blocks")
+    );
+    assert!(
+        outcome.body["stdout"]
+            .as_str()
+            .unwrap()
+            .contains("rigel-sandbox-ok")
+    );
+}
+
+#[cfg(windows)]
+#[tokio::test]
+async fn an_unavailable_sandbox_profile_refuses_before_the_command_runs() {
+    let tmp = tempfile::tempdir().unwrap();
+    let approver = Recorder::new(CommandDecision::ALLOW_ONCE);
+    let tools =
+        tools(tmp.path(), approver)
+            .await
+            .with_sandbox(rigel_core::SandboxProfile::sandbox_exec(
+                rigel_core::SandboxExecPolicy::for_project(tmp.path()),
+            ));
+
+    let outcome = run(
+        &tools,
+        serde_json::json!({ "command": "echo should-not-run > marker.txt" }),
+    )
+    .await;
+
+    assert!(!outcome.ok);
+    assert_eq!(outcome.body["error"]["code"], "SANDBOX");
+    assert!(!tmp.path().join("marker.txt").exists());
+}
+
 #[tokio::test]
 async fn a_denied_command_never_runs() {
     let tmp = tempfile::tempdir().unwrap();

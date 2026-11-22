@@ -1,0 +1,38 @@
+{
+  "schema": 1,
+  "name": "rigel-hello",
+  "version": "1.0.0",
+  "description": "Two small tools that show the protocol and the capability broker working.",
+  "author": "Rigel",
+  "license": "MIT OR Apache-2.0",
+  "entry": { "command": "python", "args": ["main.py"] },
+  "capabilities": {
+    "filesystem": { "read": ["."], "write": [] },
+    "network": false,
+    "process": false,
+    "env": []
+  },
+  "tools": [
+    {
+      "name": "hello",
+      "description": "Return a greeting that proves the plugin process answered.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "name": { "type": "string", "description": "Who to greet." }
+        }
+      }
+    },
+    {
+      "name": "read_note",
+      "description": "Read one text file from this plugin's directory through the host's capability broker.",
+      "parameters": {
+        "type": "object",
+        "required": ["path"],
+        "properties": {
+          "path": { "type": "string", "description": "A path inside the plugin directory." }
+        }
+      }
+    }
+  ]
+}

@@ -20,6 +20,7 @@
 //! | [`index`] | the `SkillIndex` service that ties all of the above together |
 
 pub mod blob;
+pub mod builtin;
 pub mod cluster;
 pub mod evidence;
 pub mod frontmatter;
@@ -38,6 +39,7 @@ use std::time::Duration;
 
 pub use crate::storage::StorageError;
 pub use blob::BlobStore;
+pub use builtin::{BUILTIN_SKILLS, BuiltinSkill};
 pub use cluster::{HAMMING_THRESHOLD, simhash};
 pub use evidence::{Evidence, EvidenceSummary};
 pub use github::GitHubSource;

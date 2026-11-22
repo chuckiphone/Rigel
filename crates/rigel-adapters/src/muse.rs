@@ -191,6 +191,18 @@ impl MuseAdapter {
         &self.config
     }
 
+    /// Run one prompt to completion through the unified event vocabulary.
+    pub async fn run_turn_unified<F>(
+        &self,
+        prompt: &str,
+        mut on_event: F,
+    ) -> Result<MuseTurn, AdapterError>
+    where
+        F: FnMut(crate::HarnessEvent),
+    {
+        self.run_turn(prompt, |event| on_event(event.into())).await
+    }
+
     /// Run one prompt to completion, reporting deltas and items as they arrive.
     pub async fn run_turn<F>(&self, prompt: &str, mut on_event: F) -> Result<MuseTurn, AdapterError>
     where

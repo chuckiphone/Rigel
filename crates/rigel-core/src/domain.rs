@@ -30,6 +30,11 @@ pub struct Usage {
     pub input_tokens: u64,
     #[serde(default)]
     pub cached_input_tokens: u64,
+    /// Tokens the provider wrote into its prompt cache. Anthropic reports this separately from
+    /// the reads above; the OpenAI-shaped doors and Gemini report only reads, so this is zero
+    /// there rather than an estimate.
+    #[serde(default)]
+    pub cache_write_tokens: u64,
     #[serde(default)]
     pub output_tokens: u64,
     #[serde(default)]
@@ -60,6 +65,7 @@ impl Usage {
     pub fn add(&mut self, other: &Usage) {
         self.input_tokens += other.input_tokens;
         self.cached_input_tokens += other.cached_input_tokens;
+        self.cache_write_tokens += other.cache_write_tokens;
         self.output_tokens += other.output_tokens;
         self.reasoning_tokens += other.reasoning_tokens;
         self.cost_micros += other.cost_micros;

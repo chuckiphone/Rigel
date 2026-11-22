@@ -116,6 +116,36 @@ pub const PROJECT_MIGRATIONS: &[Migration] = &[
         name: "0018_subagent_budget",
         sql: include_str!("../../../migrations/project/0018_subagent_budget.sql"),
     },
+    Migration {
+        version: 19,
+        name: "0019_conflict_verdicts",
+        sql: include_str!("../../../migrations/project/0019_conflict_verdicts.sql"),
+    },
+    Migration {
+        version: 20,
+        name: "0020_memory_facts",
+        sql: include_str!("../../../migrations/project/0020_memory_facts.sql"),
+    },
+    Migration {
+        version: 21,
+        name: "0021_session_title_source",
+        sql: include_str!("../../../migrations/project/0021_session_title_source.sql"),
+    },
+    Migration {
+        version: 22,
+        name: "0022_turn_summaries",
+        sql: include_str!("../../../migrations/project/0022_turn_summaries.sql"),
+    },
+    Migration {
+        version: 23,
+        name: "0023_agent_model_config",
+        sql: include_str!("../../../migrations/project/0023_agent_model_config.sql"),
+    },
+    Migration {
+        version: 24,
+        name: "0024_agent_tool_overrides",
+        sql: include_str!("../../../migrations/project/0024_agent_tool_overrides.sql"),
+    },
 ];
 
 /// `%APPDATA%\Rigel\index.db`

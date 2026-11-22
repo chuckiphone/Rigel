@@ -49,6 +49,13 @@ kept as an `error` item with `unmapped: true` and the wire event under `raw`. Th
 `crates/rigel-adapters/src/normalise.rs`; the scenarios above are what proves it against real
 stream shapes.
 
+Roadmap 49 adds a second layer over the same streams: `tests/events.rs` runs every scenario through
+`run_turn_unified` / `prompt_unified` and compares the `HarnessEvent` list with
+`tests/fixtures/events/<harness>.json`. The ACP fixture is replayed through Cursor, Cline and Gemini
+configs, and every fixture is fed through the same `StreamRenderer`. Regenerate the unified
+fixtures only with `RIGEL_UPDATE_EVENTS=1 cargo test -p rigel-adapters --test events`; the normal
+test fails on a missing or stale file.
+
 Known defect recorded here rather than fixed in P4.7: Codex `turn/completed` with status
 `interrupted` is classified as a completed turn. The interrupt fixture therefore uses the
 stream-close signature (which is how a killed child actually looks), and the status mapping is

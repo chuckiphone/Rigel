@@ -193,6 +193,32 @@ pub enum MemoryCommand {
         #[arg(long)]
         json: bool,
     },
+    Rank {
+        #[arg(long, value_name = "PATH", default_value = ".")]
+        project: PathBuf,
+        /// Only this agent's facts. All agents when omitted.
+        #[arg(long)]
+        agent: Option<String>,
+        /// Filter the ranking and count the returned facts as recalled.
+        #[arg(long)]
+        query: Option<String>,
+        #[arg(long, default_value_t = 10)]
+        limit: usize,
+        #[arg(long)]
+        json: bool,
+    },
+    Pin {
+        #[arg(long, value_name = "PATH", default_value = ".")]
+        project: PathBuf,
+        /// The fact id from `rigel memory rank`.
+        #[arg(long)]
+        id: String,
+        /// Remove the pin instead of setting it.
+        #[arg(long)]
+        unpin: bool,
+        #[arg(long)]
+        json: bool,
+    },
 }
 
 #[derive(Subcommand)]

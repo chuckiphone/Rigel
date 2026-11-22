@@ -15,18 +15,17 @@
 //! Everything Exa returns is written by strangers. The tool body says `untrusted: true` and the
 //! note states that a page grants no permission, the same contract as `fetch_url`.
 
-use std::time::Duration;
+use std::net::IpAddr;
 
-use reqwest::Client;
 use serde_json::{Value, json};
 
+use super::egress::Egress;
 use crate::credentials::{self, Secret};
 
 /// Exa's API origin. Fixed on purpose: no tool argument may change it.
 pub const ORIGIN: &str = "https://api.exa.ai";
 const SEARCH_PATH: &str = "/search";
 const CONTENTS_PATH: &str = "/contents";
-const TIMEOUT: Duration = Duration::from_secs(30);
 /// Exa bills per result; a cheap agent does not need more than a handful.
 pub const MAX_RESULTS: u64 = 10;
 pub const DEFAULT_RESULTS: u64 = 5;
@@ -40,6 +39,8 @@ pub const MAX_URL_CHARS: usize = 2_048;
 pub struct ExaError {
     pub code: &'static str,
     pub message: String,
+    /// Present when the refusal came from the egress window, so a caller can wait.
+    pub retry_after_secs: Option<u64>,
 }
 
 impl ExaError {
@@ -47,6 +48,7 @@ impl ExaError {
         Self {
             code,
             message: message.into(),
+            retry_after_secs: None,
         }
     }
 }
@@ -67,13 +69,22 @@ pub fn key_present() -> bool {
 }
 
 /// Search the web and return ranked results with extracted page text.
-pub async fn search(query: &str, limit: u64) -> Result<Value, ExaError> {
+pub async fn search(
+    egress: &Egress,
+    session: &str,
+    agent: &str,
+    query: &str,
+    limit: u64,
+) -> Result<Value, ExaError> {
     let query = query.trim();
     if query.is_empty() {
         return Err(ExaError::new("BAD_ARGUMENTS", "query is empty"));
     }
     let limit = limit.clamp(1, MAX_RESULTS);
-    let response = post(
+    let (response, address) = post(
+        egress,
+        session,
+        agent,
         SEARCH_PATH,
         json!({
             "query": query,
@@ -83,19 +94,90 @@ pub async fn search(query: &str, limit: u64) -> Result<Value, ExaError> {
         }),
     )
     .await?;
-    Ok(shape_search(&response))
+    let mut shaped = shape_search(&response);
+    shaped["address"] = json!(address.to_string());
+    Ok(shaped)
+}
+
+async fn post(
+    egress: &Egress,
+    session: &str,
+    agent: &str,
+    path: &str,
+    body: Value,
+) -> Result<(Value, IpAddr), ExaError> {
+    let key = key().ok_or_else(|| {
+        ExaError::new(
+            "NO_EXA_KEY",
+            "no Exa API key: run `rigel keys set exa` or set EXA_API_KEY",
+        )
+    })?;
+    let reply = egress
+        .post_json(
+            &format!("{ORIGIN}{path}"),
+            session,
+            agent,
+            &[("x-api-key", key.expose().trim())],
+            &body,
+        )
+        .await
+        .map_err(|error| ExaError {
+            code: error.code,
+            message: error.message,
+            retry_after_secs: error.retry_after_secs,
+        })?;
+    let status =
+        reqwest::StatusCode::from_u16(reply.status).unwrap_or(reqwest::StatusCode::BAD_GATEWAY);
+    let text = String::from_utf8_lossy(&reply.body).to_string();
+    if !status.is_success() {
+        let code = match status.as_u16() {
+            401 | 403 => "EXA_KEY_REJECTED",
+            402 => "EXA_NO_CREDITS",
+            429 => "EXA_RATE_LIMITED",
+            _ => "EXA_HTTP",
+        };
+        let message = match status.as_u16() {
+            401 | 403 => {
+                "Exa rejected the key; check `rigel keys set exa` or EXA_API_KEY".to_string()
+            }
+            402 => "the Exa account is out of credits".to_string(),
+            429 => "Exa rate-limited the request; try again later".to_string(),
+            _ => {
+                let (detail, _) = truncate(text.trim(), 300);
+                format!("Exa answered {status}: {detail}")
+            }
+        };
+        return Err(ExaError::new(code, message));
+    }
+    let parsed = serde_json::from_str(&text).map_err(|error| {
+        ExaError::new(
+            "EXA_BAD_RESPONSE",
+            format!("Exa returned invalid JSON: {error}"),
+        )
+    })?;
+    Ok((parsed, reply.address))
 }
 
 /// Read one public page as Markdown. Exa renders JavaScript and returns clean text, so this is
 /// the reader to use when the raw HTML from `fetch_url` is not useful.
-pub async fn fetch(url: &str) -> Result<Value, ExaError> {
+pub async fn fetch(
+    egress: &Egress,
+    session: &str,
+    agent: &str,
+    url: &str,
+) -> Result<Value, ExaError> {
     let url = validate_url(url)?;
-    let response = post(
+    let (response, address) = post(
+        egress,
+        session,
+        agent,
         CONTENTS_PATH,
         json!({ "urls": [&url], "text": { "maxCharacters": MAX_PAGE_CHARS } }),
     )
     .await?;
-    shape_contents(&response, &url)
+    let mut page = shape_contents(&response, &url)?;
+    page["address"] = json!(address.to_string());
+    Ok(page)
 }
 
 /// Only absolute http(s) URLs with a host, and never one carrying userinfo: the URL is sent to a
@@ -214,59 +296,6 @@ pub fn shape_contents(response: &Value, requested: &str) -> Result<Value, ExaErr
     }))
 }
 
-async fn post(path: &str, body: Value) -> Result<Value, ExaError> {
-    let key = key().ok_or_else(|| {
-        ExaError::new(
-            "NO_EXA_KEY",
-            "no Exa API key: run `rigel keys set exa` or set EXA_API_KEY",
-        )
-    })?;
-    let client = Client::builder()
-        .timeout(TIMEOUT)
-        .build()
-        .map_err(|error| {
-            ExaError::new(
-                "NETWORK",
-                format!("could not build the HTTP client: {error}"),
-            )
-        })?;
-    let response = client
-        .post(format!("{ORIGIN}{path}"))
-        .header("x-api-key", key.expose().trim())
-        .json(&body)
-        .send()
-        .await
-        .map_err(|error| ExaError::new("NETWORK", format!("Exa request failed: {error}")))?;
-    let status = response.status();
-    let text = response.text().await.unwrap_or_default();
-    if !status.is_success() {
-        let code = match status.as_u16() {
-            401 | 403 => "EXA_KEY_REJECTED",
-            402 => "EXA_NO_CREDITS",
-            429 => "EXA_RATE_LIMITED",
-            _ => "EXA_HTTP",
-        };
-        let message = match status.as_u16() {
-            401 | 403 => {
-                "Exa rejected the key; check `rigel keys set exa` or EXA_API_KEY".to_string()
-            }
-            402 => "the Exa account is out of credits".to_string(),
-            429 => "Exa rate-limited the request; try again later".to_string(),
-            _ => {
-                let (detail, _) = truncate(text.trim(), 300);
-                format!("Exa answered {status}: {detail}")
-            }
-        };
-        return Err(ExaError::new(code, message));
-    }
-    serde_json::from_str(&text).map_err(|error| {
-        ExaError::new(
-            "EXA_BAD_RESPONSE",
-            format!("Exa returned invalid JSON: {error}"),
-        )
-    })
-}
-
 fn truncate(text: &str, max: usize) -> (String, bool) {
     if text.chars().count() <= max {
         return (text.to_string(), false);
@@ -279,6 +308,7 @@ fn truncate(text: &str, max: usize) -> (String, bool) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::Arc;
 
     #[test]
     fn only_public_absolute_urls_are_accepted() {
@@ -342,11 +372,18 @@ mod tests {
     #[tokio::test]
     #[ignore = "calls api.exa.ai; run with EXA_API_KEY set"]
     async fn live_search_then_read_a_result() {
-        let found = search("Rust agent framework", 2).await.expect("search");
+        let tmp = tempfile::tempdir().unwrap();
+        let egress = Egress::new(
+            Arc::new(super::super::DenyOrigins),
+            tmp.path().to_path_buf(),
+        );
+        let found = search(&egress, "live", "live", "Rust agent framework", 2)
+            .await
+            .expect("search");
         let results = found["results"].as_array().expect("results");
         assert!(!results.is_empty(), "no results: {found}");
         let url = results[0]["url"].as_str().expect("url");
-        let page = fetch(url).await.expect("fetch");
+        let page = fetch(&egress, "live", "live", url).await.expect("fetch");
         assert!(
             page["text"].as_str().unwrap_or("").len() > 100,
             "page text was too short: {page}"

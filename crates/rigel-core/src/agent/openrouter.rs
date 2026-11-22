@@ -500,6 +500,9 @@ fn parse_usage(value: &Value) -> Option<RawUsage> {
     Some(RawUsage {
         input_tokens: get("prompt_tokens"),
         cached_input_tokens: cached,
+        // These doors cache automatically and report only reads; a write count would be an
+        // invention, so it stays zero.
+        cache_write_input_tokens: 0,
         output_tokens: get("completion_tokens"),
         reasoning_tokens: reasoning,
         cost_usd: value.get("cost").and_then(Value::as_f64),

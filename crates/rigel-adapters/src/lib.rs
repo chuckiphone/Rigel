@@ -14,8 +14,10 @@ use serde_json::Value;
 pub mod acp;
 pub mod claude;
 pub mod codex;
+pub mod event;
 pub mod muse;
 pub mod normalise;
+pub mod parity;
 pub mod registry;
 pub mod turn;
 
@@ -29,8 +31,12 @@ pub use claude::{
 pub use codex::{
     CodexAdapter, CodexConfig, CodexEvent, CodexUsage, ContextEstimate, Transport, TurnResult,
 };
+pub use event::{ApprovalRecord, HarnessEvent, HarnessUsage, RenderLine, StreamRenderer};
 pub use muse::{MuseAdapter, MuseConfig, MuseEvent, MuseTurn};
 pub use normalise::NormalItem;
+pub use parity::{
+    ParityCell, ParityRow, ParityStatus, markdown as parity_markdown, matrix as parity_matrix,
+};
 pub use registry::{AdapterCache, probe_all, probe_cached};
 pub use turn::{Recorded, TurnEnd, resolve_session, write_mcp_config};
 
@@ -306,6 +312,31 @@ pub struct Capabilities {
     pub programmatic_approval: bool,
     pub worktree: bool,
     pub nested_agents: bool,
+    /// A turn records a usage item from harness-reported data. ACP reports context used/size,
+    /// not a billed input/output split, but the row is still real.
+    #[serde(default)]
+    pub usage: bool,
+    /// Whether a new invocation can continue the harness's own conversation, not just Rigel's
+    /// session. `VendorOnly` means the CLI has a resume command that the adapter does not use.
+    #[serde(default)]
+    pub resume: ResumeSupport,
+    /// Tool calls and results are normalised into transcript items.
+    #[serde(default)]
+    pub tools: bool,
+}
+
+/// How far the resume path goes. Kept typed rather than a bool so the parity matrix can render a
+/// vendor gap as `fail` and a path the protocol/client does not offer as `not-supported`.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum ResumeSupport {
+    /// The adapter or Rigel's own turn loop can continue the conversation.
+    Wired,
+    /// The harness CLI documents a resume command, but the adapter does not pass the id.
+    VendorOnly,
+    /// No adapter or protocol path exists.
+    #[default]
+    Unsupported,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

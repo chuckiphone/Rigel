@@ -16,3 +16,19 @@ export function sponsorSession(project: string, slot: string): string {
   const clean = slot.replace(/[^A-Za-z0-9:_-]/g, "-").slice(0, 64) || "default";
   return `rigel-sponsor:${hashString(project).toString(16)}:${clean}`;
 }
+
+/** The advertiser's preferred mark, when the broker supplied a safe one. */
+export function adArtwork(ad: { favicon?: string; brandImage?: string }): string {
+  const value = (ad.favicon || ad.brandImage || "").trim();
+  return /^(https:\/\/|data:image\/)/i.test(value) ? value : "";
+}
+
+/** A logo-shaped fallback for a fill with no usable artwork. */
+export function adInitial(name?: string): string {
+  const words = (name || "").trim().split(/\s+/).filter(Boolean);
+  if (words.length === 0) return "✦";
+  return words
+    .slice(0, 2)
+    .map((word) => Array.from(word)[0]?.toUpperCase() ?? "")
+    .join("");
+}

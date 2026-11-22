@@ -20,6 +20,7 @@ pub const MAX_HITS: usize = 25;
 /// A matching item with the columns the palette needs from its turn and agent: turn id, seq,
 /// prompt, session id, role, harness, started_at, body.
 type ItemHitRow = (String, i64, String, String, String, String, i64, String);
+type SummaryHitRow = (String, i64, String, String, String, String, i64, String);
 
 #[derive(Debug, Clone, Serialize)]
 pub struct SessionHit {
@@ -41,6 +42,9 @@ pub struct TurnHit {
     pub snippet: String,
     /// True when the match came from an item rather than the prompt.
     pub from_item: bool,
+    /// True when the match came from the turn's stored summary. That row is written once when
+    /// the turn closes, so an old tool result stays searchable without a body scan.
+    pub from_summary: bool,
     pub created_at: i64,
 }
 
@@ -161,11 +165,56 @@ pub async fn workspace(
                         snippet: snippet(&prompt, query),
                         prompt,
                         from_item: false,
+                        from_summary: false,
                         created_at,
                     }
                 },
             )
             .collect();
+
+        // Summaries come before item bodies: one row per turn, already compact, and it covers
+        // a tool result the 500-turn body scan may no longer reach. A prompt hit wins above;
+        // a summary hit then suppresses the item hit for the same turn.
+        let remaining = limit.saturating_sub(turns.len() as i64);
+        if remaining > 0 {
+            let summary_rows: Vec<SummaryHitRow> = sqlx::query_as(
+                "SELECT t.id, t.seq, COALESCE(t.prompt, ''), a.session_id,
+                        COALESCE(a.role, ''), a.harness, t.started_at, s.summary
+                 FROM turn_summaries s
+                 JOIN turns t ON t.id = s.turn_id
+                 JOIN agents a ON a.id = t.agent_id
+                 WHERE COALESCE(t.parent_turn_id, '') = ''
+                   AND s.summary LIKE ? ESCAPE '\\'
+                 ORDER BY t.started_at DESC LIMIT ?",
+            )
+            .bind(&pattern)
+            .bind(remaining)
+            .fetch_all(pool)
+            .await?;
+
+            for (turn_id, seq, prompt, session_id, role, harness, created_at, summary) in
+                summary_rows
+            {
+                if !seen.insert(turn_id.clone()) {
+                    continue;
+                }
+                turns.push(TurnHit {
+                    session_id,
+                    turn_id,
+                    seq,
+                    role,
+                    harness,
+                    snippet: snippet(&summary, query),
+                    prompt,
+                    from_item: false,
+                    from_summary: true,
+                    created_at,
+                });
+                if turns.len() as i64 >= limit {
+                    break;
+                }
+            }
+        }
 
         // Item bodies are searched only in the 500 most recent top-level turns. `LIKE '%x%'`
         // cannot use an index, and a project with thousands of tool results must not turn every
@@ -202,6 +251,7 @@ pub async fn workspace(
                     snippet: snippet(&body, query),
                     prompt,
                     from_item: true,
+                    from_summary: false,
                     created_at,
                 });
                 if turns.len() as i64 >= limit {

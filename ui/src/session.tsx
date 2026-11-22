@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type {
+  CSSProperties,
   KeyboardEvent as ReactKeyboardEvent,
   MouseEvent as ReactMouseEvent,
   ReactNode,
@@ -39,12 +40,14 @@ import {
   type RecoveryOffer,
   type SubagentGraph,
 } from "./api";
+import { MemoryInspector } from "./inspector/memory";
 import { StepCost } from "./inspector/step-cost";
 import { Recovery } from "./recovery";
 import { SubagentGraphView } from "./subagent-graph";
 import { ApprovalCard } from "./session/approval-card";
 import { DegradedBanner } from "./degraded-banner";
 import { ModelControls } from "./modelpicker";
+import { AgentRow, resolveAgentRoute } from "./agent-row";
 import BrowserPanel, { latestBrowserCall } from "./browser";
 import RefineCard from "./refine";
 import CompanionSponsor from "./companion";
@@ -56,12 +59,19 @@ import {
   previewApprovals,
   previewArchivedSession,
   previewBudget,
+  previewLiveTurn,
   previewPatches,
   previewRecovery,
   previewSession,
   previewSubagentGraph,
   previewTranscript,
 } from "./sessionMock";
+
+interface QueuedPrompt {
+  id: string;
+  text: string;
+  at: number;
+}
 
 interface Props {
   project: string;
@@ -511,7 +521,19 @@ export default function SessionView({
   const [pinBatchBusy, setPinBatchBusy] = useState<"keep" | "update" | null>(null);
   const pinRef = useRef<HTMLDivElement | null>(null);
   const [stream, setStream] = useState<Record<string, string>>({});
-  const [liveTurn, setLiveTurn] = useState<Turn | null>(null);
+  const [liveTurn, setLiveTurnState] = useState<Turn | null>(() =>
+    !tauri && new URLSearchParams(window.location.search).get("live") === "1"
+      ? previewLiveTurn
+      : null,
+  );
+  const liveTurnRef = useRef<Turn | null>(liveTurn);
+  // A fast turn can finish before the `turn_send` reply reaches this renderer. Remember the ids
+  // that already closed so a late reply cannot resurrect a finished turn as live.
+  const finishedTurns = useRef<Set<string>>(new Set());
+  const setLiveTurn = useCallback((turn: Turn | null) => {
+    liveTurnRef.current = turn;
+    setLiveTurnState(turn);
+  }, []);
   // D40: one transcript, or two side by side. Never more than two, and never a grid.
   const [shown, setShown] = useState<string[]>([]);
   // Manual spawn: one small form instead of a hidden command. The agent joins the roster
@@ -527,10 +549,22 @@ export default function SessionView({
   const [attachments, setAttachments] = useState<string[]>([]);
   const [addOpen, setAddOpen] = useState(false);
   const addRef = useRef<HTMLDivElement | null>(null);
+  // Follow-ups typed while a turn runs wait here and start one at a time when it ends. The
+  // queue is in-memory: a window that closes has no turn left to hand the prompt to.
+  const [queue, setQueue] = useState<QueuedPrompt[]>([]);
+  const [queueOpen, setQueueOpen] = useState(false);
+  // A line-level hold, not a property of one prompt: removing the held prompt must not silently
+  // release the next one. Only Retry (or clearing the queue) releases it.
+  const [queuePaused, setQueuePaused] = useState(false);
+  const [contextOpen, setContextOpen] = useState(false);
+  const [contextWindow, setContextWindow] = useState<number | null>(null);
+  const queuedSeq = useRef(0);
+  const queueDraining = useRef(false);
+  const queueRef = useRef<HTMLDivElement | null>(null);
+  const contextRef = useRef<HTMLDivElement | null>(null);
   // D151: snippets are project-local drafts; history is the prompts this project has sent.
   const [snippets, setSnippets] = useState<Snippet[]>(() => readSnippets(project));
-  const [snipOpen, setSnipOpen] = useState(false);
-  const snippetRef = useRef<HTMLDivElement | null>(null);
+
   // D152: project-local templates, offered by the "+ session" button. Never committed.
   const [templates, setTemplates] = useState<SessionTemplate[]>([]);
   const [templateOpen, setTemplateOpen] = useState(false);
@@ -880,7 +914,22 @@ export default function SessionView({
           api.listCheckpoints(projectRef.current, current.id),
           api.listBookmarks(projectRef.current, current.id),
         ]);
-      setTurns(nextTurns);
+      // A turn can start after this query was issued (the queue does exactly that on
+      // TurnFinished). Replacing the transcript with the older snapshot would hide a running
+      // turn and its approval card until the next refresh, so merge instead: the database wins
+      // for rows it knows, while a running row or newer item that landed during the read stays.
+      setTurns((previous) => {
+        const merged = new Map(nextTurns.map((entry) => [entry.turn.id, entry]));
+        for (const entry of previous) {
+          const fresh = merged.get(entry.turn.id);
+          if (!fresh) {
+            if (entry.turn.status === "running") merged.set(entry.turn.id, entry);
+          } else if (entry.items.length > fresh.items.length) {
+            merged.set(entry.turn.id, { ...fresh, items: entry.items });
+          }
+        }
+        return [...merged.values()].sort((a, b) => a.turn.seq - b.turn.seq);
+      });
       setAgents(nextAgents);
       setPatches(nextPatches);
       setCheckpoints(nextCheckpoints);
@@ -1130,23 +1179,11 @@ export default function SessionView({
 
         switch (payload.type) {
           case "turn_started": {
-            setTurns((previous) => {
-              if (previous.some((turn) => turn.turn.id === payload.turn_id)) return previous;
-              const turn: Turn = {
-                id: payload.turn_id,
-                agent_id: payload.agent_id,
-                parent_turn_id: payload.parent_turn_id ?? null,
-                seq: payload.seq,
-                status: "running",
-                prompt: payload.prompt ?? null,
-                started_at: Date.now(),
-                completed_at: null,
-                usage: null,
-                stop_reason: null,
-              };
-              return [...previous, { turn, items: [] }];
-            });
-            setLiveTurn({
+            // A subagent's turn belongs in the transcript and the graph, but it is not the turn
+            // the composer is driving: replacing `liveTurn` with it would make Stop cancel the
+            // child and let the queue start while the parent is still running.
+            if (payload.session_id !== current.id) break;
+            const turn: Turn = {
               id: payload.turn_id,
               agent_id: payload.agent_id,
               parent_turn_id: payload.parent_turn_id ?? null,
@@ -1157,7 +1194,14 @@ export default function SessionView({
               completed_at: null,
               usage: null,
               stop_reason: null,
+            };
+            setTurns((previous) => {
+              if (previous.some((entry) => entry.turn.id === payload.turn_id)) return previous;
+              return [...previous, { turn, items: [] }];
             });
+            if (!payload.parent_turn_id && !finishedTurns.current.has(payload.turn_id)) {
+              setLiveTurn(turn);
+            }
             setStream((previous) => ({ ...previous, [payload.turn_id]: "" }));
             // A subagent is registered and starts its turn in the same step. Refreshing here puts
             // its roster row up while it works, so it can be watched instead of only being
@@ -1236,30 +1280,34 @@ export default function SessionView({
             break;
           }
           case "turn_finished": {
-            if (payload.status === "failed") {
-              notify(
-                "failed",
-                "Rigel · turn failed",
-                "The turn stopped with an error. Open the transcript for the reason.",
-                defaultsRef.current,
-                document.visibilityState === "visible" && document.hasFocus(),
-              );
-            } else if (payload.status === "completed") {
-              notify(
-                "finished",
-                "Rigel · turn finished",
-                `Spent ${money(payload.usage.cost_micros)} this turn.`,
-                defaultsRef.current,
-                document.visibilityState === "visible" && document.hasFocus(),
-              );
+            const wasLive = liveTurnRef.current?.id === payload.turn_id;
+            finishedTurns.current.add(payload.turn_id);
+            if (wasLive) {
+              if (payload.status === "failed") {
+                notify(
+                  "failed",
+                  "Rigel · turn failed",
+                  "The turn stopped with an error. Open the transcript for the reason.",
+                  defaultsRef.current,
+                  document.visibilityState === "visible" && document.hasFocus(),
+                );
+              } else if (payload.status === "completed") {
+                notify(
+                  "finished",
+                  "Rigel · turn finished",
+                  `Spent ${money(payload.usage.cost_micros)} this turn.`,
+                  defaultsRef.current,
+                  document.visibilityState === "visible" && document.hasFocus(),
+                );
+              }
+              setLiveTurn(null);
+              setWarning(false);
             }
             setStream((previous) => {
               const next = { ...previous };
               delete next[payload.turn_id];
               return next;
             });
-            setLiveTurn(null);
-            setWarning(false);
             void refresh();
             void api
               .getSession(projectRef.current, current.id)
@@ -1268,7 +1316,12 @@ export default function SessionView({
             break;
           }
           case "session_updated": {
-            setSession(payload.session);
+            // An automatic title is written after the first prompt. Update the open header and
+            // the list row; an event for another session must not replace what is on screen.
+            setSession((open) => (open?.id === payload.session.id ? payload.session : open));
+            setList((rows) =>
+              rows.map((row) => (row.id === payload.session.id ? payload.session : row)),
+            );
             break;
           }
           case "error": {
@@ -1296,6 +1349,17 @@ export default function SessionView({
     bottomRef.current?.scrollIntoView({ block: "end" });
   }, [turns, stream]);
 
+  // Roadmap 58: the pair the next turn will actually carry. The watched agent is the one the
+  // composer sends to; without one, the first agent of the chosen harness (the spawn path).
+  const routePreview = useMemo(() => {
+    const watched =
+      shown.length === 1
+        ? agents.find((agent) => agent.id === shown[0] && !observedOnly(agent))
+        : undefined;
+    const worker = watched ?? agents.find((agent) => agent.harness === target) ?? null;
+    return resolveAgentRoute(worker, rolePresets, { model, provider, effort });
+  }, [agents, shown, target, rolePresets, model, provider, effort]);
+
   // Debounced so typing does not hammer the database; a quote is a read, but a read per
   // keystroke is still waste. The hard cap does not depend on this succeeding.
   useEffect(() => {
@@ -1313,9 +1377,9 @@ export default function SessionView({
           prompt,
           spendMicros,
           capMicros,
-          model,
-          provider,
-          effort,
+          routePreview.model,
+          routePreview.provider,
+          routePreview.effort,
         )
         .then((next) => {
           if (!cancelled) setQuote(next);
@@ -1328,22 +1392,24 @@ export default function SessionView({
       cancelled = true;
       clearTimeout(timer);
     };
-  }, [session, text, spendMicros, capMicros, model, effort]);
+  }, [session, text, spendMicros, capMicros, routePreview]);
 
   useEffect(() => {
-    if (!addOpen && !snipOpen && !templateOpen && !pinOpen) return;
+    if (!addOpen && !templateOpen && !pinOpen && !queueOpen && !contextOpen) return;
     const closeOnPointer = (event: PointerEvent) => {
       if (!addRef.current?.contains(event.target as Node)) setAddOpen(false);
-      if (!snippetRef.current?.contains(event.target as Node)) setSnipOpen(false);
       if (!templateRef.current?.contains(event.target as Node)) setTemplateOpen(false);
       if (!pinRef.current?.contains(event.target as Node)) setPinOpen(false);
+      if (!queueRef.current?.contains(event.target as Node)) setQueueOpen(false);
+      if (!contextRef.current?.contains(event.target as Node)) setContextOpen(false);
     };
     const closeOnKey = (event: KeyboardEvent) => {
       if (event.key === "Escape") {
         setAddOpen(false);
-        setSnipOpen(false);
         setTemplateOpen(false);
         setPinOpen(false);
+        setQueueOpen(false);
+        setContextOpen(false);
       }
     };
     window.addEventListener("pointerdown", closeOnPointer);
@@ -1352,12 +1418,11 @@ export default function SessionView({
       window.removeEventListener("pointerdown", closeOnPointer);
       window.removeEventListener("keydown", closeOnKey);
     };
-  }, [addOpen, snipOpen, templateOpen, pinOpen]);
+  }, [addOpen, templateOpen, pinOpen, queueOpen, contextOpen]);
 
   // Snippets are stored per project, so opening another project reads its own list.
   useEffect(() => {
     setSnippets(readSnippets(project));
-    setSnipOpen(false);
   }, [project]);
 
   // D151: the placeholder is selected after the inserted text commits. A layout effect runs
@@ -1381,6 +1446,30 @@ export default function SessionView({
     },
     [attachments],
   );
+
+  // The context ring uses the model's published window, never a guessed one. The latest turn's
+  // input is the best local measure of what the next request carries.
+  useEffect(() => {
+    let live = true;
+    if (!model) {
+      setContextWindow(null);
+      return;
+    }
+    api
+      .modelCapabilities([{ provider, model, chat: true }])
+      .then((rows) => {
+        if (!live) return;
+        const row = rows.find(
+          (candidate) =>
+            candidate.model === model && (!provider || candidate.provider === provider),
+        );
+        setContextWindow(row?.context_tokens ?? null);
+      })
+      .catch(() => live && setContextWindow(null));
+    return () => {
+      live = false;
+    };
+  }, [model, provider]);
 
   /** D151: the prompt that actually ran, once, per project. A restart keeps the list. */
   const rememberPrompt = useCallback(
@@ -1585,7 +1674,8 @@ export default function SessionView({
       setStarting(true);
       setTemplateOpen(false);
       try {
-        const created = await api.startSession(project, template?.name ?? "Session");
+        // No template means no name yet: the first prompt gets to name this session cheaply.
+        const created = await api.startSession(project, template?.name);
         const pinFailures: string[] = [];
         for (const skill of template?.skills ?? []) {
           try {
@@ -1929,12 +2019,12 @@ export default function SessionView({
         model?: string;
         provider?: string;
       },
-    ) => {
+    ): Promise<boolean> => {
     if (readOnly) {
       setError("This transcript is read-only; turn sending is disabled.");
-      return;
+      return false;
     }
-    if (!prompt || !session || busy) return;
+    if (!prompt || !session || busy) return false;
     const chosenModel = options?.model ?? model;
     const chosenProvider = options?.provider ?? provider;
     const turnPrompt = options?.keepComposer ? prompt : withAttachments(prompt);
@@ -1977,7 +2067,7 @@ export default function SessionView({
       ]);
       rememberPrompt(prompt);
       if (!options?.keepComposer) setAttachments([]);
-      return;
+      return true;
     }
 
     setBusy(true);
@@ -1992,7 +2082,7 @@ export default function SessionView({
         setError(
           "The agent that stopped is no longer in this session. Start a new turn from the composer.",
         );
-        return;
+        return false;
       }
       const watched = shown.length === 1
         ? agents.find((agent) => agent.id === shown[0] && !observedOnly(agent))
@@ -2009,14 +2099,21 @@ export default function SessionView({
         setAgents((previous) => [...previous, spawned]);
         worker = spawned;
       }
+      // Roadmap 58: resolve the row's pair once, and send exactly what the row shows. A role
+      // preset wins in core; sending the row's own pair keeps the provider with its model.
+      const workerRoute = resolveAgentRoute(worker, rolePresets, {
+        model: chosenModel,
+        provider: chosenProvider,
+        effort,
+      });
       const reply = await api.sendTurn(
         project,
         session.id,
         worker.id,
         turnPrompt,
-        chosenModel,
-        chosenProvider,
-        effort,
+        workerRoute.model,
+        workerRoute.provider,
+        workerRoute.effort,
       );
       rememberPrompt(prompt);
       if (!options?.keepComposer) setAttachments([]);
@@ -2025,17 +2122,25 @@ export default function SessionView({
         (window as unknown as { __rigelLastTurnRoute?: unknown }).__rigelLastTurnRoute =
           reply.route;
       }
-      setLiveTurn(reply.turn);
-      setTurns((previous) => [
-        ...previous,
-        { turn: reply.turn, items: [] },
-      ]);
-      setStream((previous) => ({ ...previous, [reply.turn.id]: "" }));
+      // `turn_started` can beat the IPC reply. Both paths are idempotent by turn id, and a
+      // turn that finished before this reply is never shown as running.
+      const alreadyFinished = finishedTurns.current.has(reply.turn.id);
+      if (!alreadyFinished) setLiveTurn(reply.turn);
+      setTurns((previous) =>
+        previous.some((entry) => entry.turn.id === reply.turn.id)
+          ? previous
+          : [...previous, { turn: reply.turn, items: [] }],
+      );
+      if (!alreadyFinished) {
+        setStream((previous) => ({ ...previous, [reply.turn.id]: "" }));
+      }
       setBudget(await api.getBudget(project, worker.id));
+      return true;
     } catch (problem) {
       const message = problem instanceof Error ? problem.message : String(problem);
       setError(message);
       if (!options?.keepComposer) setText(prompt);
+      return false;
     } finally {
       setBusy(false);
     }
@@ -2049,10 +2154,12 @@ export default function SessionView({
     model,
     provider,
     effort,
+    rolePresets,
     target,
     withAttachments,
     rememberPrompt,
     readOnly,
+    setLiveTurn,
   ]);
 
   /** Q249: restart the stopped task with a fresh turn and a fresh step budget. */
@@ -2156,6 +2263,31 @@ export default function SessionView({
 
   const autoRefine = defaults?.auto_refine ?? false;
 
+  /** While a turn runs, Send puts the draft in line instead of discarding the action. */
+  const queueDraft = useCallback(() => {
+    if (readOnly || !session) return;
+    const prompt =
+      text.trim() ||
+      (attachments.length > 0 ? "Read the attached files and tell me what matters." : "");
+    if (!prompt) return;
+    const queued = withAttachments(prompt);
+    queuedSeq.current += 1;
+    setQueue((rows) => [
+      ...rows,
+      { id: `queued-${Date.now()}-${queuedSeq.current}`, text: queued, at: Date.now() },
+    ]);
+    // Queueing while a stopped line is held must not release it; only Retry does that.
+    setText("");
+    setAttachments([]);
+    setAddOpen(false);
+    setQueueOpen(false);
+    onNotice(
+      liveTurn
+        ? `Queued for after turn ${liveTurn.seq}. Stop pauses the line instead of dropping it.`
+        : "Queued for the next turn.",
+    );
+  }, [readOnly, session, text, attachments, withAttachments, liveTurn, onNotice]);
+
   /**
    * Send reviews first, unless auto-refine is on: then the cheap model tightens the brief and
    * the result goes straight out. A refiner failure is not a gate — the typed draft still sends.
@@ -2169,6 +2301,10 @@ export default function SessionView({
       text.trim() ||
       (attachments.length > 0 ? "Read the attached files and tell me what matters." : "");
     if (!prompt || !session || busy || review || refining) return;
+    if (liveTurn) {
+      queueDraft();
+      return;
+    }
     setAddOpen(false);
     // A scripted window has no provider to refine with, and refinement is a real model call.
     if (document.documentElement.dataset.e2e === "1") {
@@ -2227,6 +2363,8 @@ export default function SessionView({
     turns,
     deliver,
     onNotice,
+    liveTurn,
+    queueDraft,
   ]);
 
   /** Saved, not per-draft: a person who turns it on wants it on for the next prompt too. */
@@ -2277,6 +2415,7 @@ export default function SessionView({
 
   /** An inserted snippet is text, never a send: Enter still opens the review card. */
   const applySnippet = (snippet: Snippet) => {
+    setAddOpen(false);
     const field = composerRef.current;
     const focused = field !== null && document.activeElement === field;
     const start = focused ? (field.selectionStart ?? text.length) : text.length;
@@ -2284,7 +2423,6 @@ export default function SessionView({
     const separator = !focused && text.length > 0 && !text.endsWith("\n") ? "\n\n" : "";
     const inserted = separator + snippet.body;
     setText(text.slice(0, start) + inserted + text.slice(end));
-    setSnipOpen(false);
     setHistoryIndex(null);
     const offset = start + separator.length;
     const open = snippet.body.indexOf("{");
@@ -2309,7 +2447,7 @@ export default function SessionView({
     );
     setSnippets(next);
     writeSnippets(project, next);
-    setSnipOpen(false);
+    setAddOpen(false);
     onNotice("Draft saved as a snippet. It inserts text; nothing sends.");
   };
 
@@ -2415,6 +2553,9 @@ export default function SessionView({
 
   const cancel = useCallback(async () => {
     if (!liveTurn) return;
+    // Stopping the turn must not blindly launch the next queued prompt. The line is held even
+    // when it is empty now, so a follow-up typed while the stop lands waits for Retry too.
+    setQueuePaused(true);
     try {
       await api.cancelTurn(liveTurn.id);
     } catch (problem) {
@@ -2770,6 +2911,76 @@ export default function SessionView({
 
   const live = liveTurn !== null;
   const percent = capMicros ? Math.min(100, (spendMicros / capMicros) * 100) : 0;
+  const latestUsage =
+    liveTurn?.usage ??
+    [...turns].reverse().find((entry) => entry.turn.usage !== null)?.turn.usage ??
+    null;
+  const contextTokens = latestUsage?.input_tokens ?? 0;
+  const contextKnown = contextWindow !== null && contextWindow > 0;
+  const contextPercent =
+    contextKnown && contextTokens > 0
+      ? Math.min(100, (contextTokens / (contextWindow ?? 1)) * 100)
+      : 0;
+  const contextTitle = contextKnown
+    ? `Context: ${Math.round(contextPercent)}% used · ${compact(contextTokens)} of ${compact(
+        contextWindow,
+      )} tokens in the latest turn`
+    : "Context: the model catalogue has no published window for this model";
+
+  // A queued prompt starts only after the previous turn is gone. One drain at a time; a failed
+  // start keeps the prompt at the head of the line instead of losing it. The head is removed
+  // before delivery so a re-render cannot start it twice; a failure puts it back.
+  useEffect(() => {
+    if (
+      live ||
+      busy ||
+      refining ||
+      review !== null ||
+      preparing ||
+      swarmTargets !== null ||
+      readOnly ||
+      !session
+    ) {
+      return;
+    }
+    if (queue.length === 0) return;
+    const next = queue[0];
+    if (queuePaused || queueDraining.current) return;
+    queueDraining.current = true;
+    setQueue((rows) => rows.filter((row) => row.id !== next.id));
+    void deliver(next.text, { keepComposer: true })
+      .then((ok) => {
+        if (ok) {
+          setQueuePaused(false);
+        } else {
+          setQueue((rows) => [next, ...rows]);
+          setQueuePaused(true);
+        }
+      })
+      .finally(() => {
+        queueDraining.current = false;
+      });
+  }, [
+    live,
+    busy,
+    refining,
+    review,
+    preparing,
+    swarmTargets,
+    readOnly,
+    session,
+    queue,
+    queuePaused,
+    deliver,
+  ]);
+
+  useEffect(() => {
+    setQueue([]);
+    setQueuePaused(false);
+    setQueueOpen(false);
+    setContextOpen(false);
+    finishedTurns.current.clear();
+  }, [project, session?.id]);
 
   // D153: a range from what completed turns actually cost, scaled to this draft's size. Three
   // turns are the floor for saying anything at all; below that the line says so rather than
@@ -2845,7 +3056,17 @@ export default function SessionView({
     if (!session) return;
     const enable = !(plan?.mode ?? false);
     try {
-      const next = await api.planSet(project, session.id, enable);
+      const next: PlanState = tauri
+        ? await api.planSet(project, session.id, enable)
+        : {
+            session_id: session.id,
+            mode: enable,
+            plan: enable ? "Browser preview: reads only until the plan is approved." : plan?.plan ?? null,
+            tools: enable ? [] : plan?.tools ?? [],
+            proposed_at: enable ? Date.now() : plan?.proposed_at ?? null,
+            approved_at: enable ? null : Date.now(),
+            updated_at: Date.now(),
+          };
       setPlan(next);
       onNotice(
         enable
@@ -2860,11 +3081,41 @@ export default function SessionView({
   };
 
   const applyRole = async (agent: Agent, preset: string) => {
-    if (!session || !preset) return;
+    if (!session) return;
     try {
-      const next = await api.roleApply(project, session.id, agent.id, preset);
+      const next = preset
+        ? await api.roleApply(project, session.id, agent.id, preset)
+        : await api.roleClear(project, session.id, agent.id);
       setAgents((rows) => rows.map((row) => (row.id === next.id ? next : row)));
-      onNotice(`${next.role ?? "agent"} preset applied; the next turn reads it.`);
+      onNotice(
+        preset
+          ? `${next.role ?? "agent"} preset applied; the next turn reads it.`
+          : "Role preset cleared; this row keeps the pair it had.",
+      );
+    } catch (failure) {
+      setError(failure instanceof Error ? failure.message : String(failure));
+    }
+  };
+
+  /** Roadmap 58: write one row's model pair. A preset owns the row, so the picker is disabled. */
+  const configureAgent = async (
+    agent: Agent,
+    model: string,
+    provider: string,
+    effort: string,
+  ) => {
+    if (!session) return;
+    try {
+      const next = await api.agentConfigure(
+        project,
+        session.id,
+        agent.id,
+        model,
+        provider,
+        effort,
+      );
+      setAgents((rows) => rows.map((row) => (row.id === next.id ? next : row)));
+      onNotice(`${next.role ?? "agent"} now uses ${model || "the composer model"} · ${effort}.`);
     } catch (failure) {
       setError(failure instanceof Error ? failure.message : String(failure));
     }
@@ -3057,26 +3308,7 @@ export default function SessionView({
                 {templateSaving ? "saving…" : "save template"}
               </button>
               {shown.length === 2 ? <span className="fine">two transcripts side by side</span> : null}
-              {shown.length === 1 && rolePresets.length ? (
-                <select
-                  className="chip"
-                  aria-label="Apply a role preset to the selected agent"
-                  value={
-                    agents.find((agent) => agent.id === shown[0])?.role ?? ""
-                  }
-                  onChange={(event) => {
-                    const agent = agents.find((row) => row.id === shown[0]);
-                    if (agent) void applyRole(agent, event.target.value);
-                  }}
-                >
-                  <option value="">role preset…</option>
-                  {rolePresets.map((preset) => (
-                    <option key={preset.id} value={preset.id}>
-                      {preset.title} · {preset.effort}
-                    </option>
-                  ))}
-                </select>
-              ) : null}
+
               {session.status === "interrupted" ? (
                 <>
                   <button className="chip warn" onClick={() => void resume(false)} disabled={busy}>
@@ -3334,56 +3566,24 @@ export default function SessionView({
             const assignment = team.find((row) => row.agent_key === agent.id);
             const working = assignment?.files.join(", ");
             return (
-            <button
-              key={agent.id}
-              className={`row agent-row${nested ? " nested" : ""}${shown.includes(agent.id) ? " on" : ""}`}
-              onClick={() => toggleShown(agent.id)}
-              aria-pressed={shown.includes(agent.id)}
-              title={
-                nested
-                  ? "A subagent: click to watch its transcript in the main pane; up to two can be open."
-                  : "Click to watch this agent's transcript; up to two can be open."
-              }
-            >
-              <span className={`status-dot ${agent.status}`} title={agent.status} />
-              <span className="row-text">
-                <span className="row-name">
-                  {nested ? (
-                    <span className="nest-mark" aria-hidden="true">
-                      ↳
-                    </span>
-                  ) : null}
-                  {agent.role ?? "agent"}
-                  <span className="tag">{agent.harness}</span>
-                  {observedOnly(agent) ? (
-                    <span
-                      className="tag observed"
-                      title="Rigel shows this agent's turns but cannot send it new work yet."
-                    >
-                      observed only
-                    </span>
-                  ) : null}
-                  {shown.includes(agent.id) ? <span className="tag watching">watching</span> : null}
-                </span>
-                <span className="row-desc" title={assignment?.task}>
-                {working ? `working on ${working}` : agent.model ?? "no model"}
-              </span>
-              </span>
-              <span className="row-meta">
-                {agent.claims_held > 0 ? (
-                  <span
-                    className={`claim-count${agent.claims_stale > 0 ? " stale" : ""}`}
-                    title={`${agent.claims_held} file claim(s) held${
-                      agent.claims_stale > 0 ? `, ${agent.claims_stale} stale` : ""
-                    } — see Diff`}
-                  >
-                    {agent.claims_held} claimed
-                    {agent.claims_stale > 0 ? ` · ${agent.claims_stale} stale` : ""}
-                  </span>
-                ) : null}
-                {money(agent.spend_micros)}
-              </span>
-            </button>
+              <AgentRow
+                key={agent.id}
+                agent={agent}
+                nested={nested}
+                selected={shown.includes(agent.id)}
+                presets={rolePresets}
+                chatOnly={defaults?.chat_models_only ?? true}
+                busy={busy}
+                observed={observedOnly(agent)}
+                working={working ? `working on ${working}` : assignment?.task}
+                fallback={{ model, provider, effort }}
+                onToggle={() => toggleShown(agent.id)}
+                onConfigure={(nextModel, nextProvider, nextEffort) =>
+                  void configureAgent(agent, nextModel, nextProvider, nextEffort)
+                }
+                onRole={(role) => void applyRole(agent, role)}
+                onChatOnly={(next) => void applyChatOnly(next)}
+              />
             );
           })}
           {agents.length === 0 && session ? (
@@ -3438,6 +3638,24 @@ export default function SessionView({
               onEffort={(next) => void applyModel(model, next)}
               onChatOnly={(next) => void applyChatOnly(next)}
             />
+            <span
+              className="resolved-route"
+              data-route-source={routePreview.source}
+              title="The model, provider and effort the next turn will carry, after the role preset and the agent row are applied"
+            >
+              <span className="fine">next</span>
+              <span className="mono">{routePreview.model || "no model"}</span>
+              <span className="effort-pill">{routePreview.effort}</span>
+              <span className="tag">
+                {routePreview.source === "preset"
+                  ? "preset"
+                  : routePreview.source === "agent"
+                    ? "agent row"
+                    : routePreview.source === "request"
+                      ? "composer"
+                      : "settings"}
+              </span>
+            </span>
             <button
               type="button"
               className={`chip${defaults?.free_mode ? " on" : ""}`}
@@ -3459,13 +3677,9 @@ export default function SessionView({
             ) : null}
             {plan?.mode ? (
               <button className="chip on" onClick={() => void togglePlan()}>
-                {plan.tools.length > 0 ? `approve plan (${plan.tools.length})` : "approve plan"}
+                {plan.tools.length > 0 ? `approve plan (${plan.tools.length})` : "leave plan mode"}
               </button>
-            ) : (
-              <button className="chip" onClick={() => void togglePlan()} disabled={!session}>
-                plan
-              </button>
-            )}
+            ) : null}
             <label className="toggle">
               <input type="checkbox" checked={raw} onChange={(event) => setRaw(event.target.checked)} />
               raw
@@ -3533,9 +3747,6 @@ export default function SessionView({
                 </button>
                 <button className="chip" onClick={() => void resumeTurn()}>
                   Resume
-                </button>
-                <button className="danger-button" onClick={() => void cancel()}>
-                  Stop turn
                 </button>
               </>
             ) : null}
@@ -4013,13 +4224,13 @@ export default function SessionView({
                         : refining
                         ? "Tightening the brief…"
                         : live
-                          ? "A turn is running…"
+                          ? "A turn is running; type a follow-up and Send queues it"
                           : attachments.length > 0
                             ? "Ask about the attached files…"
                             : "Ask the agent; Enter sends, Shift+Enter adds a line"
                   }
-                  rows={2}
-                  disabled={readOnly || live || review !== null || refining}
+                  rows={3}
+                  disabled={readOnly || review !== null || refining}
                 />
                 <div className="composer-tray">
                   <div className="composer-add" ref={addRef}>
@@ -4029,9 +4240,14 @@ export default function SessionView({
                       aria-label="Add context"
                       aria-haspopup="menu"
                       aria-expanded={addOpen}
-                      title="Add context"
-                      onClick={() => setAddOpen((open) => !open)}
-                      disabled={live || review !== null}
+                      title="Add context, snippets and auto-refine"
+                      onClick={() => {
+                        setAddOpen((open) => !open);
+                        setPinOpen(false);
+                        setQueueOpen(false);
+                        setContextOpen(false);
+                      }}
+                      disabled={review !== null}
                     >
                       <svg width="14" height="14" viewBox="0 0 20 20" fill="none" aria-hidden>
                         <path
@@ -4120,23 +4336,148 @@ export default function SessionView({
                         <p className="composer-menu-hint">
                           Files are copied into .rigel/attachments; the next turn gets their paths.
                         </p>
+                        <div className="composer-menu-rule" />
+                        <p className="composer-menu-label">Saved prompts</p>
+                        {snippets.length === 0 ? (
+                          <p className="composer-menu-hint">
+                            None saved. Write a draft, then save it here.
+                          </p>
+                        ) : null}
+                        {snippets.map((snippet) => (
+                          <div className="snippet-row" key={snippet.id}>
+                            <button
+                              type="button"
+                              role="menuitem"
+                              className="composer-menu-item"
+                              onClick={() => applySnippet(snippet)}
+                              title={snippet.body}
+                            >
+                              <span>{snippet.label}</span>
+                              <small>
+                                {/\{[a-z]+\}/.test(snippet.body) ? "placeholder" : "insert"}
+                              </small>
+                            </button>
+                            <button
+                              type="button"
+                              className="snippet-delete"
+                              aria-label={`Delete ${snippet.label}`}
+                              title={`Delete ${snippet.label}`}
+                              onClick={() => removeSnippet(snippet.id)}
+                            >
+                              ×
+                            </button>
+                          </div>
+                        ))}
+                        <button
+                          type="button"
+                          role="menuitem"
+                          className="composer-menu-item"
+                          onClick={saveDraftSnippet}
+                          disabled={!text.trim()}
+                        >
+                          <span>Save this draft as a snippet</span>
+                          <small>local</small>
+                        </button>
+                        <div className="composer-menu-rule" />
+                        <button
+                          type="button"
+                          role="menuitem"
+                          className="composer-menu-item"
+                          aria-pressed={autoRefine}
+                          title={
+                            autoRefine
+                              ? "Auto-refine is on: every prompt is tightened by the cheap model, then sent without the review card"
+                              : "Auto-refine is off: Send opens the review card. Turn this on to refine and send every prompt"
+                          }
+                          onClick={() => void toggleAutoRefine()}
+                          disabled={!defaults || review !== null || refining}
+                        >
+                          <span>Auto-refine</span>
+                          <small>{autoRefine ? "on" : "off"}</small>
+                        </button>
+                        <p className="composer-menu-hint">
+                          Up/Down recalls sent prompts; Ctrl+Up widens to the whole project.
+                          Inserted text stays a draft until you confirm it.
+                        </p>
                       </div>
                     ) : null}
                   </div>
-                  <div className="composer-snippets" ref={pinRef}>
+                  <div className="composer-modes" role="group" aria-label="Composer mode">
                     <button
                       type="button"
-                      className="composer-snippet-toggle"
+                      className={`composer-mode${plan?.mode ? "" : " on"}`}
+                      aria-pressed={!(plan?.mode ?? false)}
+                      title="Build mode: the next turn may edit"
+                      onClick={() => {
+                        if (plan?.mode) void togglePlan();
+                        else composerRef.current?.focus();
+                      }}
+                      disabled={!session || live}
+                    >
+                      Build
+                    </button>
+                    <button
+                      type="button"
+                      className={`composer-mode${plan?.mode ? " on" : ""}`}
+                      aria-pressed={plan?.mode ?? false}
+                      title={
+                        plan?.mode
+                          ? plan.tools.length > 0
+                            ? `Approve the plan and leave plan mode (${plan.tools.length} tools)`
+                            : "Leave plan mode; the next turn may edit"
+                          : "Plan mode: reads only, no edits or commands until you approve"
+                      }
+                      onClick={() => void togglePlan()}
+                      disabled={!session || live}
+                    >
+                      Plan{plan?.mode && plan.tools.length > 0 ? ` ${plan.tools.length}` : ""}
+                    </button>
+                    <button
+                      type="button"
+                      className="composer-mode"
+                      aria-haspopup="dialog"
+                      aria-label="Mission (Swarm)"
+                      title={
+                        !text.trim()
+                          ? "Type the task first; Mission sends it to the room"
+                          : live
+                            ? "Wait for the running turn to finish"
+                            : review !== null
+                              ? "Confirm or cancel the review card first"
+                              : "Choose the mission's agents and big boss before it sends"
+                      }
+                      onClick={() => void prepareSwarm()}
+                      disabled={
+                        !onSwarmPrepare ||
+                        readOnly ||
+                        live ||
+                        review !== null ||
+                        preparing ||
+                        !text.trim() ||
+                        swarmTargets !== null
+                      }
+                    >
+                      {preparing ? "Waking…" : "Mission"}
+                    </button>
+                    <div className="composer-skills" ref={pinRef}>
+                    <button
+                      type="button"
+                      className="composer-mode"
                       aria-haspopup="menu"
                       aria-expanded={pinOpen}
                       aria-label={`Session skills: skills${pins.length > 0 ? ` ${pins.length}` : ""}${
                         changedPins.length > 0 ? ` ${changedPins.length} changed` : ""
                       }`}
                       title="Pin a skill to this session; the pin keeps the body version"
-                      onClick={() => setPinOpen((open) => !open)}
+                      onClick={() => {
+                        setPinOpen((open) => !open);
+                        setAddOpen(false);
+                        setQueueOpen(false);
+                        setContextOpen(false);
+                      }}
                       disabled={!session}
                     >
-                      skills{pins.length > 0 ? ` ${pins.length}` : ""}
+                      Skills{pins.length > 0 ? ` ${pins.length}` : ""}
                       {changedPins.length > 0 ? " " : null}
                       {changedPins.length > 0 ? (
                         <span
@@ -4309,81 +4650,8 @@ export default function SessionView({
                       </div>
                     ) : null}
                   </div>
-                  <div className="composer-snippets" ref={snippetRef}>
-                    <button
-                      type="button"
-                      className="composer-snippet-toggle"
-                      aria-haspopup="menu"
-                      aria-expanded={snipOpen}
-                      title="Insert a saved prompt; placeholders are selected for you"
-                      onClick={() => setSnipOpen((open) => !open)}
-                      disabled={live || review !== null}
-                    >
-                      snippets
-                    </button>
-                    {snipOpen ? (
-                      <div className="composer-menu" role="menu" aria-label="Snippets">
-                        <p className="composer-menu-label">Snippets</p>
-                        {snippets.length === 0 ? (
-                          <p className="composer-menu-hint">
-                            None saved. Write a draft, then save it here.
-                          </p>
-                        ) : null}
-                        {snippets.map((snippet) => (
-                          <div className="snippet-row" key={snippet.id}>
-                            <button
-                              type="button"
-                              role="menuitem"
-                              className="composer-menu-item"
-                              onClick={() => applySnippet(snippet)}
-                              title={snippet.body}
-                            >
-                              <span>{snippet.label}</span>
-                              <small>{/\{[a-z]+\}/.test(snippet.body) ? "placeholder" : "insert"}</small>
-                            </button>
-                            <button
-                              type="button"
-                              className="snippet-delete"
-                              aria-label={`Delete ${snippet.label}`}
-                              title={`Delete ${snippet.label}`}
-                              onClick={() => removeSnippet(snippet.id)}
-                            >
-                              ×
-                            </button>
-                          </div>
-                        ))}
-                        <button
-                          type="button"
-                          role="menuitem"
-                          className="composer-menu-item"
-                          onClick={saveDraftSnippet}
-                          disabled={!text.trim()}
-                        >
-                          <span>Save this draft as a snippet</span>
-                          <small>local</small>
-                        </button>
-                        <p className="composer-menu-hint">
-                          Up/Down recalls sent prompts; Ctrl+Up widens to the whole project.
-                          Inserted text stays a draft until you confirm it.
-                        </p>
-                      </div>
-                    ) : null}
-                  </div>
-                  <button
-                    type="button"
-                    className="composer-snippet-toggle"
-                    aria-pressed={autoRefine}
-                    title={
-                      autoRefine
-                        ? "Auto-refine is on: every prompt is tightened by the cheap model, then sent without the review card"
-                        : "Auto-refine is off: Send opens the review card. Turn this on to refine and send every prompt"
-                    }
-                    onClick={() => void toggleAutoRefine()}
-                    disabled={!defaults || live || review !== null || refining}
-                  >
-                    auto-refine {autoRefine ? "on" : "off"}
-                  </button>
-                  {attachments.length > 0 ? (
+                </div>
+              {attachments.length > 0 ? (
                     <ul className="composer-attachments" aria-label="Attached files">
                       {attachments.map((path) => {
                         const name = path.split("/").pop() || path;
@@ -4407,47 +4675,220 @@ export default function SessionView({
                       })}
                     </ul>
                   ) : null}
+                  <div className="composer-controls">
+                    <div className="composer-queue-wrap" ref={queueRef}>
+                      <button
+                        type="button"
+                        className={`composer-tool${queue.length > 0 ? " has-items" : ""}`}
+                        aria-label={`Message queue${
+                          queue.length > 0 ? `: ${queue.length} waiting` : ""
+                        }`}
+                        aria-haspopup="menu"
+                        aria-expanded={queueOpen}
+                        title={
+                          queue.length > 0
+                            ? `${queue.length} prompt${queue.length === 1 ? "" : "s"} waiting`
+                            : "No prompts waiting; Send queues while a turn runs"
+                        }
+                        onClick={() => {
+                          setQueueOpen((open) => !open);
+                          setAddOpen(false);
+                          setPinOpen(false);
+                          setContextOpen(false);
+                        }}
+                        disabled={readOnly}
+                      >
+                        <svg width="15" height="15" viewBox="0 0 20 20" fill="none" aria-hidden>
+                          <path
+                            d="M5.5 6.5h9M5.5 10h9M5.5 13.5h5.5"
+                            stroke="currentColor"
+                            strokeWidth="1.5"
+                            strokeLinecap="round"
+                          />
+                        </svg>
+                        {queue.length > 0 ? (
+                          <span className="composer-tool-badge">{queue.length}</span>
+                        ) : null}
+                      </button>
+                      {queueOpen ? (
+                        <div
+                          className="composer-menu queue-menu"
+                          role="menu"
+                          aria-label="Message queue"
+                        >
+                          <p className="composer-menu-label">Message queue</p>
+                          {queue.length === 0 ? (
+                            <p className="composer-menu-hint">
+                              No prompts waiting. While a turn runs, Send queues the draft for
+                              after it.
+                            </p>
+                          ) : (
+                            <ul className="queue-prompts">
+                              {queue.map((item, index) => (
+                                <li key={item.id}>
+                                  <span className="queue-prompt-text" title={item.text}>
+                                    {item.text}
+                                  </span>
+                                  <button
+                                    type="button"
+                                    className="snippet-delete"
+                                    aria-label={`Remove queued prompt ${index + 1}`}
+                                    title="Remove from the queue"
+                                    onClick={() => {
+                                      setQueue((rows) =>
+                                        rows.filter((row) => row.id !== item.id),
+                                      );
+                                    }}
+                                  >
+                                    ×
+                                  </button>
+                                </li>
+                              ))}
+                            </ul>
+                          )}
+                          {queuePaused && queue.length > 0 ? (
+                            <div className="queue-paused">
+                              <span>
+                                The line is held. Retry starts the first prompt; nothing was lost.
+                              </span>
+                              <button
+                                type="button"
+                                className="chip"
+                                onClick={() => setQueuePaused(false)}
+                              >
+                                Retry
+                              </button>
+                            </div>
+                          ) : null}
+                          {queue.length > 0 ? (
+                            <button
+                              type="button"
+                              className="queue-clear"
+                              onClick={() => {
+                                setQueue([]);
+                                setQueuePaused(false);
+                              }}
+                            >
+                              Clear queue
+                            </button>
+                          ) : null}
+                          <p className="composer-menu-hint">
+                            The line starts when the running turn ends. Stop holds it until you
+                            press Retry.
+                          </p>
+                        </div>
+                      ) : null}
+                    </div>
+                    <div className="composer-context-wrap" ref={contextRef}>
+                      <button
+                        type="button"
+                        className={`composer-context${contextKnown ? "" : " unknown"}`}
+                        style={
+                          { "--context-fill": `${contextPercent}%` } as CSSProperties
+                        }
+                        aria-label={contextTitle}
+                        aria-haspopup="dialog"
+                        aria-expanded={contextOpen}
+                        title={contextTitle}
+                        onClick={() => {
+                          setContextOpen((open) => !open);
+                          setAddOpen(false);
+                          setPinOpen(false);
+                          setQueueOpen(false);
+                        }}
+                      >
+                        <span aria-hidden>
+                          {contextKnown ? Math.round(contextPercent) : "?"}
+                        </span>
+                      </button>
+                      {contextOpen ? (
+                        <div
+                          className="composer-menu context-menu"
+                          role="dialog"
+                          aria-label="Context window"
+                        >
+                          <p className="composer-menu-label">Context</p>
+                          <dl className="context-facts">
+                            <div>
+                              <dt>Used</dt>
+                              <dd>
+                                {contextKnown ? `${compact(contextTokens)} tok` : "unknown"}
+                              </dd>
+                            </div>
+                            <div>
+                              <dt>Window</dt>
+                              <dd>
+                                {contextKnown
+                                  ? `${compact(contextWindow ?? 0)} tok`
+                                  : "no published size"}
+                              </dd>
+                            </div>
+                            <div>
+                              <dt>Remaining</dt>
+                              <dd>
+                                {contextKnown
+                                  ? `${compact(
+                                      Math.max(0, (contextWindow ?? 0) - contextTokens),
+                                    )} tok`
+                                  : "—"}
+                              </dd>
+                            </div>
+                            <div>
+                              <dt>Model</dt>
+                              <dd className="mono">{model}</dd>
+                            </div>
+                          </dl>
+                          <p className="composer-menu-hint">
+                            Used is the latest turn's input. Window is the model catalogue's
+                            published size; an unknown size stays unknown rather than guessed.
+                          </p>
+                        </div>
+                      ) : null}
+                    </div>
+                    <button
+                      type="button"
+                      className="composer-send"
+                      aria-label={live ? "Queue message" : "Send"}
+                      title={
+                        live
+                          ? "Queue this draft for after the running turn"
+                          : "Send; Enter opens the review card unless auto-refine is on"
+                      }
+                      onClick={() => void send()}
+                      disabled={
+                        readOnly ||
+                        refining ||
+                        busy ||
+                        review !== null ||
+                        (!text.trim() && attachments.length === 0)
+                      }
+                    >
+                      {refining ? (
+                        <span className="composer-spinner" aria-hidden />
+                      ) : (
+                        <svg width="17" height="17" viewBox="0 0 20 20" fill="none" aria-hidden>
+                          <path
+                            d="M10 15.5v-11M5.5 9 10 4.5 14.5 9"
+                            stroke="currentColor"
+                            strokeWidth="1.8"
+                            strokeLinecap="round"
+                            strokeLinejoin="round"
+                          />
+                        </svg>
+                      )}
+                    </button>
+                    <button
+                      type="button"
+                      className="composer-stop"
+                      aria-label="Stop turn"
+                      title={liveTurn ? `Stop turn ${liveTurn.seq}` : "No turn is running"}
+                      onClick={() => void cancel()}
+                      disabled={!liveTurn}
+                    >
+                      <span aria-hidden />
+                    </button>
+                  </div>
                 </div>
-              </div>
-              <div className="composer-actions">
-                {onSwarmPrepare ? (
-                  <button
-                    className="chip swarm"
-                    title={
-                      !text.trim()
-                        ? "Type the task first; Swarm sends it to the room"
-                        : live
-                          ? "Wait for the running turn to finish"
-                          : review !== null
-                            ? "Confirm or cancel the review card first"
-                            : "Choose the big boss, then send to the agents you keep ticked"
-                    }
-                    onClick={() => void prepareSwarm()}
-                    disabled={
-                      readOnly ||
-                      live ||
-                      review !== null ||
-                      preparing ||
-                      !text.trim() ||
-                      swarmTargets !== null
-                    }
-                  >
-                    {preparing ? "Waking…" : "Swarm"}
-                  </button>
-                ) : null}
-                <button
-                  className="primary"
-                  onClick={() => void send()}
-                  disabled={
-                    readOnly ||
-                    refining ||
-                    live ||
-                    review !== null ||
-                    (!text.trim() && attachments.length === 0)
-                  }
-                >
-                  {refining ? "Refining…" : live ? "Running…" : "Send"}
-                </button>
               </div>
             </div>
             {swarmTargets ? (
@@ -4656,6 +5097,8 @@ export default function SessionView({
           agent={browserAgent}
           sessionId={session?.id ?? null}
         />
+
+        <MemoryInspector project={project} />
 
         <section>
           <h3>Budget</h3>
@@ -5045,6 +5488,10 @@ function TurnCard({
             <div>
               <dt>cached</dt>
               <dd>{compact(usage.cached_input_tokens)} tok</dd>
+            </div>
+            <div>
+              <dt>cache write</dt>
+              <dd>{compact(usage.cache_write_tokens ?? 0)} tok</dd>
             </div>
             <div>
               <dt>output</dt>

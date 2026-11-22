@@ -28,6 +28,14 @@ pub const MAX_LINES: usize = 4000;
 /// The LCS table is `(base + 1) × (other + 1)` cells of `u32`; four million is 16 MB.
 const MAX_CELLS: usize = 4_000_000;
 
+/// One conflict block as the three versions a reviewer needs to decide it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct MergeHunk {
+    pub base: String,
+    pub ours: String,
+    pub theirs: String,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct MergeResult {
     /// The merged text. Conflict blocks are marked with [`OURS_MARKER`], [`SEPARATOR`] and
@@ -37,6 +45,8 @@ pub struct MergeResult {
     pub conflicts: usize,
     /// `conflicts == 0`: the merge can be written without reading it.
     pub clean: bool,
+    /// The base, ours and theirs text of every conflict block, in output order.
+    pub hunks: Vec<MergeHunk>,
 }
 
 #[derive(Debug, thiserror::Error, PartialEq, Eq)]
@@ -73,6 +83,7 @@ pub fn three_way(base: &str, ours: &str, theirs: &str) -> Result<MergeResult, Me
     }
 
     let mut out: Vec<String> = Vec::new();
+    let mut hunks = Vec::new();
     let mut conflicts = 0;
     let mut tail = base.trailing_newline;
     let mut base_pos = 0;
@@ -112,6 +123,11 @@ pub fn three_way(base: &str, ours: &str, theirs: &str) -> Result<MergeResult, Me
                 tail = ours.trailing_newline;
             }
         } else {
+            hunks.push(MergeHunk {
+                base: base_region.join(newline),
+                ours: ours_region.join(newline),
+                theirs: theirs_region.join(newline),
+            });
             out.push(OURS_MARKER.to_string());
             out.extend_from_slice(ours_region);
             out.push(SEPARATOR.to_string());
@@ -155,6 +171,16 @@ pub fn three_way(base: &str, ours: &str, theirs: &str) -> Result<MergeResult, Me
         merged,
         conflicts,
         clean: conflicts == 0,
+        hunks,
+    })
+}
+
+/// Does `text` still contain a conflict-marker line? A merge that does is not a resolution:
+/// the markers are the question, and writing them answers it with a broken file.
+pub fn has_conflict_markers(text: &str) -> bool {
+    text.lines().any(|line| {
+        let line = line.strip_suffix('\r').unwrap_or(line);
+        line == OURS_MARKER || line == SEPARATOR || line == THEIRS_MARKER
     })
 }
 
@@ -302,6 +328,14 @@ mod tests {
             result.merged,
             "one\n<<<<<<< ours\nTWO from ours\n=======\nTWO from theirs\n>>>>>>> theirs\nthree\nfour\nfive\n"
         );
+        assert_eq!(
+            result.hunks,
+            vec![MergeHunk {
+                base: "two".to_string(),
+                ours: "TWO from ours".to_string(),
+                theirs: "TWO from theirs".to_string(),
+            }]
+        );
     }
 
     #[test]
@@ -364,5 +398,15 @@ mod tests {
             three_way(&big, &big, &big),
             Err(MergeError::TooLarge(MAX_LINES + 1))
         );
+    }
+
+    #[test]
+    fn markers_are_detected_only_as_whole_lines() {
+        assert!(has_conflict_markers("a\n<<<<<<< ours\nb\n"));
+        assert!(has_conflict_markers("a\r\n=======\r\nb\r\n"));
+        assert!(!has_conflict_markers("a <<<<<<< ours is not a marker\n"));
+        assert!(!has_conflict_markers(
+            "the parser can mention <<<<<<< ours\n"
+        ));
     }
 }

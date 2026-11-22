@@ -5,7 +5,7 @@ import { expect, test } from "@playwright/test";
 test("a model row names its resolved pair and never guesses an unknown price", async ({ page }) => {
   await page.goto("/");
   await page.getByRole("button", { name: "Session", exact: true }).click();
-  await page.locator(".model-button").click();
+  await page.locator(".session-tools .model-button").click();
 
   const unknown = page.locator(".model-row", { has: page.locator(".tag.model-cost.unknown") }).first();
   await expect(unknown).toBeVisible();
@@ -22,7 +22,7 @@ test("a model row names its resolved pair and never guesses an unknown price", a
 test("the model picker remembers favourites and recents", async ({ page }) => {
   await page.goto("/");
   await page.getByRole("button", { name: "Session", exact: true }).click();
-  await page.locator(".model-button").click();
+  await page.locator(".session-tools .model-button").click();
 
   const list = page.getByRole("listbox", { name: "Models" });
   await expect(list).toBeVisible();
@@ -33,7 +33,7 @@ test("the model picker remembers favourites and recents", async ({ page }) => {
 
   await page.reload();
   await page.getByRole("button", { name: "Session", exact: true }).click();
-  await page.locator(".model-button").click();
+  await page.locator(".session-tools .model-button").click();
   await expect(
     page.locator(".model-row-wrap").first().getByRole("button", { name: /favourites$/ }),
   ).toHaveAttribute("aria-pressed", "true");
@@ -44,7 +44,7 @@ test("the model picker remembers favourites and recents", async ({ page }) => {
 
   await page.reload();
   await page.getByRole("button", { name: "Session", exact: true }).click();
-  await page.locator(".model-button").click();
+  await page.locator(".session-tools .model-button").click();
   const recent = page.locator(".model-row-wrap", { hasText: chosenId }).first();
   await expect(recent.locator(".tag.model-recent")).toBeVisible();
 });
@@ -54,7 +54,7 @@ test("the model picker remembers favourites and recents", async ({ page }) => {
 test("the picker shows door health and an honest capability row", async ({ page }) => {
   await page.goto("/");
   await page.getByRole("button", { name: "Session", exact: true }).click();
-  await page.locator(".model-button").click();
+  await page.locator(".session-tools .model-button").click();
 
   const health = page.getByRole("status", { name: "Provider health" });
   await expect(health).toBeVisible();

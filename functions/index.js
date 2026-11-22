@@ -235,7 +235,9 @@ exports.gravityAd = onRequest(
         const gravity = new Gravity({
           apiKey: key,
           production: gravityProduction,
-          alwaysReturn: !gravityProduction,
+          // The cards draw Gravity's plain fields in Rigel's own layout. Never force a test fill:
+          // an empty result means the slot stays out of the page.
+          supportsSpec: false,
           timeoutMs: 5_000,
         });
         return gravity.getAds(incoming, messages, placements);

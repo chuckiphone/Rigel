@@ -1,0 +1,130 @@
+{
+  "harness": "codex",
+  "scenarios": {
+    "approval": [
+      {
+        "event": "started",
+        "session_id": "th-1",
+        "model": null,
+        "transport": "app-server"
+      },
+      {
+        "event": "approval_resolved",
+        "request": {
+          "tool_call_id": "c2",
+          "title": "git push --force origin main",
+          "kind": "command",
+          "raw_input": {
+            "command": "git push --force origin main",
+            "itemId": "c2",
+            "reason": "The task asked for a force push",
+            "threadId": "th-1",
+            "turnId": "tn-9"
+          },
+          "options": [
+            {
+              "option_id": "accept",
+              "name": "Allow once",
+              "kind": "allow_once"
+            },
+            {
+              "option_id": "acceptForSession",
+              "name": "Allow for this Codex session",
+              "kind": "allow_always"
+            },
+            {
+              "option_id": "decline",
+              "name": "Reject",
+              "kind": "reject_once"
+            }
+          ]
+        },
+        "tool_call_id": "c2",
+        "decision": "reject_once"
+      },
+      {
+        "event": "delta",
+        "kind": "message",
+        "text": "Waiting for approval."
+      },
+      {
+        "event": "message",
+        "text": "Waiting for approval."
+      }
+    ],
+    "error": [
+      {
+        "event": "started",
+        "session_id": "th-1",
+        "model": null,
+        "transport": "app-server"
+      },
+      {
+        "event": "delta",
+        "kind": "message",
+        "text": "Trying."
+      }
+    ],
+    "interrupt": [
+      {
+        "event": "started",
+        "session_id": "th-1",
+        "model": null,
+        "transport": "app-server"
+      },
+      {
+        "event": "delta",
+        "kind": "message",
+        "text": "Patching src/"
+      }
+    ],
+    "start": [
+      {
+        "event": "started",
+        "session_id": "th-1",
+        "model": null,
+        "transport": "app-server"
+      },
+      {
+        "event": "delta",
+        "kind": "message",
+        "text": "The build "
+      },
+      {
+        "event": "delta",
+        "kind": "message",
+        "text": "is green."
+      },
+      {
+        "event": "message",
+        "text": "The build is green."
+      }
+    ],
+    "tool_call": [
+      {
+        "event": "started",
+        "session_id": "th-1",
+        "model": null,
+        "transport": "app-server"
+      },
+      {
+        "event": "item",
+        "item": {
+          "kind": "command",
+          "body": {
+            "command": "cargo test --quiet",
+            "cwd": null,
+            "exit_code": 0,
+            "output": null,
+            "status": "completed"
+          }
+        },
+        "status": null
+      },
+      {
+        "event": "message",
+        "text": "All tests passed."
+      }
+    ]
+  }
+}

@@ -14,6 +14,8 @@ use serde_json::{Value, json};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::process::Command;
 
+use rigel_core::mcp::pin::Catalog;
+
 /// One stdio server declared under `mcpServers`. Remote-only entries are reported as
 /// unsupported rather than guessed at: Rigel cannot list their tools without making a network
 /// request, and this gate is deliberately local.
@@ -111,7 +113,7 @@ pub fn tool_ref(name: &str) -> Option<(String, String)> {
 /// Ask the server for its real tool list over stdio. This is the one launch before approval;
 /// it is bounded, it only completes the MCP handshake, and the child is killed when the
 /// handshake ends. A server that does not answer is not silently trusted.
-pub async fn list_tools(server: &ServerSpec, wait: Duration) -> Result<Vec<Value>, String> {
+pub async fn list_catalog(server: &ServerSpec, wait: Duration) -> Result<Catalog, String> {
     let mut command = Command::new(&server.command);
     command
         .args(&server.args)
@@ -150,6 +152,7 @@ pub async fn list_tools(server: &ServerSpec, wait: Duration) -> Result<Vec<Value
 
         let mut lines = BufReader::new(stdout).lines();
         let mut initialized = false;
+        let mut server_version = "unknown".to_string();
         while let Some(line) = next_line(&mut lines, &name).await? {
             let Ok(message) = serde_json::from_str::<Value>(&line) else {
                 continue;
@@ -159,6 +162,13 @@ pub async fn list_tools(server: &ServerSpec, wait: Duration) -> Result<Vec<Value
                     return Err(format!("{name} refused initialize"));
                 }
                 initialized = true;
+                server_version = message
+                    .get("result")
+                    .and_then(|result| result.get("serverInfo"))
+                    .and_then(|info| info.get("version"))
+                    .and_then(Value::as_str)
+                    .unwrap_or("unknown")
+                    .to_string();
                 break;
             }
         }
@@ -193,11 +203,13 @@ pub async fn list_tools(server: &ServerSpec, wait: Duration) -> Result<Vec<Value
                 .and_then(Value::as_array)
                 .cloned()
                 .unwrap_or_default();
-            return Ok(tools
+            let tools = tools
                 .into_iter()
                 .filter(|tool| tool.get("name").and_then(Value::as_str).is_some())
                 .take(64)
-                .collect());
+                .collect();
+            return Catalog::new(server_version, tools)
+                .map_err(|error| format!("{name} returned a malformed tool list: {error}"));
         }
         Err(format!("{name} closed before tools/list"))
     };

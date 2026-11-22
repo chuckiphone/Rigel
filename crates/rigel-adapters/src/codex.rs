@@ -246,6 +246,18 @@ impl CodexAdapter {
     }
 
     /// Run one prompt to completion, reporting deltas as they arrive.
+    /// Run one prompt to completion, reporting the unified events item 49 defines.
+    pub async fn run_turn_unified<F>(
+        &self,
+        prompt: &str,
+        mut on_event: F,
+    ) -> Result<TurnResult, AdapterError>
+    where
+        F: FnMut(crate::HarnessEvent),
+    {
+        self.run_turn(prompt, |event| on_event(event.into())).await
+    }
+
     pub async fn run_turn<F>(
         &self,
         prompt: &str,

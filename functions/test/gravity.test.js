@@ -24,6 +24,8 @@ const AD = {
   brandName: 'Neon',
   cta: 'Try Neon Free',
   url: 'https://neon.tech',
+  favicon: 'https://cdn.example/neon.png',
+  brandImage: 'https://cdn.example/neon-hero.png',
   clickUrl: 'https://api.trygravity.ai/track/click?p=abc',
   impUrl: 'https://api.trygravity.ai/ack?p=abc',
   placement: 'below_response',
@@ -100,10 +102,13 @@ test('the website origin gets one sanitised ad for the shared placement', async 
         brandName: AD.brandName,
         cta: AD.cta,
         url: AD.url,
+        favicon: AD.favicon,
+        brandImage: AD.brandImage,
         clickUrl: AD.clickUrl,
         impUrl: AD.impUrl,
         placement: AD.placement,
         placement_id: AD.placement_id,
+        test: true,
       },
     ],
     test: true,
@@ -128,6 +133,15 @@ test('the askrigel.com production origins are accepted by the Gravity broker', a
     assert.equal(res.state.headers['access-control-allow-origin'], origin);
     assert.equal(calls.getAds.length, 1);
   }
+});
+
+test('the local Caddy origin is accepted by the Gravity broker', async () => {
+  const { handler, calls } = harness();
+  const res = response();
+  await handler(request({ origin: 'http://127.0.0.1:8080' }), res);
+  assert.equal(res.state.status, 200);
+  assert.equal(res.state.headers['access-control-allow-origin'], 'http://127.0.0.1:8080');
+  assert.equal(calls.getAds.length, 1);
 });
 
 test('the desktop flat body and the website context body share one contract', async () => {
@@ -200,6 +214,16 @@ test('missing context, no messages and an oversized body are rejected before the
 test('an ad with no https click URL is not returned', async () => {
   assert.equal(publicAd({ ...AD, clickUrl: 'http://api.trygravity.ai/click' }), null);
   assert.equal(publicAd({ ...AD, clickUrl: 'not a url' }), null);
+  assert.equal(publicAd(AD).test, false);
+  assert.equal(publicAd(AD, true).test, true);
+
+  const insecureArt = publicAd({
+    ...AD,
+    favicon: 'http://cdn.example/neon.png',
+    brandImage: 'javascript:alert(1)',
+  });
+  assert.equal(insecureArt.favicon, undefined);
+  assert.equal(insecureArt.brandImage, undefined);
 
   const { handler } = harness({
     getAds: async () => ({

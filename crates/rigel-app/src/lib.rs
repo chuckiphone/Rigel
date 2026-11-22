@@ -36,11 +36,11 @@ use rigel_core::{
     ConflictWatcher, EventSink, HunkComment, HunkComments, InterruptSink, MemoryApprover,
     MemoryDecision, MemoryFile, MemoryRequest, MemoryService, MergeReview, MergeReviews, Model,
     NetworkPolicy, POLL_INTERVAL, Patch, PatchPipeline, PlanApprover, PlanDecision, PlanRequest,
-    Provenance, RecoveryOffer, ResumeOutcome, Scopes, ScriptedModel, Session, SessionService,
-    SessionTemplate, SessionTemplates, SkillDetail, SkillIndex, SkillsError, SnapshotService,
-    StopAt, Store, SubagentPolicy, SyncPolicy, TeamAgent, Tools, Turn, TurnQuote, TurnTranscript,
-    UnverifiedChange, Usage, WorktreeService, WriteMode, apply_review, credentials, diagnostics,
-    skills::search::SearchHit,
+    Provenance, RankedFact, RecoveryOffer, ResumeOutcome, Scopes, ScriptedModel, Session,
+    SessionService, SessionTemplate, SessionTemplates, SkillDetail, SkillIndex, SkillsError,
+    SnapshotService, StopAt, Store, SubagentPolicy, SyncPolicy, TeamAgent, Tools, Turn, TurnQuote,
+    TurnTranscript, UnverifiedChange, Usage, WorktreeService, WriteMode, apply_review, credentials,
+    diagnostics, skills::search::SearchHit,
 };
 use serde::{Deserialize, Serialize};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
@@ -663,6 +663,111 @@ fn skills_installed(id: String) -> Result<bool, String> {
             .await
             .map_err(message)
     })
+}
+
+/* -------------------------------- plugins --------------------------------- */
+
+/// The curated catalogue: offline, compiled in, optionally overridden by a local file.
+#[tauri::command]
+fn plugins_catalog(
+    query: String,
+    category: Option<String>,
+    tier: Option<String>,
+) -> Result<serde_json::Value, String> {
+    let catalog = rigel_core::plugin::Catalog::load(&index_dir()).map_err(message)?;
+    let entries = catalog.search(&query, category.as_deref(), tier.as_deref());
+    Ok(serde_json::json!({
+        "entries": entries,
+        "categories": catalog.categories(),
+        "updated": catalog.updated,
+    }))
+}
+
+/// Every installed plugin, plus the directories that failed to load.
+#[tauri::command]
+fn plugins_list() -> Result<serde_json::Value, String> {
+    let store = rigel_core::plugin::PluginStore::new(&index_dir());
+    let (plugins, broken) = store.scan().map_err(message)?;
+    let rows: Vec<_> = store.rows().map_err(message)?;
+    Ok(serde_json::json!({
+        "plugins": rows,
+        "broken": broken.iter().map(|(name, error)| serde_json::json!({
+            "name": name, "error": error
+        })).collect::<Vec<_>>(),
+        "enabled_tools": plugins.iter().filter(|plugin| plugin.enabled)
+            .flat_map(|plugin| plugin.manifest.qualified_tools()).collect::<Vec<_>>(),
+    }))
+}
+
+/// Install one catalogue entry. Skill entries seed the built-in body and copy it into the
+/// harness stores; plugin entries install a bundled tree or a pinned repository.
+#[tauri::command]
+fn plugins_install(name: String) -> Result<serde_json::Value, String> {
+    tauri::async_runtime::block_on(async move {
+        let dir = index_dir();
+        let catalog = rigel_core::plugin::Catalog::load(&dir).map_err(message)?;
+        let entry = catalog
+            .get(&name)
+            .ok_or_else(|| format!("no catalogue entry named {name}"))?
+            .clone();
+        match entry.kind {
+            rigel_core::plugin::CatalogKind::Skill => {
+                let index = SkillIndex::open(&dir).await.map_err(message)?;
+                index.install_builtin().await.map_err(message)?;
+                let roots = skill_roots()?;
+                let mut installed = Vec::new();
+                for id in &entry.skills {
+                    let report = index
+                        .install(&format!("builtin:{id}"), &roots)
+                        .await
+                        .map_err(message)?;
+                    installed.push(report);
+                }
+                Ok(serde_json::json!({
+                    "ok": true, "kind": "skill", "name": entry.name,
+                    "skills": installed
+                }))
+            }
+            rigel_core::plugin::CatalogKind::Plugin => {
+                let store = rigel_core::plugin::PluginStore::new(&dir);
+                let report = if let Some(bundled) = &entry.bundled {
+                    store.install_bundled(bundled, false)
+                } else if let (Some(repo), Some(sha)) = (&entry.repo, &entry.sha) {
+                    store.install_git(repo, sha, entry.subdir.as_deref(), false)
+                } else {
+                    return Err(format!(
+                        "{} has no pinned commit; follow its install guide",
+                        entry.name
+                    ));
+                }
+                .map_err(message)?;
+                Ok(serde_json::json!({ "ok": true, "kind": "plugin", "plugin": report }))
+            }
+            rigel_core::plugin::CatalogKind::External => Err(format!(
+                "{} is a discovery listing; {}",
+                entry.name,
+                entry
+                    .install
+                    .clone()
+                    .unwrap_or_else(|| "follow the project's install guide".to_string())
+            )),
+        }
+    })
+}
+
+#[tauri::command]
+fn plugins_remove(name: String) -> Result<bool, String> {
+    rigel_core::plugin::PluginStore::new(&index_dir())
+        .remove(&name)
+        .map_err(message)
+}
+
+#[tauri::command]
+fn plugins_set_enabled(name: String, enabled: bool) -> Result<serde_json::Value, String> {
+    let row = rigel_core::plugin::PluginStore::new(&index_dir())
+        .set_enabled(&name, enabled)
+        .map_err(message)?;
+    Ok(serde_json::json!(row))
 }
 
 /* ---------------------------------- MCPs ---------------------------------- */
@@ -1688,6 +1793,77 @@ fn agent_list(project: String, session: String) -> Result<Vec<Agent>, String> {
     })
 }
 
+/// Roadmap 66: the project ceiling, every role and every open session's agents in one table.
+/// The renderer edits the project grant only; the role and agent columns are the effective
+/// intersection the dispatcher will use on the next turn.
+#[tauri::command]
+fn permissions_get(
+    project: String,
+    session: Option<String>,
+) -> Result<rigel_core::PermissionMatrix, String> {
+    tauri::async_runtime::block_on(project_permissions(project, session))
+}
+
+/// Roadmap 66: validate and save the project grant. The response is the reloaded matrix, so the
+/// window shows exactly what the next turn reads rather than echoing the request.
+#[tauri::command]
+fn permissions_set(
+    project: String,
+    session: Option<String>,
+    tools: Vec<String>,
+) -> Result<rigel_core::PermissionMatrix, String> {
+    tauri::async_runtime::block_on(async move {
+        rigel_core::ProjectPermissions::save(std::path::Path::new(&project), &tools)
+            .map_err(message)?;
+        project_permissions(project, session).await
+    })
+}
+
+/// Roadmap 66: narrow one agent below its role. The project grant is re-read for the response,
+/// and the dispatcher still intersects this override with the role and the project on every
+/// call. Passing `null` removes the override; an empty array is a real denial for this agent.
+#[tauri::command]
+fn permissions_set_agent(
+    project: String,
+    session: String,
+    agent: String,
+    tools: Option<Vec<String>>,
+) -> Result<rigel_core::PermissionMatrix, String> {
+    tauri::async_runtime::block_on(async move {
+        let service = SessionService::open(std::path::Path::new(&project))
+            .await
+            .map_err(message)?;
+        service
+            .set_agent_tool_overrides(&session, &agent, tools.as_deref())
+            .await
+            .map_err(message)?;
+        project_permissions(project, Some(session)).await
+    })
+}
+
+async fn project_permissions(
+    project: String,
+    session: Option<String>,
+) -> Result<rigel_core::PermissionMatrix, String> {
+    let service = SessionService::open(std::path::Path::new(&project))
+        .await
+        .map_err(message)?;
+    let agents = match session.as_deref() {
+        Some(session) => service.agents(session).await.map_err(message)?,
+        None => Vec::new(),
+    };
+    let rows: Vec<rigel_core::AgentPermissionRow> = agents
+        .into_iter()
+        .map(|agent| rigel_core::AgentPermissionRow {
+            id: agent.id,
+            role: agent.role,
+            tool_overrides: agent.tool_overrides,
+        })
+        .collect();
+    rigel_core::permissions::ProjectPermissions::matrix(std::path::Path::new(&project), &rows)
+        .map_err(message)
+}
+
 /// The session work board: which agent holds which files, so the roster can show it.
 #[tauri::command]
 fn agent_team(project: String, session: String) -> Result<Vec<TeamAgent>, String> {
@@ -1752,6 +1928,46 @@ fn role_apply(
     })
 }
 
+/// Roadmap 58: the roster picker. The model and provider travel together; an empty string clears
+/// the field so the row falls back to the composer.
+#[tauri::command]
+fn agent_configure(
+    project: String,
+    session: String,
+    agent: String,
+    model: Option<String>,
+    provider: Option<String>,
+    effort: Option<String>,
+) -> Result<Agent, String> {
+    tauri::async_runtime::block_on(async move {
+        SessionService::open(Path::new(&project))
+            .await
+            .map_err(message)?
+            .set_agent_config(
+                &session,
+                &agent,
+                model.as_deref(),
+                provider.as_deref(),
+                effort.as_deref(),
+            )
+            .await
+            .map_err(message)
+    })
+}
+
+/// Roadmap 58: leave a preset without losing the pair it resolved to.
+#[tauri::command]
+fn role_clear(project: String, session: String, agent: String) -> Result<Agent, String> {
+    tauri::async_runtime::block_on(async move {
+        SessionService::open(Path::new(&project))
+            .await
+            .map_err(message)?
+            .clear_role_preset(&session, &agent)
+            .await
+            .map_err(message)
+    })
+}
+
 #[tauri::command]
 fn agent_stop(state: State<'_, AppRuntime>, project: String, agent: String) -> Result<(), String> {
     state.cancels.cancel_agent(&agent);
@@ -1789,33 +2005,65 @@ fn turn_send(
 ) -> Result<TurnReply, String> {
     let root = PathBuf::from(&project);
     let service = tauri::async_runtime::block_on(SessionService::open(&root)).map_err(message)?;
+    let stored = tauri::async_runtime::block_on(service.get(&session)).map_err(message)?;
+
+    // Roadmap 56: naming is a background job. The prompt is already accepted; a hanging cheap
+    // model, a missing key or a model that answers with prose cannot delay the turn, and the
+    // conditional write cannot overwrite a name the user chose.
+    if stored.title.is_none() {
+        let title_service = service.clone();
+        let title_lookup = service.clone();
+        let title_session = session.clone();
+        let title_id = session.clone();
+        let title_prompt = prompt.clone();
+        let title_app = app.clone();
+        // Dropping the handle detaches the task; the prompt has already been accepted. The
+        // session event updates the open header and the list without waiting for a reload.
+        std::mem::drop(tauri::async_runtime::spawn(async move {
+            if rigel_core::agent::title::name_session(title_service, title_session, title_prompt)
+                .await
+                .is_some()
+                && let Ok(fresh) = title_lookup.get(&title_id).await
+            {
+                let _ = title_app.emit(
+                    "rigel://events",
+                    AgentEvent::SessionUpdated { session: fresh },
+                );
+            }
+        }));
+    }
+
     let settings = load_settings();
 
-    // A role preset (D94) carries its own model/effort pair. It wins over the composer's
-    // defaults, because applying the preset is the explicit choice; a custom role changes
-    // nothing and the caller's values stand.
+    // Roadmap 58: one ladder decides the pair the turn carries. A role preset (D94) wins, then
+    // the agent row's own picker, then the composer's request, then Settings. The ladder lives
+    // in the core so the window's "next turn" label and the request cannot disagree. The
+    // provider travels with the row's model; an unlanded settings save cannot move it.
     let agent_row = tauri::async_runtime::block_on(service.agent(&agent)).map_err(message)?;
-    let preset = rigel_core::agent::roles::preset(agent_row.role.as_deref());
-    let effort = preset
-        .map(|preset| preset.effort.to_string())
-        .or(effort)
-        .unwrap_or_else(|| settings.effort.clone());
+    let route = rigel_core::agent::routing::for_agent(
+        agent_row.role.as_deref(),
+        agent_row.model.as_deref(),
+        agent_row.provider.as_deref(),
+        agent_row.effort.as_deref(),
+        model.as_deref(),
+        provider.as_deref(),
+        effort.as_deref(),
+        &settings.model,
+        &settings.provider,
+        &settings.effort,
+    );
+    let effort = route.effort.clone();
     if !valid_effort(&effort) {
         return Err(format!(
             "unknown effort `{effort}`; use low, medium or high"
         ));
     }
     // The provider picks the default model; the effort is applied on the wire, never folded
-    // into the id the provider chose.
-    // One decision, in the core: the model and its door travel together. A preset owns the model,
-    // so its door is the saved one; otherwise the renderer's pair is the pick. Neither a stale
-    // agent row nor an unlanded save can move the request to another provider, and a model id can
-    // never select Vertex — its namespace is also OpenRouter's spelling of Gemini.
-    let requested_model = preset
-        .map(|preset| preset.model.to_string())
-        .or(model)
-        .or_else(|| agent_row.model.clone());
-    let requested_provider = if preset.is_some() { None } else { provider };
+    // into the id the provider chose. A preset or an agent row owns the model, so its door is
+    // resolved from that pair; otherwise the renderer's pair is the pick. A model id can never
+    // select Vertex — its namespace is also OpenRouter's spelling of Gemini.
+    let requested_model = route.model.clone();
+    let requested_provider = route.provider.clone();
     let explanation = explain_route(
         &settings,
         requested_provider.as_deref(),
@@ -1830,9 +2078,7 @@ fn turn_send(
     if agent_row.harness == "claude" {
         let turn = tauri::async_runtime::block_on(service.append_turn(&agent, Some(&prompt)))
             .map_err(message)?;
-        let cap = tauri::async_runtime::block_on(service.get(&session))
-            .ok()
-            .and_then(|stored| stored.budget_cents);
+        let cap = stored.budget_cents;
         claude::start(
             app,
             claude::ClaudeTurn {
@@ -1907,6 +2153,7 @@ fn turn_send(
     .with_scopes(Scopes::new(&root, index_dir()))
     .with_command_approval(Arc::new(WindowApprover {
         bus: ApprovalBus::new(index_dir()),
+        cancels: cancels.clone(),
         session_id: session.clone(),
         agent_id: agent.clone(),
         turn_id: turn.id.clone(),
@@ -1914,6 +2161,7 @@ fn turn_send(
     }))
     .with_plan_approval(Arc::new(WindowApprover {
         bus: ApprovalBus::new(index_dir()),
+        cancels: cancels.clone(),
         session_id: session.clone(),
         agent_id: agent.clone(),
         turn_id: turn.id.clone(),
@@ -1921,6 +2169,7 @@ fn turn_send(
     }))
     .with_mail_approval(Arc::new(WindowApprover {
         bus: ApprovalBus::new(index_dir()),
+        cancels: cancels.clone(),
         session_id: session.clone(),
         agent_id: agent.clone(),
         turn_id: turn.id.clone(),
@@ -2025,6 +2274,9 @@ fn turn_send(
 /// silence all end as a refusal.
 struct WindowApprover {
     bus: ApprovalBus,
+    /// The same token registry `turn_cancel` uses. Waiting on a card must end when Stop lands,
+    /// not when the ten-minute silence deadline does.
+    cancels: Arc<Cancels>,
     /// D154: the turn this approver answers for. One is built per `turn_send`, so every
     /// question it publishes can point back at the transcript row that asked.
     session_id: String,
@@ -2032,6 +2284,14 @@ struct WindowApprover {
     turn_id: String,
     /// D154: the project this question belongs to; Attention only shows its own.
     project_root: PathBuf,
+}
+
+impl WindowApprover {
+    async fn wait_for_cancel(&self) {
+        while !self.cancels.is_cancelled(&self.turn_id) {
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+    }
 }
 
 #[async_trait::async_trait]
@@ -2069,13 +2329,23 @@ impl CommandApprover for WindowApprover {
             }));
         // Q36: one silent deadline earns exactly one republish. Both attempts are still
         // refusals when nobody answers; the retry never turns silence into an approval.
-        match self
-            .bus
-            .ask_with_retry(pending, std::time::Duration::from_secs(600), 1)
-            .await
-        {
-            Ok(scope) => CommandDecision::Allow(scope),
-            Err(_) => CommandDecision::Deny,
+        let pending_id = pending.id.clone();
+        tokio::select! {
+            result = self
+                .bus
+                .ask_with_retry(pending, std::time::Duration::from_secs(600), 1) =>
+            {
+                match result {
+                    Ok(scope) => CommandDecision::Allow(scope),
+                    Err(_) => CommandDecision::Deny,
+                }
+            }
+            // Stop cancels the token. Answer the card too, or it would stay on screen after
+            // the turn is gone.
+            _ = self.wait_for_cancel() => {
+                let _ = self.bus.answer(&pending_id, None);
+                CommandDecision::Deny
+            }
         }
     }
 }
@@ -2131,13 +2401,18 @@ impl MailApprover for WindowApprover {
                 "subject": request.subject,
                 "text": request.text,
             }));
-        match self
-            .bus
-            .ask(pending, std::time::Duration::from_secs(600))
-            .await
-        {
-            Ok(_) => MailDecision::Allow,
-            Err(_) => MailDecision::Deny,
+        let pending_id = pending.id.clone();
+        tokio::select! {
+            result = self.bus.ask(pending, std::time::Duration::from_secs(600)) => {
+                match result {
+                    Ok(_) => MailDecision::Allow,
+                    Err(_) => MailDecision::Deny,
+                }
+            }
+            _ = self.wait_for_cancel() => {
+                let _ = self.bus.answer(&pending_id, None);
+                MailDecision::Deny
+            }
         }
     }
 }
@@ -2168,9 +2443,19 @@ impl PlanApprover for WindowApprover {
             "session_id": request.session_id,
             "agents": request.agents,
         }));
-        self.bus
-            .ask_plan(pending, std::time::Duration::from_secs(600))
-            .await
+        let pending_id = pending.id.clone();
+        tokio::select! {
+            decision = self
+                .bus
+                .ask_plan(pending, std::time::Duration::from_secs(600)) =>
+            {
+                decision
+            }
+            _ = self.wait_for_cancel() => {
+                let _ = self.bus.answer(&pending_id, None);
+                PlanDecision::Deny
+            }
+        }
     }
 }
 
@@ -2496,21 +2781,23 @@ fn conflict_merge(project: String, id: String) -> Result<rigel_core::MergedConfl
     })
 }
 
-/// Write the merged text through the CAS patch pipeline and resolve the conflict (D79). The
-/// patch is attributed to `user`, and the row records which patch carried the file.
+/// Write the reviewed merged text through the CAS patch pipeline and resolve the conflict (D79).
+/// The patch is attributed to `user`; the verdict names the reviewer and carries one decision for
+/// every conflicted hunk. A marker block is refused here even if a caller bypasses the UI.
 #[tauri::command]
 fn conflict_resolve_merged(
     project: String,
     session: String,
     id: String,
     merged: String,
+    verdict: rigel_core::ConflictVerdictInput,
 ) -> Result<rigel_core::MergeResolution, String> {
     tauri::async_runtime::block_on(async move {
         let root = std::fs::canonicalize(&project).map_err(message)?;
         let service = SessionService::open(&root).await.map_err(message)?;
         let pipeline = PatchPipeline::new(&root, service.pool().clone());
         ClaimService::new(service.pool().clone(), &root)
-            .resolve_with_merge(&pipeline, &session, &id, &merged)
+            .resolve_with_merge(&pipeline, &session, &id, &merged, &verdict)
             .await
             .map_err(message)
     })
@@ -2530,6 +2817,12 @@ pub struct WritableView {
     pub plan_note: Option<String>,
     /// The latest merge verdict, merged or not, approved or overridden.
     pub review: Option<MergeReview>,
+}
+
+#[tauri::command]
+fn merge_queue(project: String) -> Result<rigel_core::MergeQueueView, String> {
+    let root = std::fs::canonicalize(&project).map_err(message)?;
+    Ok(rigel_core::agent::merge_queue::snapshot(&root))
 }
 
 #[tauri::command]
@@ -2682,6 +2975,9 @@ fn spawn_conflict_watcher(app: tauri::AppHandle) {
 
 #[tauri::command]
 fn turn_cancel(state: State<'_, AppRuntime>, turn: String) -> Result<(), String> {
+    // Remove the card before cancelling the token: a turn blocked in an approval wait has no
+    // other boundary to observe the cancellation, and a card left behind looks like Stop failed.
+    ApprovalBus::new(index_dir()).deny_pending_for_turn(&turn);
     state.cancels.cancel_turn(&turn);
     Ok(())
 }
@@ -2707,21 +3003,32 @@ fn turn_steer(state: State<'_, AppRuntime>, turn: String, text: String) -> Resul
 
 /* --------------------------------- network -------------------------------- */
 
-/// Q240: the project-local kill switch and origin allowlist. The same file is read by
-/// `Tools::new`, so the window and CLI cannot disagree about the policy.
+/// Q240: the project-local kill switch, rules and disabled sessions. The same file is read by
+/// `Tools::new` and every CLI turn, so the window and the request path cannot disagree.
 #[tauri::command]
 fn network_get(project: String) -> Result<NetworkPolicy, String> {
     Ok(NetworkPolicy::load(Path::new(&project)))
 }
 
+/// Roadmap 61: validate and normalize before writing, so a rule this build cannot enforce is an
+/// error in the editor, never a row that looks saved and is ignored on the next fetch.
 #[tauri::command]
 fn network_set(project: String, policy: NetworkPolicy) -> Result<NetworkPolicy, String> {
     let root = Path::new(&project);
     if !root.is_dir() {
         return Err("open a project before changing its network policy".to_string());
     }
-    policy.save(root)?;
-    Ok(policy)
+    policy.save(root)
+}
+
+/// Roadmap 61: the same decision `fetch_url`, `browser_open` and Exa consult, without sending.
+#[tauri::command]
+fn network_check(
+    project: String,
+    url: String,
+    session: Option<String>,
+) -> Result<rigel_core::NetworkCheck, String> {
+    NetworkPolicy::load(Path::new(&project)).check_url(&url, session.as_deref())
 }
 
 /* --------------------------------- budget -------------------------------- */
@@ -3076,6 +3383,50 @@ fn memory_read(project: String, agent: String, topic: String) -> Result<Option<S
 }
 
 #[tauri::command]
+fn memory_facts(project: String, agent: Option<String>) -> Result<Vec<RankedFact>, String> {
+    tauri::async_runtime::block_on(async move {
+        let service = SessionService::open(Path::new(&project))
+            .await
+            .map_err(message)?;
+        MemoryService::new(Path::new(&project), service.pool().clone())
+            .facts(agent.as_deref())
+            .await
+            .map_err(message)
+    })
+}
+
+#[tauri::command]
+fn memory_recall(
+    project: String,
+    agent: Option<String>,
+    query: String,
+    limit: Option<usize>,
+) -> Result<Vec<RankedFact>, String> {
+    tauri::async_runtime::block_on(async move {
+        let service = SessionService::open(Path::new(&project))
+            .await
+            .map_err(message)?;
+        MemoryService::new(Path::new(&project), service.pool().clone())
+            .recall(agent.as_deref(), &query, limit.unwrap_or(10))
+            .await
+            .map_err(message)
+    })
+}
+
+#[tauri::command]
+fn memory_pin(project: String, id: String, pinned: bool) -> Result<RankedFact, String> {
+    tauri::async_runtime::block_on(async move {
+        let service = SessionService::open(Path::new(&project))
+            .await
+            .map_err(message)?;
+        MemoryService::new(Path::new(&project), service.pool().clone())
+            .pin_fact(&id, pinned)
+            .await
+            .map_err(message)
+    })
+}
+
+#[tauri::command]
 fn memory_write(
     project: String,
     agent: String,
@@ -3194,6 +3545,11 @@ fn gravity_ad(
     if answer.test && !settings.gravity_test_ads {
         return Ok(Vec::new());
     }
+    eprintln!(
+        "gravity: broker returned {} ad(s), test={}",
+        answer.ads.len(),
+        answer.test
+    );
     Ok(answer.ads)
 }
 
@@ -3201,20 +3557,55 @@ fn gravity_ad(
 /// connections, and the signed tracking URL should not be in the renderer anyway.
 #[tauri::command]
 fn gravity_impression(url: String) -> Result<(), String> {
-    tauri::async_runtime::block_on(rigel_core::gravity::track(&url)).map_err(message)
+    let result = tauri::async_runtime::block_on(rigel_core::gravity::track(&url));
+    match &result {
+        Ok(()) => eprintln!("gravity: impression recorded through Rust"),
+        Err(error) => eprintln!("gravity: impression failed: {error}"),
+    }
+    result.map_err(message)
 }
 
 /// Record the click, then open the advertiser's landing page in the system browser. Returns the
 /// landing URL for the caller's receipt; the window itself never navigates cross-origin.
 #[tauri::command]
-fn gravity_click(url: String) -> Result<String, String> {
-    let landing = tauri::async_runtime::block_on(rigel_core::gravity::click_through(&url))
-        .map_err(message)?;
-    open_in_browser(&landing)?;
-    Ok(landing)
+fn gravity_click(
+    url: String,
+    landing: Option<String>,
+    test: Option<bool>,
+) -> Result<String, String> {
+    let tracked = tauri::async_runtime::block_on(rigel_core::gravity::click_through(&url));
+    // A test creative carries Gravity's test host in `clickUrl`; its advertiser landing page is
+    // `url`. Keep the Rust click receipt best-effort for tests, then open the real advertiser.
+    let advertiser = landing.filter(|value| value.starts_with("https://"));
+    let opening = match (test.unwrap_or(false), advertiser) {
+        (true, Some(advertiser)) => {
+            match &tracked {
+                Ok(_) => eprintln!("gravity: test click recorded through Rust"),
+                Err(error) => eprintln!("gravity: test click receipt skipped: {error}"),
+            }
+            advertiser
+        }
+        _ => tracked.map_err(message)?,
+    };
+    let host = opening
+        .split("://")
+        .nth(1)
+        .and_then(|rest| rest.split(['/', '?', '#']).next())
+        .filter(|host| !host.is_empty())
+        .unwrap_or("advertiser");
+    eprintln!("gravity: opening {host} in the system browser");
+    open_in_browser(&opening)?;
+    Ok(opening)
 }
 
 fn open_in_browser(url: &str) -> Result<(), String> {
+    // The window suite clicks sponsor cards. Opening the developer's real default browser would
+    // leave tabs behind (and can block on a browser that is still starting), so the runner asks
+    // this process to exercise the click path without leaving the app.
+    if std::env::var("RIGEL_E2E_SUPPRESS_EXTERNAL_BROWSER").as_deref() == Ok("1") {
+        eprintln!("test: external browser open suppressed");
+        return Ok(());
+    }
     #[cfg(target_os = "windows")]
     let mut command = {
         let mut command = std::process::Command::new("cmd");
@@ -4263,6 +4654,17 @@ pub fn run() {
                 let _ = tray.destroy();
             }
             std::thread::spawn(tray_status::warm);
+            // The skills that ship with Rigel are in the local index before the first search.
+            // Idempotent and offline: the body blob is addressed by SHA-256, and a second launch
+            // changes no row. Nothing is copied into a harness store here; that is an explicit
+            // `rigel skills builtin --install`.
+            std::thread::spawn(|| {
+                tauri::async_runtime::block_on(async {
+                    if let Ok(index) = SkillIndex::open(&index_dir()).await {
+                        let _ = index.install_builtin().await;
+                    }
+                });
+            });
             relay::start(index_dir(), current_project_root);
             // The window is the supervisor the user actually keeps running: it starts the API on
             // launch and again after a crash, so a reboot no longer leaves Muse with a refusal.
@@ -4347,6 +4749,9 @@ pub fn run() {
             checkpoint_list,
             checkpoint_restore,
             agent_list,
+            permissions_get,
+            permissions_set,
+            permissions_set_agent,
             agent_team,
             agent_spawn,
             agent_stop,
@@ -4357,11 +4762,13 @@ pub fn run() {
             turn_steer,
             network_get,
             network_set,
+            network_check,
             approval_pending,
             approval_answer,
             watch_project,
             swarm_enqueue,
             claim_list,
+            merge_queue,
             writable_list,
             writable_diff,
             writable_merge,
@@ -4383,6 +4790,9 @@ pub fn run() {
             patch_revert,
             memory_read,
             memory_write,
+            memory_facts,
+            memory_recall,
+            memory_pin,
             key_status,
             key_set,
             key_delete,
@@ -4395,6 +4805,8 @@ pub fn run() {
             subagent_graph,
             role_presets,
             role_apply,
+            role_clear,
+            agent_configure,
             spend_report,
             task_cap_set,
             harness_probe,
@@ -4473,6 +4885,11 @@ pub fn run() {
             skills_refresh,
             skills_install,
             skills_installed,
+            plugins_catalog,
+            plugins_list,
+            plugins_install,
+            plugins_remove,
+            plugins_set_enabled,
             mcp_catalog_search,
             mcp_catalog_count,
             mcp_install,
@@ -4502,6 +4919,38 @@ mod tests {
         assert!(REFINE_MODEL.starts_with("antigravity/"));
         assert!(REFINE_MODEL.contains("3.8-flash-tiered"));
         assert!(providers::is_model(spec, REFINE_MODEL));
+    }
+
+    #[test]
+    fn a_network_rule_the_core_rejects_is_not_written_by_the_editor_command() {
+        let tmp = tempfile::tempdir().unwrap();
+        let project = path_string(tmp.path());
+        let bad = NetworkPolicy {
+            rules: vec![rigel_core::NetworkRule {
+                action: rigel_core::NetworkAction::Deny,
+                pattern: "example.com/path".to_string(),
+                note: None,
+            }],
+            ..NetworkPolicy::default()
+        };
+        assert!(network_set(project.clone(), bad).is_err());
+        assert!(!tmp.path().join(".rigel/network.json").exists());
+
+        let good = NetworkPolicy {
+            rules: vec![rigel_core::NetworkRule {
+                action: rigel_core::NetworkAction::Deny,
+                pattern: "tracker.example".to_string(),
+                note: None,
+            }],
+            limits: rigel_core::EgressLimits {
+                per_origin_requests: 3,
+                max_response_bytes: 8_192,
+                ..rigel_core::EgressLimits::default()
+            },
+            ..NetworkPolicy::default()
+        };
+        network_set(project.clone(), good.clone()).unwrap();
+        assert_eq!(network_get(project).unwrap(), good);
     }
 
     #[test]

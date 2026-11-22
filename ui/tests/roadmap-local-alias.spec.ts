@@ -4,7 +4,7 @@ import { expect, test } from "@playwright/test";
 test("a local model is tagged local in the picker", async ({ page }) => {
   await page.goto("/");
   await page.getByRole("button", { name: "Session", exact: true }).click();
-  await page.locator(".model-button").click();
+  await page.locator(".session-tools .model-button").click();
 
   const row = page.locator(".model-row", { hasText: "llama3.2" }).first();
   await expect(row).toBeVisible();

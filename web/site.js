@@ -241,9 +241,11 @@
 })();
 
 /* ---------- sponsored slot ----------
-   One Gravity ad, requested through Rigel's first-party site endpoint. The provider key never reaches the page.
-   The slot stays out of the layout when there is no fill, when the visitor sends DNT/GPC, or
-   when the request fails. The impression is fired once, only after the card is actually in view. */
+   One Gravity ad, requested through Rigel's first-party site endpoint. The provider key never
+   reaches the page. The slot stays out of the layout when there is no fill, when the visitor sends
+   DNT/GPC, or when the request fails. The impression is fired once, only after the card is actually
+   in view. The advertiser's https product image is drawn large beside the copy; a favicon is the
+   smaller fallback. */
 (function () {
   const section = document.getElementById("sponsor");
   if (!section) return;
@@ -252,7 +254,10 @@
   const text = document.getElementById("sponsor-text");
   const brand = document.getElementById("sponsor-brand");
   const link = document.getElementById("sponsor-link");
-  if (!title || !text || !brand || !link) return;
+  const mark = document.getElementById("sponsor-mark");
+  const initial = document.getElementById("sponsor-initial");
+  const icon = document.getElementById("sponsor-icon");
+  if (!title || !text || !brand || !link || !mark || !initial || !icon) return;
 
   if (navigator.doNotTrack === "1" || navigator.globalPrivacyControl === true) return;
 
@@ -323,20 +328,63 @@
     })
     .finally(() => window.clearTimeout(timeout));
 
+  function initialFor(name) {
+    const words = (name || "").trim().split(/\s+/).filter(Boolean);
+    if (words.length === 0) return "";
+    return words
+      .slice(0, 2)
+      .map((word) => Array.from(word)[0].toUpperCase())
+      .join("");
+  }
+
   function show(ad) {
     if (!ad.clickUrl || !/^https:\/\//i.test(ad.clickUrl)) return;
-    title.textContent = ad.title || ad.brandName || "Sponsored";
+    const name = (ad.brandName || "").trim();
+    // A product photo reads better at tile size; a favicon is the smaller fallback.
+    const brandImage = (ad.brandImage || "").trim();
+    const favicon = (ad.favicon || "").trim();
+    const artwork = brandImage || favicon;
+    const art = /^https:\/\//i.test(artwork) ? artwork : "";
+    const kind = art ? (brandImage ? "photo" : "icon") : "none";
+
+    title.textContent = ad.title || name || "Sponsored";
     text.textContent = ad.adText || "";
-    brand.textContent = ad.brandName || "";
-    brand.hidden = !ad.brandName;
+    brand.textContent = name;
+    brand.hidden = !name;
+
+    initial.textContent = initialFor(name) || "✦";
+    mark.hidden = false;
+    mark.dataset.kind = kind;
+    icon.hidden = !art;
+    if (art) {
+      icon.src = art;
+      icon.onerror = () => {
+        // A missing product photo falls back to the favicon before the initials.
+        if (favicon && icon.src !== favicon) {
+          mark.dataset.kind = "icon";
+          icon.src = favicon;
+          return;
+        }
+        icon.hidden = true;
+        mark.dataset.kind = "none";
+      };
+    } else {
+      icon.removeAttribute("src");
+    }
+
     link.textContent = ad.cta || "Learn more";
-    link.href = ad.clickUrl;
+    // A Gravity test fill points clickUrl at its test host; the advertiser is `url`. Live fills
+    // use clickUrl because it is the tracked link.
+    link.href = ad.test && ad.url ? ad.url : ad.clickUrl;
     section.hidden = false;
 
     let seen = false;
     const impression = () => {
       if (seen || !ad.impUrl || !/^https:\/\//i.test(ad.impUrl)) return;
       seen = true;
+      // A Gravity test fill points impUrl at its test host, which is a page, not a pixel. The app
+      // records its test impression through Rust; the website leaves the test host unpinged.
+      if (ad.test) return;
       const pixel = new Image();
       pixel.referrerPolicy = "no-referrer";
       pixel.src = ad.impUrl;
