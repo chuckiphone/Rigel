@@ -21,6 +21,7 @@ use rigel_core::budget::BudgetService;
 use rigel_core::mcp::pin::{Catalog, PinObservation, PinStore, SchemaDiff};
 use rigel_core::memory::{MemoryApprover, MemoryDecision, MemoryRequest, MemoryService, WriteMode};
 use rigel_core::patches::{PatchError, PatchPipeline};
+use rigel_core::skills::verify::SkillTrust;
 use rigel_core::{ClaimService, Scopes};
 use rigel_core::{SessionService, SkillIndex};
 use serde_json::{Value, json};
@@ -510,6 +511,19 @@ async fn call(ctx: &McpContext, name: &str, args: Value) -> Result<Value, Value>
                 .await
                 .map_err(|error| failure("SKILLS", error.to_string()))?
                 .ok_or_else(|| failure("NO_BODY", format!("{id} has no indexed body")))?;
+            let source = index
+                .source(id)
+                .await
+                .map_err(|error| failure("SKILLS", error.to_string()))?
+                .ok_or_else(|| failure("NO_BODY", format!("{id} has no indexed body")))?;
+            // Roadmap 77: the MCP load path uses the same trust gate as the native tool. This
+            // is the body an external harness reads, so checking only the index row is enough
+            // here: it is the exact string returned below.
+            let trust = SkillTrust::load(&ctx.project_root)
+                .map_err(|error| failure(error.code(), error.to_string()))?;
+            let verification = trust
+                .verify(id, &source, &body)
+                .map_err(|error| failure(error.code(), error.to_string()))?;
             let pinned = service
                 .pin_skill(&ctx.session_id, id, &sha, false)
                 .await
@@ -518,6 +532,10 @@ async fn call(ctx: &McpContext, name: &str, args: Value) -> Result<Value, Value>
                 "ok": true,
                 "id": id,
                 "version": format!("sha256:{pinned}"),
+                "verification": {
+                    "status": verification.status(),
+                    "publisher": verification.publisher(),
+                },
                 "body": body,
                 "truncated": false,
             }))

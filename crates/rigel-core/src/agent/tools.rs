@@ -42,6 +42,7 @@ use crate::plugin::{PluginError, PluginRuntime};
 use crate::sandbox::{Sandbox, SandboxProfile};
 use crate::session::SessionService;
 use crate::skills::index::SkillIndex;
+use crate::skills::verify::{SkillTrust, VerifyError};
 use crate::skills::{SkillsError, blob::BlobStore};
 use crate::snapshot::SnapshotService;
 
@@ -1470,6 +1471,45 @@ impl Tools {
             }
             Err(error) => return skills_error(error),
         };
+        let source = match index.source(id).await {
+            Ok(Some(source)) => source,
+            Ok(None) => {
+                return ToolOutcome::error(
+                    "NO_BODY",
+                    format!("{id} has no body; index its repository first"),
+                );
+            }
+            Err(error) => return skills_error(error),
+        };
+
+        // Read the pin without creating one. A body that fails the trust gate must not leave a
+        // session row behind as if it had been loaded.
+        let pinned = match self.session.skill_pin(session_id, id).await {
+            Ok(sha) => sha,
+            Err(error) => return ToolOutcome::error("SESSION", error.to_string()),
+        };
+        let (text, stale) = match pinned.as_deref() {
+            Some(sha) if sha != current_sha => {
+                match BlobStore::new(&self.index_dir).get_text(sha) {
+                    Ok(Some(text)) => (text, true),
+                    // The pinned body was collected or the index moved on. Say so rather than
+                    // silently substituting the new version (§8.7).
+                    _ => (body, false),
+                }
+            }
+            _ => (body, false),
+        };
+
+        // Roadmap 77: verify the exact bytes about to be returned, not just the current index row.
+        // A pinned body is still the thing the agent reads, so it gets the same check.
+        let trust = match SkillTrust::load(&self.root) {
+            Ok(trust) => trust,
+            Err(error) => return verify_error(error),
+        };
+        let verification = match trust.verify(id, &source, &text) {
+            Ok(verification) => verification,
+            Err(error) => return verify_error(error),
+        };
         let pinned = match self
             .session
             .pin_skill(session_id, id, &current_sha, false)
@@ -1477,17 +1517,6 @@ impl Tools {
         {
             Ok(sha) => sha,
             Err(error) => return ToolOutcome::error("SESSION", error.to_string()),
-        };
-
-        let (text, stale) = if pinned != current_sha {
-            match BlobStore::new(&self.index_dir).get_text(&pinned) {
-                Ok(Some(text)) => (text, true),
-                // The pinned body was collected or the index moved on. Say so rather than
-                // silently substituting the new version (§8.7).
-                _ => (body, false),
-            }
-        } else {
-            (body, false)
         };
 
         // Q243: a skill body is data, but the scripts it names are a capability. Record the
@@ -1504,6 +1533,10 @@ impl Tools {
             "version": format!("sha256:{pinned}"),
             "current_version": format!("sha256:{current_sha}"),
             "pin_stale": stale,
+            "verification": {
+                "status": verification.status(),
+                "publisher": verification.publisher(),
+            },
             "untrusted": true,
             "scripts": scripts,
             "body": text,
@@ -2873,6 +2906,10 @@ fn patch_error(error: PatchError) -> ToolOutcome {
 
 fn skills_error(error: SkillsError) -> ToolOutcome {
     ToolOutcome::error("SKILLS", error.to_string())
+}
+
+fn verify_error(error: VerifyError) -> ToolOutcome {
+    ToolOutcome::error(error.code(), error.to_string())
 }
 
 /// The bare address in a sender line: `Name <a@b>` becomes `a@b`, and `a@b` stays `a@b`.

@@ -4,6 +4,11 @@ Every release, newest first. The heading is the version its `v*` tag publishes.
 
 ## 0.4.0-1 — 2026-11-24
 
+- security(skills): verify an Ed25519 publisher signature and the SHA-256 of a skill's
+  instructions before `skill_load` or the MCP `rigel_skill_load` returns a body; built-ins are
+  trusted by origin, downloaded unsigned skills require `.rigel/skill-trust.json` with
+  `"allow_unsigned": true`, and an unknown publisher, malformed signature or tampered body is
+  refused before a session pin is written ([skill intelligence](docs/skill-intelligence.md))
 - security(serve): refuse a `Host` header that does not name the listener, the loopback names or
   the configured public URL, compare bearer tokens through fixed-length SHA-256 digests, and limit
   failed authentication to ten attempts per peer per minute ([api](docs/api.md))

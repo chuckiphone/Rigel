@@ -208,6 +208,66 @@ as safe. Those are scanner findings, not a claim that the built-in review was wr
 
 ---
 
+### Publisher signatures at load
+
+Roadmap 0.3 item 77 closes the gap between "the body was scanned" and "the body the agent reads
+is the body that was published." The check runs in `crates/rigel-core/src/skills/verify.rs` on the
+exact string returned by `skill_load` and `rigel_skill_load`.
+
+A signed `SKILL.md` adds three frontmatter fields:
+
+```yaml
+publisher: acme
+content-sha256: <sha256 of the instructions after the frontmatter, lowercase hex>
+signature: <ed25519 signature, lowercase hex>
+```
+
+The signature covers exactly:
+
+```text
+rigel-skill-v1
+<skill id>
+<publisher>
+<content-sha256>
+```
+
+Including the skill id prevents a valid signature from being transplanted to another row. The
+signature covers the instructions, not the metadata header; the instructions are what the agent
+receives. A body that changes after signing fails the hash check, and a changed hash or publisher
+fails the signature check.
+
+Trust is project-local in `.rigel/skill-trust.json`:
+
+```json
+{
+  "publishers": {
+    "acme": "<32-byte ed25519 public key, lowercase hex>"
+  }
+}
+```
+
+A missing file trusts no publisher and accepts no unsigned downloaded skill. To accept unsigned
+skills in one project, add the explicit flag:
+
+```json
+{
+  "allow_unsigned": true,
+  "publishers": {}
+}
+```
+
+Built-in skills are compiled into the binary and indexed as `builtin:<slug>`; they do not need a
+publisher signature because their origin is the build. A downloaded row cannot acquire that trust
+by naming itself `builtin:`: the index source must also be `builtin`. A malformed trust file fails
+closed for every downloaded skill. A signature block with only some of the three fields is an
+error, not an unsigned skill.
+
+**Recovery limit:** this is an authenticity check, not a sandbox or a revocation service. A
+trusted publisher can sign a new malicious body, a stolen publisher key remains trusted until its
+key is removed from the project file, and there is no transparency log or online revocation in
+this pass. Unsigned mode is deliberately visible in the load result (`verification.status` is
+`unsigned`), and the existing SkillSpector and script-approval gates still apply.
+
 ## 4. How this changes the ranked feature list
 
 Append to §6 of the teardown:

@@ -7,6 +7,7 @@
 //! | file | owns |
 //! |---|---|
 //! | [`frontmatter`] | reading `---` headers |
+//! | [`verify`] | content hashes, publisher signatures and the project trust policy |
 //! | [`scan`] | static capability inventory and the grade |
 //! | [`scanner`] | NVIDIA SkillSpector pre-download and pre-install gate |
 //! | [`blob`] | bodies on disk, addressed by sha256 |
@@ -35,6 +36,7 @@ pub mod scanner;
 pub mod search;
 pub mod skillssh;
 pub mod source;
+pub mod verify;
 
 use std::io;
 use std::time::Duration;
@@ -59,6 +61,7 @@ pub use source::{
     FetchedSkill, RepoFetcher, RepoSnapshot, SkillRecord, Source, SourceKind, SourceState,
     SourceStatus, SyncPolicy,
 };
+pub use verify::{SkillTrust, Verification, VerifyError};
 
 /// How long a cached URL is trusted without a request. Ten minutes is long enough that a
 /// re-index right after an index is free (P2.11) and short enough that `--force` is a

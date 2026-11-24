@@ -109,11 +109,25 @@ key in the gitignored generated `.deploy`/`deploy` configuration; it is public b
 Firestore rules are the boundary. Test fixtures, commented `.env.example` placeholders, the vendored
 Python sidecar, the generated preview, the handoff zip and the plugin catalogue produced unverified
 detector noise and were excluded from the second pass. The last ten commits produced no finding.
-The full local history scan was stopped after the repository's 1.5 GB `.git` (including a 584 MB
-unreachable temporary pack) made it impractically slow; CI checks out full history and runs
-gitleaks there, so a historical commit is still covered by the lane rather than by this local run.
-The local `deploy/.env.production` is not tracked and contains production-shaped values; it is
-outside the git inventory but still needs rotation if the checkout was copied.
+
+**Complete reachable-history scan (2026-11-24).** The earlier TruffleHog run did not finish because
+`.git` contained a 583 MB unreachable `tmp_pack_qvUczG`; that file is not repository history. A
+streaming scan read every object reachable from every ref through `git cat-file --batch` (plus every
+commit message through `git log --all`) instead of asking the tool to walk the garbage pack. It
+covered **869 commits, 10,165 objects, 6,859 blobs and 3,234,959,429 decompressed bytes** and
+reported 1,160 raw matches. The strong detectors saw 63 assigned-secret, 21 OpenAI-shaped, 13
+Anthropic-shaped, 9 Google API-key, 5 AWS access-key, 3 connection-string, 3 JWT, 2 private-key,
+1 GitHub-token and 1 Slack-token matches; the rest were high-entropy candidates. Every strong
+match is a test fixture, a regex or redaction test vector, an environment-variable name, a
+commented `.env.example` placeholder, a Docker interpolation, or an expired signed GitHub
+release-asset URL. The high-entropy candidates are URLs, commit/run ids, package hashes, font
+base64, catalogue links, the public reCAPTCHA site key in `web/site.js`, and public Firebase web
+keys; none is a credential. The one historical item worth naming is the removed 8.3 MB
+`.cloud-attachments/imported-conversation-...json`, whose only JWT is an expired GitHub asset URL
+(`iss: github.com`, `aud: release-assets.githubusercontent.com`, expired 2026-10-25). The scan
+wrote no secret values to the report. No source change was needed. The local
+`deploy/.env.production` remains untracked, outside this history, and still needs rotation if the
+checkout or its backups were shared.
 
 ## Remaining validation
 

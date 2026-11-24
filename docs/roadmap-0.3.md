@@ -12,9 +12,9 @@ directory. A current, offline, 404 or truncated feed stays silent; every failure
 `update.log` or `updates/apply.log`. `crates/rigel-core/tests/updater_apply_e2e.rs` proves both
 branches with a loopback feed and a real binary swap. See [updates.md](updates.md).
 
-**Tally (2026-11-22):** 92 Done · 7 Blocked · 101 Open. The 0.3.0 preview tree ships every Done
+**Tally (2026-11-24):** 93 Done · 7 Blocked · 100 Open. The 0.3.0 preview tree ships every Done
 item. The previous pass closed 53, 60, 64, 67, 69, 70, 75, 78, 80, 106, 107, 130, 140 and 182;
-this pass closed 43, 44, 45, 46, 47, 48, 49, 52, 55, 56, 57, 58, 61, 62, 63, 65, 66, 68, 74 and 84. The
+this pass closed 43, 44, 45, 46, 47, 48, 49, 52, 55, 56, 57, 58, 61, 62, 63, 65, 66, 68, 74, 77 and 84. The
 remaining open and blocked items below are unchanged by these passes.
 
 **Verified gate (2026-11-08).** `cargo fmt --all -- --check`, `cargo clippy --workspace
@@ -961,6 +961,15 @@ done signal, and the eight-state table is the evidence a review will use.
 77. **W3 · P1 · L · Skill signature at load.** `crates/rigel-core/src/skills/verify.rs` checks a
     skill's content hash and publisher signature before it loads. — done when a tampered body is
     refused and an unsigned skill loads only under an explicit project opt-in flag.
+    **Done (2026-11-24):** `skills/verify.rs` verifies Ed25519 publisher signatures and the SHA-256
+    of the instructions after the frontmatter. `skill_load` (native) and `rigel_skill_load` (MCP)
+    refuse a mismatched body, an unknown publisher or a malformed signature block before returning
+    the body or writing a session pin. Built-ins are trusted by their compiled-in origin; every
+    downloaded body is refused unless its publisher key is in `.rigel/skill-trust.json`, or the
+    project explicitly sets `"allow_unsigned": true` there. Tests: 8 unit tests in
+    `skills::verify`, 4 end-to-end `skill_load` tests in `crates/rigel-core/tests/skill_trust.rs`,
+    and the existing script-approval fixture now proves the opt-in path. The format, trust file and
+    limits are documented in `docs/skill-intelligence.md`.
 
 78. **W3 · P0 · M · Updater end-to-end test.** `crates/rigel-app/tests/updater.rs` asserts staged
     success, a wrong signature, a wrong hash and a downgrade. — done wheneach case has its own assertion and a downgrade is refused by default.

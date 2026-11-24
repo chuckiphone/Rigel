@@ -797,6 +797,23 @@ and `.mcp.json` are local-only; never launch agents with `vendor/agentchattr/win
 (windowed consoles, orphaned on restart); and `--json` runs default to deny, so an approved
 command must say so explicitly.
 
+**Skill trust at load (24 Nov 2026):** roadmap-0.3 item 77 is closed. `skills/verify.rs` checks the
+SHA-256 of the instructions after the frontmatter and an Ed25519 publisher signature over
+`rigel-skill-v1\n<id>\n<publisher>\n<content-sha256>\n`. Both the native `skill_load` and MCP
+`rigel_skill_load` run the gate before returning the body; a refusal happens before the session
+pin is written. Built-ins are trusted by their compiled-in `builtin:` origin; every downloaded
+body needs a publisher key in `.rigel/skill-trust.json` or the project-level
+`"allow_unsigned": true` opt-in. The format, failure modes and the no-revocation limitation are
+in `docs/skill-intelligence.md`. Tests: `cargo test -p rigel-core --lib skills::verify` (8 passed),
+`cargo test -p rigel-core --test skill_trust` (4 passed), and
+`cargo test -p rigel-core --test skill_scripts` (2 passed through the opt-in path).
+
+**Full-history secret scan (24 Nov 2026):** completed against every reachable ref, not the
+583 MB orphaned `.git` temp pack: 869 commits, 10,165 objects, 6,859 blobs and 3,234,959,429
+decompressed bytes. The scan found no live credential. Raw matches are fixtures, placeholders,
+URLs, hashes, public web keys and one expired GitHub release-asset JWT in a removed imported
+conversation attachment; the disposition is recorded in [security-audit.md](security-audit.md).
+
 ---
 
 ## 3. Decisions of record

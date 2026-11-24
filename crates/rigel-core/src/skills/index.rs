@@ -1216,6 +1216,17 @@ impl SkillIndex {
         Ok(Some((text, sha)))
     }
 
+    /// The origin recorded for a skill row. The load gate uses this to distinguish a compiled-in
+    /// built-in from a downloaded repository; source strings are index metadata, not a claim the
+    /// downloaded body can make about itself.
+    pub async fn source(&self, id: &str) -> Result<Option<String>, SkillsError> {
+        let source: Option<String> = sqlx::query_scalar("SELECT source FROM skills WHERE id = ?")
+            .bind(id)
+            .fetch_optional(self.store.pool())
+            .await?;
+        Ok(source)
+    }
+
     /// The current hash even when its blob is missing. The pin review uses this to report a
     /// changed index without treating a collected body as "not indexed".
     pub async fn body_sha(&self, id: &str) -> Result<Option<String>, SkillsError> {

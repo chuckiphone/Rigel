@@ -73,6 +73,13 @@ async fn build(
         .unwrap();
 
     let service = SessionService::open(root).await.unwrap();
+    // This fixture is about script approval, not signatures. Opt this throwaway project into
+    // unsigned skills explicitly; the separate skill_trust suite covers the default refusal.
+    std::fs::write(
+        root.join(".rigel/skill-trust.json"),
+        "{\"allow_unsigned\": true}",
+    )
+    .unwrap();
     let session = service.start(Some("skill-script"), None).await.unwrap();
     let agent = service
         .register_agent(&session.id, "native", Some("worker"))
