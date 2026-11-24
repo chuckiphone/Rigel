@@ -136,7 +136,9 @@ fn walk(root: &Path, dir: &Path, out: &mut Vec<String>, depth: usize) -> Result<
         } else if file_type.is_file()
             && let Ok(relative) = path.strip_prefix(root)
         {
-            out.push(relative.to_string_lossy().into_owned());
+            // Graph ids, import resolution and the tests all speak `/`; the walker must too,
+            // even when git was unavailable and Windows handed us backslashes.
+            out.push(relative.to_string_lossy().replace('\\', "/"));
         }
     }
     Ok(())
@@ -169,6 +171,16 @@ mod tests {
 
         fs::write(tmp.path().join("a.txt"), "one\n").unwrap();
         assert_eq!(tree_hash(tmp.path()).unwrap(), first);
+    }
+
+    #[test]
+    fn the_walker_speaks_forward_slashes() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        fs::create_dir_all(tmp.path().join("src")).unwrap();
+        fs::write(tmp.path().join("src/main.rs"), "fn main() {}\n").unwrap();
+        let mut out = Vec::new();
+        walk(tmp.path(), tmp.path(), &mut out, 0).unwrap();
+        assert!(out.contains(&"src/main.rs".to_string()), "{out:?}");
     }
 
     #[test]

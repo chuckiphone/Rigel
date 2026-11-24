@@ -195,7 +195,7 @@ export default function PluginShelf({
               <span className="fine mono">{row.version}</span>
               <p className="fine">{row.description}</p>
               <p className="fine mono">{row.tools.join(" · ")}</p>
-              <p className="fine">Capabilities: {row.capabilities.join(" · ")}</p>
+              <p className="fine">capabilities: {row.capabilities.join(" · ")}</p>
               <p className="fine">
                 Source: {sourceLabel(row.source)}
                 {row.license ? ` · ${row.license}` : ""}
