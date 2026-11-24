@@ -8,6 +8,7 @@
     "build": "tsc --noEmit && vite build",
     "preview": "vite preview",
     "test:e2e": "npm run build && playwright test",
+    "test:renderer": "tsx --test tests/skill-scan.test.tsx",
     "test:window": "node ../e2e/run.mjs",
     "lint:tokens": "node ../scripts/check-tokens.mjs"
   },

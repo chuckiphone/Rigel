@@ -18,7 +18,9 @@ use super::blob::{BlobStore, sha256_hex};
 use super::frontmatter;
 use super::http::Http;
 use super::scan;
-use super::source::{FetchedSkill, RepoSnapshot, SkillRecord, Source, SourceStatus, SyncPolicy};
+use super::source::{
+    FetchedSkill, RepoSnapshot, SkillRecord, Source, SourceKind, SourceStatus, SyncPolicy,
+};
 use crate::migrate::now_ms;
 use crate::skills::{SkillsError, cluster, fmt_time};
 
@@ -431,12 +433,15 @@ fn build_skill(
 
 #[async_trait]
 impl Source for GitHubSource {
-    fn id(&self) -> &'static str {
-        "github"
+    fn kind(&self) -> SourceKind {
+        SourceKind::Github
     }
 
     async fn status(&self) -> Result<SourceStatus, SkillsError> {
-        Ok(super::source::load_status(&self.pool, "github", Some(&self.api)).await?)
+        Ok(
+            super::source::load_status(&self.pool, SourceKind::Github.id(), Some(&self.api))
+                .await?,
+        )
     }
 
     async fn fetch_repo(

@@ -20,7 +20,12 @@ export function validEmail(value) {
 }
 
 export function validPassword(value) {
-  return typeof value === 'string' && value.length >= 10 && value.length <= 256;
+  return (
+    typeof value === 'string' &&
+    value.length >= 10 &&
+    value.length <= 256 &&
+    value.trim().length > 0
+  );
 }
 
 export async function hashPassword(password) {
@@ -59,9 +64,9 @@ export function sha256(value) {
 }
 
 export function safeEqual(left, right) {
-  const a = Buffer.from(String(left ?? ''));
-  const b = Buffer.from(String(right ?? ''));
-  return a.length === b.length && timingSafeEqual(a, b);
+  const a = createHash('sha256').update(String(left ?? ''), 'utf8').digest();
+  const b = createHash('sha256').update(String(right ?? ''), 'utf8').digest();
+  return timingSafeEqual(a, b);
 }
 
 function secretKey(secret) {
@@ -81,6 +86,7 @@ export async function signAccessToken({ secret, userId, sessionId, email, minute
 
 export async function verifyAccessToken(secret, token) {
   const { payload } = await jwtVerify(token, secretKey(secret), {
+    algorithms: ['HS256'],
     issuer: 'rigel-cloud',
     audience: 'rigel-api',
   });

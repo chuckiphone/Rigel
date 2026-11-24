@@ -19,6 +19,7 @@ export function createMailer({ config, fetchImpl = fetch, logger = console }) {
     }
     const response = await fetchImpl('https://api.resend.com/emails', {
       method: 'POST',
+      signal: AbortSignal.timeout(10_000),
       headers: {
         Authorization: `Bearer ${config.resendApiKey}`,
         'Content-Type': 'application/json',

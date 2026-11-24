@@ -488,4 +488,5 @@ The 941-row model probe is a separate, long-running check. Its persisted result 
 * `GET https://rigel.tail5fbfdb.ts.net:8443/v1/openapi.json` — the generated spec.
 * `crates/rigel-cli/src/serve.rs` — `/v1/swarm/*`, `/v1/room/*`, `/v1/events`, `/v1/app`.
 * `crates/rigel-cli/src/serve/concord.rs` — the inbox cache and reply wrapper.
-* `crates/rigel-app/src/lib.rs` — `SwarmLead` and `swarm_enqueue`.
+* `crates/rigel-app/src/commands/swarm.rs` — `swarm_enqueue`; `SwarmLead` remains in
+  `crates/rigel-app/src/lib.rs` beside the shared turn types.

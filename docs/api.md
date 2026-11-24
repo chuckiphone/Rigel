@@ -62,7 +62,9 @@ Authorization: Bearer <token>
 
 There is no OAuth, no query-string key, and no per-endpoint variation. A request carrying an
 `Origin` header is refused with `403` so a web page cannot drive the API even if it learns the
-token.
+token. The `Host` header must name the listener, `localhost`/loopback, or the `--public-url` host;
+any other name gets `403 forbidden_host`. Ten failed bearer tokens from one peer in a minute get
+`429 too_many_attempts` until the minute rolls over; a successful request clears the count.
 
 **First endpoints.** `GET /v1/health`, `GET /v1/providers`, `GET /v1/models`, then
 `POST /v1/sessions` and `POST /v1/sessions/{id}/turns`. For file work, `GET /v1/workspace` and
@@ -231,11 +233,13 @@ rigel serve --project . --public-url https://your-tunnel.trycloudflare.com
 ```
 
 The tunnel, not the API, is the thing exposed to the internet. Keep the token out of the tunnel
-URL, and rotate it (`--rotate`) if it is ever pasted somewhere it should not be. A tunnel also
-removes the loopback guarantee: the bearer token becomes the only thing between the internet and
-your project, which is why it is 244 bits and never sent in a query string. Prefer Tailscale to a
-public tunnel when the orchestrator can join the tailnet: it keeps the API off the public
-internet while still reaching it from another machine.
+URL. If the token may have leaked, **stop the serving process first**, then start it with
+`--rotate`; rotation changes the stored token, while a process already running keeps the old one
+in memory and would keep accepting it. A tunnel also removes the loopback guarantee: the bearer
+token becomes the only thing between the internet and your project, which is why it is 244 bits
+and never sent in a query string. Prefer Tailscale to a public tunnel when the orchestrator can
+join the tailnet: it keeps the API off the public internet while still reaching it from another
+machine.
 
 ## Choosing the workspace
 

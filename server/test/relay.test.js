@@ -125,6 +125,24 @@ test('repeating an idempotency key is safe but changing its message conflicts', 
   }
 });
 
+test('a deeply nested payload is rejected before canonicalisation', async () => {
+  const { app, messages } = await makeApp();
+  let payload = { end: true };
+  for (let depth = 0; depth < 40; depth += 1) payload = { next: payload };
+  try {
+    const response = await send(app, 'rigel', {
+      kind: 'event',
+      idempotency_key: 'deep-1',
+      payload,
+    });
+    assert.equal(response.statusCode, 413);
+    assert.equal(response.json().error, 'invalid_payload');
+    assert.equal(messages.length, 0);
+  } finally {
+    await app.close();
+  }
+});
+
 test('only the recipient can acknowledge a message', async () => {
   const { app } = await makeApp();
   try {

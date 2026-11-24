@@ -282,6 +282,8 @@ The gaps are part of the record:
 - [docs/images.md](docs/images.md): image-bearing turns, the CLI/HTTP/desktop surfaces, provider support and the remaining image limits
 - [CONTRIBUTING.md](CONTRIBUTING.md): build, checks, layout and the rules for a schema change
 - [SECURITY.md](SECURITY.md): the threat model, every network call and what is not defended
+- [docs/security-audit.md](docs/security-audit.md): the 2026-11-24 67-check pass, the fixed
+  findings, the secret scan and the checks that still need deployment or vendor evidence
 - [docs/privacy.md](docs/privacy.md): what stays local and what leaves
 - [docs/PLATFORMS.md](docs/PLATFORMS.md): the bundle target matrix, Windows support and signing, and what macOS/Linux mean here
 - [docs/cloud.md](docs/cloud.md): the Firebase project, the account and the document shape

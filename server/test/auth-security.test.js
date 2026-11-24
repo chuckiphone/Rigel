@@ -1,11 +1,18 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import Fastify from 'fastify';
+import { SignJWT } from 'jose';
 
 import { buildApp } from '../src/app.js';
 import { loadConfig } from '../src/config.js';
 import { registerAuthRoutes } from '../src/routes/auth.js';
-import { hashPassword, signAccessToken } from '../src/security.js';
+import {
+  hashPassword,
+  safeEqual,
+  signAccessToken,
+  validPassword,
+  verifyAccessToken,
+} from '../src/security.js';
 
 const ownerId = '00000000-0000-4000-8000-000000000001';
 const sessionId = '00000000-0000-4000-8000-000000000002';
@@ -31,6 +38,30 @@ async function accessToken(sid = sessionId) {
     minutes: 15,
   });
 }
+
+test('a whitespace-only password is never a valid credential', () => {
+  assert.equal(validPassword('          '), false);
+  assert.equal(validPassword('\n\t        '), false);
+  assert.equal(validPassword('correct horse battery staple'), true);
+});
+
+test('relay tokens compare through fixed-length digests and reject a near miss', () => {
+  assert.equal(safeEqual('relay-token', 'relay-token'), true);
+  assert.equal(safeEqual('relay-token', 'relay-tokeN'), false);
+  assert.equal(safeEqual('relay-token', 'relay-token '), false);
+});
+
+test('an HS384 token is refused even when it is signed with the API secret', async () => {
+  const token = await new SignJWT({ sid: sessionId, email: user.email })
+    .setProtectedHeader({ alg: 'HS384', typ: 'JWT' })
+    .setSubject(ownerId)
+    .setIssuer('rigel-cloud')
+    .setAudience('rigel-api')
+    .setIssuedAt()
+    .setExpirationTime('15m')
+    .sign(new TextEncoder().encode(jwtSecret));
+  await assert.rejects(() => verifyAccessToken(jwtSecret, token));
+});
 
 async function makeApp({ active = true } = {}) {
   const calls = [];

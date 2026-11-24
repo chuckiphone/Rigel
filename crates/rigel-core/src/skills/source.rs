@@ -13,6 +13,47 @@ use serde::{Deserialize, Serialize};
 
 use crate::skills::{Capability, SkillsError};
 
+/// The finite set of places the skill index knows how to refresh. Persisted ids are kept for
+/// compatibility, but dispatch never matches on an arbitrary string: an id is parsed into this
+/// type first, and an unknown id is reported as having no rule instead of reaching a catch-all.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum SourceKind {
+    Github,
+    SkillHub,
+    SkillsMp,
+}
+
+impl SourceKind {
+    pub const ALL: [SourceKind; 3] = [
+        SourceKind::Github,
+        SourceKind::SkillHub,
+        SourceKind::SkillsMp,
+    ];
+
+    pub fn id(self) -> &'static str {
+        match self {
+            SourceKind::Github => "github",
+            SourceKind::SkillHub => "skillhub",
+            SourceKind::SkillsMp => "skillsmp",
+        }
+    }
+
+    pub fn base_url(self) -> &'static str {
+        match self {
+            SourceKind::Github => "https://api.github.com",
+            SourceKind::SkillHub => "https://skills.browseract.com",
+            SourceKind::SkillsMp => "https://skillsmp.com",
+        }
+    }
+
+    /// Parse a persisted source id. `None` means another surface wrote the row; refresh reports
+    /// that explicitly instead of guessing at a handler.
+    pub fn from_id(id: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|kind| kind.id() == id)
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SyncPolicy {
     /// Ignore the freshness window and revalidate every cached URL, conditional where the
@@ -186,7 +227,11 @@ pub async fn load_status(
 
 #[async_trait]
 pub trait Source: Send + Sync {
-    fn id(&self) -> &'static str;
+    fn kind(&self) -> SourceKind;
+
+    fn id(&self) -> &'static str {
+        self.kind().id()
+    }
 
     /// Source health, read from the `sources` row and the clock — never from a network call.
     async fn status(&self) -> Result<SourceStatus, SkillsError>;
@@ -211,5 +256,36 @@ pub trait Source: Send + Sync {
     async fn fetch_skill(&self, id: &str) -> Result<FetchedSkill, SkillsError> {
         let _ = id;
         Err(SkillsError::Unsupported("fetch_skill", self.id()))
+    }
+}
+
+/// The repository-walk seam used by [`crate::skills::SkillIndex`]. Production wraps
+/// [`crate::skills::GitHubSource`]; a test can inject a snapshot without a socket. Keeping the
+/// per-call `slug` and `limit` here preserves the same source configuration the GitHub walker
+/// uses, instead of only swapping the client underneath it.
+#[async_trait]
+pub trait RepoFetcher: Send + Sync {
+    async fn fetch_repo(
+        &self,
+        target: &str,
+        policy: SyncPolicy,
+        slug: Option<&str>,
+        limit: Option<usize>,
+    ) -> Result<RepoSnapshot, SkillsError>;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::SourceKind;
+
+    #[test]
+    fn every_persisted_source_id_round_trips_and_unknown_ids_stay_unknown() {
+        for kind in SourceKind::ALL {
+            assert_eq!(SourceKind::from_id(kind.id()), Some(kind));
+            assert!(!kind.base_url().is_empty());
+        }
+        assert_eq!(SourceKind::from_id(""), None);
+        assert_eq!(SourceKind::from_id("local"), None);
+        assert_eq!(SourceKind::from_id("GitHub"), None);
     }
 }

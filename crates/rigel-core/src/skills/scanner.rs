@@ -312,16 +312,39 @@ pub trait SkillScanner: Send + Sync {
 }
 
 /// The installed `skillspector` executable. `RIGEL_SKILLSPECTOR_BIN` overrides discovery, which
-/// is useful on Windows where uv's shim directory is not always on the app's PATH.
-#[derive(Debug, Clone, Copy, Default)]
-pub struct SkillSpector;
+/// is useful on Windows where uv's shim directory is not always on the app's PATH. A test can
+/// also pin a binary directly, so the missing-binary path is exercised without global state.
+#[derive(Debug, Clone, Default)]
+pub struct SkillSpector {
+    binary: Option<OsString>,
+}
 
 impl SkillSpector {
-    fn binary() -> OsString {
-        std::env::var_os(BIN_ENV).unwrap_or_else(|| OsString::from(BIN))
+    pub fn with_binary(binary: impl Into<OsString>) -> Self {
+        Self {
+            binary: Some(binary.into()),
+        }
+    }
+
+    fn binary(&self) -> OsString {
+        self.binary
+            .clone()
+            .or_else(|| std::env::var_os(BIN_ENV))
+            .unwrap_or_else(|| OsString::from(BIN))
     }
 
     async fn run(&self, target: &str, extra: &[&str]) -> Result<Output, SkillsError> {
+        self.run_binary(&self.binary(), target, extra).await
+    }
+
+    /// The executable is a parameter so the missing-binary and error-exit paths are testable
+    /// without changing process-wide environment variables.
+    async fn run_binary(
+        &self,
+        binary: &std::ffi::OsStr,
+        target: &str,
+        extra: &[&str],
+    ) -> Result<Output, SkillsError> {
         let target = target.trim();
         if target.is_empty() {
             return Err(SkillsError::Scanner(
@@ -329,8 +352,7 @@ impl SkillSpector {
             ));
         }
 
-        let binary = Self::binary();
-        let mut command = Command::new(&binary);
+        let mut command = Command::new(binary);
         command
             .arg("scan")
             .arg(target)
@@ -349,11 +371,11 @@ impl SkillSpector {
                     "SkillSpector is required before a skill can be downloaded or installed, \
                      but `{}` was not found. Install it with `{INSTALL_HINT}`, add it to PATH, \
                      or set {BIN_ENV} to its executable",
-                    Path::new(&binary).display()
+                    Path::new(binary).display()
                 )),
                 _ => SkillsError::Scanner(format!(
                     "could not run SkillSpector (`{}`): {error}; no skill was touched",
-                    Path::new(&binary).display()
+                    Path::new(binary).display()
                 )),
             })
     }
@@ -652,6 +674,86 @@ mod tests {
             .is_err()
         );
         assert!(ScanVerdict::from_report("not json").is_err());
+    }
+
+    #[test]
+    fn malformed_reports_and_incomplete_child_execution_fail_closed() {
+        for report in [
+            "not json",
+            "{}",
+            r#"{"skill": {}}"#,
+            r#"{"risk_assessment": {"score": 0}}"#,
+        ] {
+            assert!(ScanVerdict::from_report(report).is_err(), "{report}");
+        }
+
+        for report in [
+            r#"{"multi_skill": true, "execution_successful": false, "skill_count": 1, "skills": []}"#,
+            r#"{
+                "multi_skill": true,
+                "skill_count": 1,
+                "max_risk_score": 0,
+                "risk_severity": "LOW",
+                "risk_recommendation": "SAFE",
+                "skills": [{
+                    "name": "pdf",
+                    "path": "skill-0000",
+                    "execution_successful": false,
+                    "risk_assessment": {"score": 0, "severity": "LOW", "recommendation": "SAFE"}
+                }]
+            }"#,
+        ] {
+            assert!(CollectionScan::from_report(report).is_err(), "{report}");
+        }
+    }
+
+    #[test]
+    fn a_nonzero_scanner_exit_fails_closed() {
+        let status = exit_status(2);
+        let safe = ScanVerdict {
+            score: 0,
+            severity: "LOW".into(),
+            recommendation: "SAFE".into(),
+            findings: 0,
+            scanner: "fake".into(),
+        };
+        assert!(finish_one(status, String::new(), Ok(safe.clone())).is_err());
+        let collection = CollectionScan {
+            aggregate: safe,
+            skills: Vec::new(),
+        };
+        assert!(finish_collection(exit_status(2), String::new(), Ok(collection)).is_err());
+    }
+
+    #[tokio::test]
+    async fn a_missing_scanner_binary_fails_closed() {
+        let binary = std::env::temp_dir().join(format!(
+            "rigel-no-skillspector-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let error = SkillSpector::with_binary(binary)
+            .scan("https://github.com/acme/skills")
+            .await
+            .expect_err("a missing binary must not scan");
+        let message = error.to_string();
+        assert!(message.contains("was not found"), "{message}");
+        assert!(message.contains("Install it with"), "{message}");
+    }
+
+    fn exit_status(code: i32) -> std::process::ExitStatus {
+        #[cfg(windows)]
+        let status = std::process::Command::new("cmd")
+            .args(["/C", &format!("exit {code}")])
+            .status();
+        #[cfg(not(windows))]
+        let status = std::process::Command::new("sh")
+            .args(["-c", &format!("exit {code}")])
+            .status();
+        status.unwrap()
     }
 
     #[test]

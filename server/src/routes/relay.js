@@ -37,7 +37,20 @@ function canonicalJson(value) {
 
 function validPayload(value) {
   if (value === null || typeof value !== 'object' || Array.isArray(value)) return false;
-  return Buffer.byteLength(JSON.stringify(value), 'utf8') <= MAX_PAYLOAD_BYTES;
+  const text = JSON.stringify(value);
+  if (Buffer.byteLength(text, 'utf8') > MAX_PAYLOAD_BYTES) return false;
+  // JSONB accepts arbitrary nesting, but recursive canonicalisation and any later walker should
+  // not. A relay payload is a small envelope by design; cap depth and node count as well as size.
+  const stack = [[value, 1]];
+  let nodes = 0;
+  while (stack.length) {
+    const [node, depth] = stack.pop();
+    if (depth > 32 || ++nodes > 10_000) return false;
+    if (node && typeof node === 'object') {
+      for (const child of Object.values(node)) stack.push([child, depth + 1]);
+    }
+  }
+  return true;
 }
 
 function sleep(milliseconds, signal) {

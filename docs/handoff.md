@@ -146,7 +146,7 @@ replace the localStorage notes above.
 | Surface | Where | Evidence |
 |---|---|---|
 | Session log: sessions, agents, turns, items, checkpoints | `crates/rigel-core/src/session.rs` | `tests/sessions.rs` (5), restart persistence in `docs/qa` for P1.10 |
-| Desktop shell over IPC | `crates/rigel-app/src/lib.rs` | `project.open`, `session.*`, `settings.*`, `skills.*` |
+| Desktop shell over IPC | `crates/rigel-app/src/commands/` (one file per subsystem; `lib.rs` owns the window lifecycle) | `project.open`, `session.*`, `settings.*`, `skills.*` |
 | Renderer | `ui/src/App.tsx` | shelf wired to the index; browser preview uses sample rows |
 | Global index | `crates/rigel-core/src/skills/index.rs`, `<data dir>/index.db` | FTS5, clusters, evidence; 12 integration tests in `tests/skills.rs` |
 | Skill bodies | `<data dir>/blobs/<sha256>` | never in SQLite (P2.3); `rigel skills gc` reconciles |
@@ -176,7 +176,7 @@ the design draft is [multi-agent-channels-draft.md](multi-agent-channels-draft.m
 | Chat tab | `ui/src/agentchat.tsx`, rail entry in `ui/src/App.tsx`, styles in `ui/src/shell.css` | roster pills, channels, stream, composer; the window boots the room at launch (`servers_start`), the tab can retry; never touches the server directly |
 | Swarm button | `ui/src/session.tsx` composer → `swarm` in `ui/src/App.tsx` | hands the typed task to **every available room agent at once** as one `@mention` broadcast on `#general`, then opens Chat with the outcome; a room that is unauthed or has no online agents refuses with a visible reason instead of pretending to fan out |
 | Core front | `crates/rigel-core/src/agent/agentchat.rs` | spawns `run.py` when the room is down (the OmniRoute contract), reads the session token from its stdout into core memory, exposes `status / channels / agents / messages / send` |
-| Tauri commands | `crates/rigel-app/src/lib.rs` | `servers_start / chat_status / chat_start / chat_channels / chat_agents / chat_messages / chat_send / chat_start_agents`, registered in the handler |
+| Tauri commands | `crates/rigel-app/src/commands/chat.rs`, `commands/shell.rs` | `servers_start / chat_status / chat_start / chat_channels / chat_agents / chat_messages / chat_send / chat_start_agents`, registered in the handler |
 | Hidden agent launch | `agentchat::start_agents` (core), `chat_start_agents` (Tauri), **Start agents** in the roster | spawns every configured harness (`config.toml` + `config.local.toml`) that is installed, with `CREATE_NO_WINDOW` — a real console with no window, so the wrapper's `WriteConsoleInput` injection still drives the TUI. Unattended flags match the auto-approve bats; API agents without `api_key_env` are skipped. Zero console windows verified 22 Oct |
 | External agent rows | `rigel agent register` (`crates/rigel-cli/src/phase3.rs`, `phase3/agent.rs`) | mints an `agents` row for a harness so `rigel mcp --agent` is scoped and billed like a native agent |
 | MCP server | `crates/rigel-mcp/src/lib.rs` | stdio JSON-RPC; six advertised tools (`rigel_skills_search`, `rigel_skill_load`, `rigel_patch_propose`, `rigel_budget`, `rigel_memory_read`, `rigel_memory_write`); claim tools stay unadvertised until P5 |

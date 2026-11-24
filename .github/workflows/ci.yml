@@ -159,6 +159,16 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
+      # Gitleaks matches known shapes; TruffleHog additionally verifies a candidate against the
+      # provider, so a live key is distinguished from a fixture. Pinned to the reviewed release
+      # and limited to verified results so an intentionally fake test key cannot redden the lane.
+      - name: Verified secrets (TruffleHog)
+        uses: trufflesecurity/trufflehog@main
+        with:
+          version: 3.100.0
+          path: ./
+          extra_args: --results=verified
+
       - uses: actions/setup-node@v4
         with:
           node-version: 22

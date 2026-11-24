@@ -14,6 +14,8 @@
 //!     (a Tailscale IP, say); the unspecified `0.0.0.0` is refused, so the API cannot silently
 //!     join every network;
 //!   * a bearer token from the Rigel data directory, compared in constant time;
+//!   * the `Host` header must name the listener, loopback or the advertised public host, so a
+//!     DNS-rebinding page cannot reach the API through an attacker-controlled name;
 //!   * any request carrying an `Origin` header is refused, so a browser cannot reach it;
 //!   * `application/json` is required for a body, and no CORS headers are ever sent;
 //!   * a body cap, one route table, and no shell of its own: a command still goes through the
@@ -32,6 +34,7 @@ mod concord;
 mod openapi;
 
 use std::collections::HashMap;
+use std::net::IpAddr;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 use std::sync::{Arc, Mutex, RwLock};
@@ -51,6 +54,7 @@ use rigel_core::{
     StopAt, SubagentPolicy, ToolOutcome, Tools, now_ms,
 };
 use serde_json::{Value, json};
+use sha2::{Digest, Sha256};
 use std::io::{Read, Write};
 use tokio_util::sync::CancellationToken;
 
@@ -67,6 +71,10 @@ const MAX_WRITE_BYTES: usize = 2 * 1024 * 1024;
 const MODELS_CACHE: Duration = Duration::from_secs(60);
 /// The window heartbeat is ten seconds; three missed beats is a closed or crashed window.
 const APP_HEARTBEAT_STALE_MS: i64 = 45_000;
+/// Ten bad bearer tokens from one peer in a minute are enough to stop guessing; a successful
+/// request clears the window so an operator who mistyped once is not locked out for long.
+const AUTH_FAILURE_LIMIT: u32 = 10;
+const AUTH_FAILURE_WINDOW: Duration = Duration::from_secs(60);
 const VERSION: &str = env!("CARGO_PKG_VERSION");
 
 pub struct ServeOptions {
@@ -465,6 +473,7 @@ pub async fn run(options: ServeOptions) -> ExitCode {
         }),
         data_dir: options.data_dir.clone(),
         token: token.clone(),
+        auth_failures: AuthLimiter::default(),
         host: host.clone(),
         port,
         public_url: options.public_url.clone(),
@@ -584,6 +593,9 @@ struct Api {
     workspace: RwLock<Workspace>,
     data_dir: PathBuf,
     token: String,
+    /// Failed bearer attempts, keyed by the TCP peer. This is process-local defence in depth:
+    /// the token is the authorization boundary, and this only makes guessing expensive.
+    auth_failures: AuthLimiter,
     host: String,
     port: u16,
     public_url: Option<String>,
@@ -604,6 +616,52 @@ struct Api {
     /// Shared with the background loop: the agents this API started that sit busy without a reply.
     watchdog: Arc<Mutex<agentchat::Watchdog>>,
     watchdog_stuck: Duration,
+}
+
+#[derive(Default)]
+struct AuthLimiter {
+    failures: Mutex<HashMap<IpAddr, (Instant, u32)>>,
+}
+
+impl AuthLimiter {
+    fn blocked(&self, peer: IpAddr) -> bool {
+        self.blocked_at(peer, Instant::now())
+    }
+
+    fn failure(&self, peer: IpAddr) {
+        self.failure_at(peer, Instant::now());
+    }
+
+    fn success(&self, peer: IpAddr) {
+        self.failures
+            .lock()
+            .expect("auth limiter lock")
+            .remove(&peer);
+    }
+
+    fn blocked_at(&self, peer: IpAddr, now: Instant) -> bool {
+        let mut failures = self.failures.lock().expect("auth limiter lock");
+        failures.retain(|_, (start, _)| now.duration_since(*start) < AUTH_FAILURE_WINDOW);
+        failures
+            .get(&peer)
+            .is_some_and(|(_, count)| *count >= AUTH_FAILURE_LIMIT)
+    }
+
+    fn failure_at(&self, peer: IpAddr, now: Instant) {
+        let mut failures = self.failures.lock().expect("auth limiter lock");
+        failures.retain(|_, (start, _)| now.duration_since(*start) < AUTH_FAILURE_WINDOW);
+        if failures.len() >= 4096 && !failures.contains_key(&peer) {
+            // A tailnet cannot plausibly present thousands of distinct peers in one window.
+            // Refuse the new key rather than let the table grow without bound; the token check
+            // still runs, so this is a limiter gap, not an authorization bypass.
+            return;
+        }
+        let entry = failures.entry(peer).or_insert((now, 0));
+        if now.duration_since(entry.0) >= AUTH_FAILURE_WINDOW {
+            *entry = (now, 0);
+        }
+        entry.1 = entry.1.saturating_add(1);
+    }
 }
 
 struct Request {
@@ -776,14 +834,41 @@ impl Api {
             .unwrap_or_else(|| format!("http://{}:{}", self.host, self.port))
     }
 
-    async fn handle(&self, request: Request) -> Reply {
+    async fn handle(&self, request: Request, peer: Option<IpAddr>) -> Reply {
         // A browser page always carries an Origin on a cross-origin request. Refusing it is what
         // makes the bearer token unreachable from a web page even if it leaks into one.
         if request.headers.contains_key("origin") {
             return Reply::error(403, "forbidden_origin", "browser origins are not allowed");
         }
+        // A rebinding page reaches 127.0.0.1 while the browser still puts its own hostname in
+        // Host. Reject any name this listener was not configured to answer for.
+        let Some(host) = request.headers.get("host") else {
+            return bad_request("a Host header is required");
+        };
+        if !host_allowed(host, &self.host, self.public_url.as_deref()) {
+            return Reply::error(
+                403,
+                "forbidden_host",
+                "Host must name the listener, loopback, or the configured public host",
+            );
+        }
+        if let Some(peer) = peer
+            && self.auth_failures.blocked(peer)
+        {
+            return Reply::error(
+                429,
+                "too_many_attempts",
+                "too many failed bearer tokens; wait a minute and try again",
+            );
+        }
         if !self.authorized(&request) {
+            if let Some(peer) = peer {
+                self.auth_failures.failure(peer);
+            }
             return Reply::error(401, "unauthorized", "missing or invalid bearer token");
+        }
+        if let Some(peer) = peer {
+            self.auth_failures.success(peer);
         }
         if request.method != "GET" && request.method != "POST" {
             return Reply::error(405, "method_not_allowed", "use GET or POST");
@@ -3397,17 +3482,55 @@ fn normalize_hash(raw: &str) -> Result<String, Reply> {
     Ok(hex.to_ascii_lowercase())
 }
 
+/// Compare fixed-length digests instead of the raw strings. Hashing first removes the length
+/// signal and keeps the comparison constant-time even if a future token shape changes.
 fn token_matches(given: &str, expected: &str) -> bool {
-    let given = given.as_bytes();
-    let expected = expected.as_bytes();
-    if given.len() != expected.len() {
-        return false;
-    }
+    let given = Sha256::digest(given.as_bytes());
+    let expected = Sha256::digest(expected.as_bytes());
     let mut difference = 0u8;
-    for (a, b) in given.iter().zip(expected) {
+    for (a, b) in given.iter().zip(expected.iter()) {
         difference |= a ^ b;
     }
     difference == 0
+}
+
+/// The hostname from a `Host` header or a bind address. Brackets around IPv6 are removed and a
+/// numeric port is dropped; the port is not a rebinding boundary because the socket is already
+/// fixed. An unbracketed IPv6 literal is not a valid Host value.
+fn host_name(value: &str) -> Option<String> {
+    let value = value.trim();
+    if value.is_empty() {
+        return None;
+    }
+    let name = if let Some(rest) = value.strip_prefix('[') {
+        rest.split_once(']').map(|(name, _)| name)?
+    } else {
+        value.split(':').next()?
+    };
+    let name = name.trim().trim_end_matches('.').to_ascii_lowercase();
+    (!name.is_empty()).then_some(name)
+}
+
+fn public_url_host(url: &str) -> Option<String> {
+    let rest = url.split_once("://").map(|(_, rest)| rest).unwrap_or(url);
+    host_name(rest.split('/').next()?)
+}
+
+/// Host allowlist for the local API. Loopback names always pass because the socket is already
+/// loopback by default; otherwise only the bound address and the advertised public URL pass.
+fn host_allowed(header: &str, bind_host: &str, public_url: Option<&str>) -> bool {
+    let Some(name) = host_name(header) else {
+        return false;
+    };
+    if matches!(name.as_str(), "localhost" | "127.0.0.1" | "::1") {
+        return true;
+    }
+    if let Some(bound) = host_name(bind_host)
+        && name == bound
+    {
+        return true;
+    }
+    public_url.and_then(public_url_host).as_deref() == Some(name.as_str())
 }
 
 fn serve_connection(
@@ -3420,8 +3543,9 @@ fn serve_connection(
     stream.set_nodelay(true).ok();
     stream.set_read_timeout(Some(Duration::from_secs(30))).ok();
     stream.set_write_timeout(Some(Duration::from_secs(30))).ok();
+    let peer = stream.peer_addr().ok().map(|address| address.ip());
     let reply = match read_request(&mut stream) {
-        Ok(request) => handle.block_on(api.handle(request)),
+        Ok(request) => handle.block_on(api.handle(request, peer)),
         Err(reply) => reply,
     };
     let body = serde_json::to_vec(&reply.body).unwrap_or_else(|_| b"{}".to_vec());
@@ -3438,6 +3562,7 @@ fn serve_connection(
         413 => "Content Too Large",
         415 => "Unsupported Media Type",
         422 => "Unprocessable Content",
+        429 => "Too Many Requests",
         431 => "Request Header Fields Too Large",
         499 => "Client Closed Request",
         500 => "Internal Server Error",
@@ -3767,6 +3892,59 @@ mod tests {
         assert!(!probe_reply_is_ok(
             "This version of Antigravity is no longer supported. Please update."
         ));
+    }
+
+    #[test]
+    fn host_allowlist_rejects_rebinding_names_and_accepts_the_configured_listener() {
+        assert!(host_allowed("127.0.0.1:20140", "127.0.0.1", None));
+        assert!(host_allowed("localhost", "127.0.0.1", None));
+        assert!(host_allowed("[::1]:20140", "127.0.0.1", None));
+        assert!(host_allowed("100.64.1.2:20140", "100.64.1.2", None));
+        assert!(host_allowed(
+            "rigel.tail5fbfdb.ts.net:8443",
+            "127.0.0.1",
+            Some("https://rigel.tail5fbfdb.ts.net:8443")
+        ));
+        assert!(!host_allowed("evil.example.com", "127.0.0.1", None));
+        assert!(!host_allowed(
+            "127.0.0.1.evil.example.com",
+            "127.0.0.1",
+            None
+        ));
+        assert!(!host_allowed(
+            "evil.example.com",
+            "127.0.0.1",
+            Some("https://rigel.tail5fbfdb.ts.net:8443")
+        ));
+        assert!(!host_allowed("", "127.0.0.1", None));
+    }
+
+    #[test]
+    fn bearer_tokens_are_compared_through_fixed_length_digests() {
+        assert!(token_matches("abc", "abc"));
+        assert!(!token_matches("abc", "abd"));
+        assert!(!token_matches("a", "aa"));
+        assert!(!token_matches("", "x"));
+    }
+
+    #[test]
+    fn failed_bearer_attempts_are_limited_per_peer_and_clear_on_success() {
+        let limiter = AuthLimiter::default();
+        let peer = IpAddr::V4(std::net::Ipv4Addr::new(100, 64, 0, 1));
+        let other = IpAddr::V4(std::net::Ipv4Addr::new(100, 64, 0, 2));
+        let now = Instant::now();
+        for _ in 0..AUTH_FAILURE_LIMIT - 1 {
+            limiter.failure_at(peer, now);
+        }
+        assert!(!limiter.blocked_at(peer, now));
+        limiter.failure_at(peer, now);
+        assert!(limiter.blocked_at(peer, now));
+        assert!(!limiter.blocked_at(other, now));
+
+        limiter.success(peer);
+        assert!(!limiter.blocked_at(peer, now));
+        limiter.failure_at(peer, now);
+        assert!(!limiter.blocked_at(peer, now + AUTH_FAILURE_WINDOW + Duration::from_secs(1)));
     }
 
     #[test]

@@ -1072,17 +1072,22 @@ async fn run_skills(dir: &Path, command: SkillCommand) -> ExitCode {
             query,
             limit,
             json: as_json,
-        } => match index.sync_marketplace(&source, &query, limit).await {
-            Ok(count) => {
-                if as_json {
-                    println!("{}", json!({ "source": source, "rows": count }));
-                } else {
-                    println!("{count} rows from {source}");
+        } => {
+            let Some(kind) = rigel_core::skills::SourceKind::from_id(&source) else {
+                return skills_failure(SkillsError::UnknownSource(source), as_json);
+            };
+            match index.sync_marketplace(kind, &query, limit).await {
+                Ok(count) => {
+                    if as_json {
+                        println!("{}", json!({ "source": source, "rows": count }));
+                    } else {
+                        println!("{count} rows from {source}");
+                    }
+                    ExitCode::SUCCESS
                 }
-                ExitCode::SUCCESS
+                Err(error) => skills_failure(error, as_json),
             }
-            Err(error) => skills_failure(error, as_json),
-        },
+        }
 
         SkillCommand::Watch {
             interval,

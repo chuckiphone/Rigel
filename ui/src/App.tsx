@@ -41,6 +41,7 @@ import SessionView from "./session";
 import SettingsView, { type SettingsPage } from "./settings";
 import CodeGraphView from "./graph";
 import { applyDisplay, sourceLabel } from "./display";
+import { installReceiptText, scanReceiptText } from "./skill-scan";
 import { applyContrast, applyTheme, themePreference } from "./theme";
 import Titlebar from "./titlebar";
 import { APP_VERSION } from "./version";
@@ -670,13 +671,7 @@ export default function App() {
     try {
       const report = await install(selected.id);
       setSkillInstalled(true);
-      setNotice(
-        `${report.name} installed in ${report.paths.length} skill store${
-          report.paths.length === 1 ? "" : "s"
-        } · SkillSpector ${report.scan.recommendation} ${report.scan.score}/100.${
-          report.replaced ? " The previous copy was replaced." : ""
-        }`,
-      );
+      setNotice(installReceiptText(report));
     } catch (problem) {
       setNotice(problem instanceof Error ? problem.message : String(problem));
     } finally {
@@ -901,9 +896,7 @@ ${task}`,
       setNotice(
         `${report.with_body} skills from ${report.repo ?? repo} · ${report.added} added · ${
           report.http_requests
-        } requests${report.scan ? ` · SkillSpector ${report.scan.recommendation} ${report.scan.score}/100` : ""}${
-          report.blocked ? ` · ${report.blocked} blocked` : ""
-        }`,
+        } requests${report.scan ? ` · ${scanReceiptText(report.scan, report.blocked)}` : ""}`,
       );
       setRepoInput("");
       setReload((value) => value + 1);

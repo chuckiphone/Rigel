@@ -12,7 +12,9 @@ use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::time::Duration;
 
+use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use sqlx::Row;
 
@@ -27,18 +29,46 @@ use super::scanner::{
 };
 use super::search::{SearchHit, SearchOrder, fts_query};
 use super::source::{
-    RepoSnapshot, SkillRecord, Source, SourceState, SourceStatus, SyncPolicy, load_status,
+    RepoFetcher, RepoSnapshot, SkillRecord, Source, SourceKind, SourceState, SourceStatus,
+    SyncPolicy, load_status,
 };
 use crate::migrate::now_ms;
 use crate::skills::{DEFAULT_TTL, SkillsError};
 use crate::storage::Store;
 
-const GITHUB_BASE: &str = "https://api.github.com";
-
 pub struct SkillIndex {
     store: Store,
     blobs: BlobStore,
     scanner: Arc<dyn SkillScanner>,
+    fetcher: Arc<dyn RepoFetcher>,
+}
+
+/// The production repository walker. It owns the same pool, blob store and freshness policy as
+/// `SkillIndex`; tests replace the whole walker, not only its HTTP client.
+struct GitHubRepoFetcher {
+    pool: sqlx::SqlitePool,
+    blobs: BlobStore,
+    ttl: Duration,
+}
+
+#[async_trait]
+impl RepoFetcher for GitHubRepoFetcher {
+    async fn fetch_repo(
+        &self,
+        target: &str,
+        policy: SyncPolicy,
+        slug: Option<&str>,
+        limit: Option<usize>,
+    ) -> Result<RepoSnapshot, SkillsError> {
+        let mut source = GitHubSource::new(self.pool.clone(), self.blobs.clone(), self.ttl).await?;
+        if let Some(slug) = slug {
+            source = source.with_slug(slug);
+        }
+        if let Some(limit) = limit {
+            source = source.with_limit(limit);
+        }
+        source.fetch_repo(target, policy).await
+    }
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -142,18 +172,21 @@ pub struct IndexStats {
 impl SkillIndex {
     pub async fn open(data_dir: &Path) -> Result<Self, SkillsError> {
         let store = Store::open_index(data_dir).await?;
-        Ok(Self {
-            store,
-            blobs: BlobStore::new(data_dir),
-            scanner: Arc::new(SkillSpector),
-        })
+        Ok(Self::from_store(store, data_dir))
     }
 
     pub fn from_store(store: Store, data_dir: &Path) -> Self {
+        let blobs = BlobStore::new(data_dir);
+        let fetcher = Arc::new(GitHubRepoFetcher {
+            pool: store.pool().clone(),
+            blobs: blobs.clone(),
+            ttl: DEFAULT_TTL,
+        });
         Self {
             store,
-            blobs: BlobStore::new(data_dir),
-            scanner: Arc::new(SkillSpector),
+            blobs,
+            scanner: Arc::new(SkillSpector::default()),
+            fetcher,
         }
     }
 
@@ -161,6 +194,13 @@ impl SkillIndex {
     /// gate's ordering can be asserted without installing Python or reaching GitHub.
     pub fn with_scanner(mut self, scanner: Arc<dyn SkillScanner>) -> Self {
         self.scanner = scanner;
+        self
+    }
+
+    /// Replace the repository walker. The gate, the write order and the index itself stay the
+    /// production implementation; only the fetched snapshot is injected.
+    pub fn with_fetcher(mut self, fetcher: Arc<dyn RepoFetcher>) -> Self {
+        self.fetcher = fetcher;
         self
     }
 
@@ -252,14 +292,7 @@ impl SkillIndex {
             );
         }
 
-        let mut source = self.github().await?;
-        if let Some(slug) = slug {
-            source = source.with_slug(slug);
-        }
-        if let Some(limit) = limit {
-            source = source.with_limit(limit);
-        }
-        match source.fetch_repo(target, policy).await {
+        match self.fetcher.fetch_repo(target, policy, slug, limit).await {
             Ok(mut snapshot) => {
                 let (scan, blocked) = self
                     .gate_snapshot(&mut snapshot, explicit_skill.then_some(&preflight))
@@ -272,8 +305,8 @@ impl SkillIndex {
             Err(error) => {
                 let _ = self
                     .set_source(
-                        "github",
-                        GITHUB_BASE,
+                        SourceKind::Github.id(),
+                        SourceKind::Github.base_url(),
                         SourceState::Broken,
                         Some(&error.to_string()),
                     )
@@ -322,8 +355,13 @@ impl SkillIndex {
         }
 
         let clusters = self.recluster().await?;
-        self.set_source("github", GITHUB_BASE, SourceState::Ok, None)
-            .await?;
+        self.set_source(
+            SourceKind::Github.id(),
+            SourceKind::Github.base_url(),
+            SourceState::Ok,
+            None,
+        )
+        .await?;
 
         Ok(IngestReport {
             source: snapshot.source.clone(),
@@ -591,37 +629,41 @@ impl SkillIndex {
 
     pub async fn sync_marketplace(
         &self,
-        which: &str,
+        which: SourceKind,
         query: &str,
         limit: usize,
     ) -> Result<usize, SkillsError> {
         let (base, result) = match which {
-            "skillsmp" => {
+            SourceKind::SkillsMp => {
                 let source = self.skillsmp().await?;
-                (
-                    "https://skillsmp.com",
-                    source.search_records(query, limit).await,
-                )
+                (which.base_url(), source.search_records(query, limit).await)
             }
-            "skillhub" => {
+            SourceKind::SkillHub => {
                 let source = self.skillhub().await?;
-                (
-                    "https://skills.browseract.com",
-                    source.browse(1, limit as u32).await,
-                )
+                (which.base_url(), source.browse(1, limit as u32).await)
             }
-            other => return Err(SkillsError::UnknownSource(other.to_string())),
+            // Repository walking is not marketplace sync; refusing is the typed equivalent of
+            // the old catch-all, without accepting an arbitrary source string.
+            SourceKind::Github => {
+                return Err(SkillsError::Unsupported("sync_marketplace", which.id()));
+            }
         };
 
         match result {
             Ok(records) => {
                 let count = self.ingest_records(&records).await?;
-                self.set_source(which, base, SourceState::Ok, None).await?;
+                self.set_source(which.id(), base, SourceState::Ok, None)
+                    .await?;
                 Ok(count)
             }
             Err(error) => {
-                self.set_source(which, base, SourceState::Broken, Some(&error.to_string()))
-                    .await?;
+                self.set_source(
+                    which.id(),
+                    base,
+                    SourceState::Broken,
+                    Some(&error.to_string()),
+                )
+                .await?;
                 Err(error)
             }
         }
@@ -683,13 +725,23 @@ impl SkillIndex {
                 continue;
             }
 
-            let (state, detail) = match self.refresh_source(&status.id).await {
-                Ok(Some(detail)) => {
+            let Some(kind) = SourceKind::from_id(&status.id) else {
+                // Another surface wrote this row. It has no refresh rule here, and the typed
+                // dispatch below has no catch-all that could accidentally claim it.
+                let detail = format!("no refresh rule for `{}`", status.id);
+                report.sources.push(SourceRefresh {
+                    id: status.id,
+                    state: status.state,
+                    detail,
+                });
+                continue;
+            };
+
+            let (state, detail) = match self.refresh_source(kind).await {
+                Ok(detail) => {
                     report.refreshed += 1;
                     (SourceState::Ok, detail)
                 }
-                // A source another surface wrote, with no rule here. Reported, not guessed at.
-                Ok(None) => (status.state, format!("no refresh rule for `{}`", status.id)),
                 Err(error) => (SourceState::Broken, error.to_string()),
             };
             report.sources.push(SourceRefresh {
@@ -702,13 +754,13 @@ impl SkillIndex {
         Ok(report)
     }
 
-    /// What one source's refresh does. `None` means this index has no rule for that id.
-    async fn refresh_source(&self, id: &str) -> Result<Option<String>, SkillsError> {
-        match id {
-            "github" => {
+    /// What one typed source's refresh does. Unknown persisted ids never reach this function.
+    async fn refresh_source(&self, kind: SourceKind) -> Result<String, SkillsError> {
+        match kind {
+            SourceKind::Github => {
                 let repos = self.indexed_repos(AUTO_REFRESH_REPOS).await?;
                 if repos.is_empty() {
-                    return Ok(Some("no repository indexed yet".to_string()));
+                    return Ok("no repository indexed yet".to_string());
                 }
                 let mut rows = 0;
                 let mut failure: Option<SkillsError> = None;
@@ -724,35 +776,31 @@ impl SkillIndex {
                 // failing is a broken source, and `index_repo` has already recorded it as one.
                 match failure {
                     Some(error) if rows == 0 => Err(error),
-                    Some(error) => Ok(Some(format!(
+                    Some(error) => Ok(format!(
                         "{} repo(s), {rows} row(s) updated · one still failing: {error}",
                         repos.len()
-                    ))),
-                    None => Ok(Some(format!(
-                        "{} repo(s), {rows} row(s) updated",
-                        repos.len()
-                    ))),
+                    )),
+                    None => Ok(format!("{} repo(s), {rows} row(s) updated", repos.len())),
                 }
             }
-            "skillhub" => {
+            SourceKind::SkillHub => {
                 let rows = self
-                    .sync_marketplace("skillhub", AUTO_REFRESH_QUERY, AUTO_REFRESH_LIMIT)
+                    .sync_marketplace(kind, AUTO_REFRESH_QUERY, AUTO_REFRESH_LIMIT)
                     .await?;
-                Ok(Some(format!("{rows} row(s) from skillhub")))
+                Ok(format!("{rows} row(s) from skillhub"))
             }
             // SkillsMP is a *search* source and its rows carry no record of the query that found
             // them, so the shelf's own default is re-run: it adds what that query finds and makes
             // the source fresh again. Rows from the other queries stay put; `rigel skills sweep`
             // is what walks those.
-            "skillsmp" => {
+            SourceKind::SkillsMp => {
                 let rows = self
-                    .sync_marketplace("skillsmp", AUTO_REFRESH_QUERY, AUTO_REFRESH_LIMIT)
+                    .sync_marketplace(kind, AUTO_REFRESH_QUERY, AUTO_REFRESH_LIMIT)
                     .await?;
-                Ok(Some(format!(
+                Ok(format!(
                     "{rows} row(s) from the `{AUTO_REFRESH_QUERY}` query"
-                )))
+                ))
             }
-            _ => Ok(None),
         }
     }
 
@@ -803,8 +851,8 @@ impl SkillIndex {
                 }
             }
             self.set_source(
-                "skillhub",
-                "https://skills.browseract.com",
+                SourceKind::SkillHub.id(),
+                SourceKind::SkillHub.base_url(),
                 match skillhub_error {
                     Some(_) => SourceState::Broken,
                     None => SourceState::Ok,
@@ -845,8 +893,8 @@ impl SkillIndex {
                 }
             }
             self.set_source(
-                "skillsmp",
-                "https://skillsmp.com",
+                SourceKind::SkillsMp.id(),
+                SourceKind::SkillsMp.base_url(),
                 match skillsmp_error {
                     Some(_) => SourceState::Broken,
                     None => SourceState::Ok,

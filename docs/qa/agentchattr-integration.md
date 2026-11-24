@@ -117,7 +117,7 @@ agentchattr is now a tab in Rigel's desktop UI, Rigel-style:
   contract), captures the session token from its stdout into core memory, and forwards a
   narrow surface: `status / channels / agents / messages / send`. The websocket send is a
   short-lived socket per message (`/ws?token=…`), same frame the vendor browser sends.
-- `crates/rigel-app/src/lib.rs` — `chat_status / chat_start / chat_channels / chat_agents /
+- `crates/rigel-app/src/commands/chat.rs` — `chat_status / chat_start / chat_channels / chat_agents /
   chat_messages / chat_send` tauri commands, all synchronous `block_on` like their siblings.
 - `ui/src/agentchat.tsx` — roster (pills from `/api/status`), channel list, stream, composer.
   Polls `since_id` every 2s. Empty states: "room down → Start the chat server" button, and

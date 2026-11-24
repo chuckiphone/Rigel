@@ -52,11 +52,12 @@ pub use index::{
     SourceRefresh, SweepReport, VariantRow, skill_dir_name,
 };
 pub use scan::{Capability, EvidenceLine, Severity};
-pub use scanner::{ScanVerdict, SkillScanner, SkillSpector};
+pub use scanner::{CollectionScan, ScanVerdict, ScannedSkill, SkillScanner, SkillSpector};
 pub use search::{SearchHit, SearchOrder};
 pub use skillssh::{AuditVerdict, SkillsShPage};
 pub use source::{
-    FetchedSkill, RepoSnapshot, SkillRecord, Source, SourceState, SourceStatus, SyncPolicy,
+    FetchedSkill, RepoFetcher, RepoSnapshot, SkillRecord, Source, SourceKind, SourceState,
+    SourceStatus, SyncPolicy,
 };
 
 /// How long a cached URL is trusted without a request. Ten minutes is long enough that a

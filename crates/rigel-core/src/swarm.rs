@@ -94,6 +94,12 @@ pub fn plan(roster: &[String], ready: &[String]) -> Kickoff {
 }
 
 /// Write one Swarm job for Muse into `<data_dir>/swarm/inbox` and return its id.
+/// A job id is a capability-shaped name that appears in relay announcements and claim paths, so
+/// it carries 122 random UUID bits rather than a timestamp a peer could predict.
+pub fn new_job_id() -> String {
+    format!("swarm-{}", uuid::Uuid::new_v4().simple())
+}
+
 pub fn enqueue(
     data_dir: &Path,
     project: &Path,
@@ -129,11 +135,7 @@ pub fn enqueue(
 
     let inbox = data_dir.join("swarm").join("inbox");
     std::fs::create_dir_all(&inbox).map_err(|error| error.to_string())?;
-    let stamp = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|duration| duration.as_nanos())
-        .unwrap_or(0);
-    let id = format!("swarm-{stamp}-{}", std::process::id());
+    let id = new_job_id();
     let body = json!({
         "id": id,
         "project": job_project(project),
@@ -186,6 +188,21 @@ pub async fn kick_off_muse(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn job_ids_are_unpredictable_uuids() {
+        let first = new_job_id();
+        let second = new_job_id();
+        assert_ne!(first, second);
+        assert_eq!(first.len(), "swarm-".len() + 32);
+        assert!(
+            first
+                .trim_start_matches("swarm-")
+                .bytes()
+                .all(|byte| byte.is_ascii_hexdigit()),
+            "{first}"
+        );
+    }
 
     fn temp_dir(tag: &str) -> std::path::PathBuf {
         let stamp = std::time::SystemTime::now()

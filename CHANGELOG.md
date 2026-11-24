@@ -4,6 +4,28 @@ Every release, newest first. The heading is the version its `v*` tag publishes.
 
 ## 0.4.0-1 — 2026-11-24
 
+- security(serve): refuse a `Host` header that does not name the listener, the loopback names or
+  the configured public URL, compare bearer tokens through fixed-length SHA-256 digests, and limit
+  failed authentication to ten attempts per peer per minute ([api](docs/api.md))
+- security(swarm): mint job ids as v4 UUIDs instead of time-and-PID values, so a peer cannot
+  predict the next id
+- security(cloud): pin HS256 on cloud access tokens, compare relay tokens through fixed-length
+  digests, reject whitespace-only passwords, cap relay JSON at 32 levels / 10,000 nodes and time
+  out the Resend call after ten seconds
+- security(ci): scan the tracked tree and recent history with TruffleHog 3.100.0, and record the
+  audit method, the 67-check disposition and the remaining deployment/vendor validation in
+  [security audit](docs/security-audit.md)
+- refactor(skills): replace the refresh and marketplace source-string dispatch with a typed
+  `SourceKind`, and inject repository walks through `RepoFetcher` so index tests exercise the
+  collector without a socket
+- refactor(app): split the 5,692-line Tauri command file into subsystem modules (`skills`,
+  `workspace`, `sessions`, `agents`, `turns`, `safety`, `swarm`, `coordination`, `patches`,
+  `memory`, `providers`, `chat`, `settings`, `shell`, `cloud`), leaving the crate root to own
+  window lifecycle and shared types
+- test(skills): prove every blocking SkillSpector verdict (threshold, HIGH/CRITICAL,
+  DO_NOT_INSTALL, missing binary, error exit, malformed/incomplete/omitted reports) writes no
+  skill row, blob or harness directory, while CAUTION is admitted and recorded; add a React DOM
+  renderer test for the CAUTION index and install receipts
 - feat(skills): gate every third-party repository walk and every install with NVIDIA
   SkillSpector's static `--no-llm` scan; single-skill URLs are preflighted, repository bodies
   are scanned as a collection before indexing and only blocked skills are dropped, missing

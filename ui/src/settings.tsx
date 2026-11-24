@@ -52,6 +52,7 @@ import NetworkPolicyEditor from "./settings/network-policy";
 import PermissionsEditor from "./settings/permissions";
 import PluginsPage from "./settings/plugins";
 import { humanize, sourceLabel } from "./display";
+import { SkillScanReceipt } from "./skill-scan";
 import { ensurePermission } from "./notify";
 import { applyContrast, applyTheme, type Theme } from "./theme";
 import { useMenu } from "./menu";
@@ -2469,10 +2470,15 @@ export default function SettingsView({
             {indexReport.found} found · {indexReport.added} added · {indexReport.updated} updated ·{" "}
             {indexReport.unchanged} unchanged · {indexReport.http_requests} request(s)
             {indexReport.truncated ? " · truncated" : ""}
-            {indexReport.scan
-              ? ` · SkillSpector ${indexReport.scan.recommendation} ${indexReport.scan.score}/100`
-              : ""}
-            {indexReport.blocked ? ` · ${indexReport.blocked} blocked` : ""}
+            {indexReport.scan ? (
+              <>
+                {" · "}
+                <SkillScanReceipt
+                  scan={indexReport.scan}
+                  blocked={indexReport.blocked}
+                />
+              </>
+            ) : null}
           </p>
         ) : null}
       </section>

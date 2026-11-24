@@ -21,7 +21,7 @@ use super::blob::{BlobStore, sha256_hex};
 use super::frontmatter;
 use super::http::Http;
 use super::scan;
-use super::source::{FetchedSkill, SkillRecord, Source, SourceStatus};
+use super::source::{FetchedSkill, SkillRecord, Source, SourceKind, SourceStatus};
 use crate::skills::{SkillsError, cluster};
 
 const SKILLSMP_BASE: &str = "https://skillsmp.com";
@@ -77,12 +77,15 @@ impl SkillsMpSource {
 
 #[async_trait]
 impl Source for SkillsMpSource {
-    fn id(&self) -> &'static str {
-        SKILLSMP_ID
+    fn kind(&self) -> SourceKind {
+        SourceKind::SkillsMp
     }
 
     async fn status(&self) -> Result<SourceStatus, SkillsError> {
-        Ok(super::source::load_status(&self.pool, SKILLSMP_ID, Some(SKILLSMP_BASE)).await?)
+        Ok(
+            super::source::load_status(&self.pool, SourceKind::SkillsMp.id(), Some(SKILLSMP_BASE))
+                .await?,
+        )
     }
 
     async fn search(&self, query: &str, limit: usize) -> Result<Vec<SkillRecord>, SkillsError> {
@@ -172,12 +175,15 @@ impl SkillHubSource {
 
 #[async_trait]
 impl Source for SkillHubSource {
-    fn id(&self) -> &'static str {
-        SKILLHUB_ID
+    fn kind(&self) -> SourceKind {
+        SourceKind::SkillHub
     }
 
     async fn status(&self) -> Result<SourceStatus, SkillsError> {
-        Ok(super::source::load_status(&self.pool, SKILLHUB_ID, Some(SKILLHUB_BASE)).await?)
+        Ok(
+            super::source::load_status(&self.pool, SourceKind::SkillHub.id(), Some(SKILLHUB_BASE))
+                .await?,
+        )
     }
 
     async fn search(&self, query: &str, limit: usize) -> Result<Vec<SkillRecord>, SkillsError> {
