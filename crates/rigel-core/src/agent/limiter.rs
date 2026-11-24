@@ -28,6 +28,8 @@ struct Bucket {
 struct State {
     capacity: f64,
     refill_per_second: f64,
+    /// Per-door overrides, keyed by provider id. The default rate applies everywhere else.
+    limits: HashMap<String, (f64, f64)>,
     buckets: HashMap<String, Bucket>,
 }
 
@@ -54,8 +56,25 @@ impl RateLimiter {
             state: Mutex::new(State {
                 capacity: capacity.max(1.0),
                 refill_per_second: refill_per_second.max(0.000_001),
+                limits: HashMap::new(),
                 buckets: HashMap::new(),
             }),
+        }
+    }
+
+    /// Give one provider its own token bucket rate. Capacity is one minute's budget, so a
+    /// short burst is allowed, but no more than the provider's advertised requests per minute.
+    pub fn set_provider_rate(&self, provider: &str, requests_per_minute: u32) {
+        let per_minute = requests_per_minute.max(1) as f64;
+        let capacity = per_minute;
+        let refill = per_minute / 60.0;
+        let mut state = self.lock();
+        state
+            .limits
+            .insert(provider.to_string(), (capacity, refill));
+        if let Some(bucket) = state.buckets.get_mut(provider) {
+            bucket.tokens = bucket.tokens.min(capacity);
+            bucket.updated = Instant::now();
         }
     }
 
@@ -104,8 +123,11 @@ impl RateLimiter {
 
     fn try_acquire(&self, provider: &str, now: Instant) -> Result<Permit, Duration> {
         let mut state = self.lock();
-        let capacity = state.capacity;
-        let refill = state.refill_per_second;
+        let (capacity, refill) = state
+            .limits
+            .get(provider)
+            .copied()
+            .unwrap_or((state.capacity, state.refill_per_second));
         let bucket = state.buckets.entry(provider.to_string()).or_insert(Bucket {
             tokens: capacity,
             updated: now,
@@ -160,6 +182,30 @@ mod tests {
         assert!(
             limiter.try_acquire("anthropic", now).is_ok(),
             "one provider's spend must not block another"
+        );
+    }
+
+    #[test]
+    fn a_forty_per_minute_door_waits_after_its_minute_budget() {
+        let limiter = RateLimiter::with_rate(12.0, 6.0);
+        limiter.set_provider_rate("nvidia", 40);
+        let now = Instant::now();
+        for _ in 0..40 {
+            assert!(
+                limiter.try_acquire("nvidia", now).is_ok(),
+                "the NVIDIA burst fits the minute budget"
+            );
+        }
+        let wait = limiter
+            .try_acquire("nvidia", now)
+            .expect_err("the forty-first request must wait");
+        assert!(
+            wait >= Duration::from_millis(1_400) && wait <= Duration::from_millis(1_600),
+            "one refill at 40 RPM is 1.5s, got {wait:?}"
+        );
+        assert!(
+            limiter.try_acquire("groq", now).is_ok(),
+            "one door's minute budget must not throttle another"
         );
     }
 

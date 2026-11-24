@@ -388,7 +388,30 @@ pub const PROVIDERS: &[ProviderSpec] = &[
         key_url: Some("https://docs.fireworks.ai/getting-started/quickstart"),
         headers: &[],
     },
+    ProviderSpec {
+        id: credentials::NVIDIA,
+        name: "NVIDIA NIM",
+        endpoint: Endpoint::Fixed {
+            base: "https://integrate.api.nvidia.com/v1",
+            env: "RIGEL_NVIDIA_BASE_URL",
+        },
+        // The model shown in NVIDIA's current NIM quickstart; the live roster can offer others.
+        default_model: Some("nvidia/nemotron-3.5-super-vl-120b-a12b"),
+        usage_request: false,
+        lists_models: true,
+        access_token: false,
+        gateway: false,
+        // NIM serves NVIDIA's own Nemotron ids and other publishers' open weights.
+        namespace: &[],
+        hint: "NVIDIA NIM · hosted open models · 40 RPM",
+        key_url: Some("https://build.nvidia.com/"),
+        headers: &[],
+    },
 ];
+
+/// The NVIDIA API plan this build targets: 40 requests per minute, unlimited model usage.
+/// The shared limiter uses this rate for the `nvidia` door instead of the generic burst.
+pub const NVIDIA_REQUESTS_PER_MINUTE: u32 = 40;
 
 pub fn all() -> &'static [ProviderSpec] {
     PROVIDERS
@@ -603,6 +626,7 @@ pub enum KeyFamily {
     Anthropic,
     OpenRouter,
     Groq,
+    Nvidia,
     Xai,
     GoogleAiStudio,
     VertexToken,
@@ -614,6 +638,7 @@ impl KeyFamily {
             Self::Anthropic => "an Anthropic key (`sk-ant-…`)",
             Self::OpenRouter => "an OpenRouter key (`sk-or-…`)",
             Self::Groq => "a Groq key (`gsk_…`)",
+            Self::Nvidia => "an NVIDIA key (`nvapi-…`)",
             Self::Xai => "an xAI key (`xai-…`)",
             Self::GoogleAiStudio => "a Google AI Studio key (`AIza…`)",
             Self::VertexToken => "a Vertex OAuth token (`ya29.…`)",
@@ -630,6 +655,7 @@ pub fn family_of(value: &str) -> Option<KeyFamily> {
         (KeyFamily::Anthropic, "sk-ant-"),
         (KeyFamily::OpenRouter, "sk-or-"),
         (KeyFamily::Groq, "gsk_"),
+        (KeyFamily::Nvidia, "nvapi-"),
         (KeyFamily::Xai, "xai-"),
         (KeyFamily::GoogleAiStudio, "AIza"),
         (KeyFamily::VertexToken, "ya29."),
@@ -645,6 +671,7 @@ fn documented_family(spec: &ProviderSpec) -> Option<KeyFamily> {
         credentials::ANTHROPIC => Some(KeyFamily::Anthropic),
         credentials::OPENROUTER => Some(KeyFamily::OpenRouter),
         credentials::GROQ => Some(KeyFamily::Groq),
+        credentials::NVIDIA => Some(KeyFamily::Nvidia),
         credentials::XAI => Some(KeyFamily::Xai),
         credentials::GEMINI => Some(KeyFamily::GoogleAiStudio),
         credentials::VERTEX => Some(KeyFamily::VertexToken),
@@ -746,6 +773,11 @@ pub async fn build_with_policy(
         return Ok(Arc::new(vertex::RefreshingModel::new(key, base)));
     }
     let model = openrouter::OpenRouterModel::with_base_url(key, base).with_provider(spec.id);
+    let model = if spec.id == credentials::NVIDIA {
+        model.with_provider_rate(NVIDIA_REQUESTS_PER_MINUTE)
+    } else {
+        model
+    };
     let model = if spec.usage_request {
         model
     } else {
@@ -889,6 +921,18 @@ mod tests {
             "https://api.fireworks.ai/inference/v1"
         );
         assert_eq!(
+            base_url(spec("nvidia")).unwrap(),
+            "https://integrate.api.nvidia.com/v1"
+        );
+        assert_eq!(
+            configured_model(spec("nvidia"), ""),
+            "nvidia/nemotron-3.5-super-vl-120b-a12b"
+        );
+        assert!(is_model(
+            spec("nvidia"),
+            "qwen/qwen3-coder-480b-a35b-instruct"
+        ));
+        assert_eq!(
             base_url(spec("anthropic")).unwrap(),
             "https://api.anthropic.com/v1"
         );
@@ -1010,6 +1054,17 @@ mod tests {
         assert_eq!(model.id(), "groq");
     }
 
+    #[tokio::test]
+    async fn the_nvidia_row_builds_a_hosted_nim_model_with_its_key_shape() {
+        let store = MemoryCredentialStore::with(credentials::NVIDIA, "nvapi-test");
+        let model = build("nvidia", &store).await.unwrap();
+        assert_eq!(model.id(), "nvidia");
+        assert_eq!(
+            spec(credentials::NVIDIA).default_model,
+            Some("nvidia/nemotron-3.5-super-vl-120b-a12b")
+        );
+    }
+
     /// The one row whose contract is not `/chat/completions` builds the Messages adapter.
     #[tokio::test]
     async fn the_anthropic_row_builds_the_messages_adapter() {
@@ -1103,6 +1158,7 @@ mod tests {
                 KeyFamily::Anthropic => "sk-ant-api03-AbCdEfGhIjKlMnOpQrStUv",
                 KeyFamily::OpenRouter => "sk-or-v1-AbCdEfGhIjKlMnOpQrStUvWxYz",
                 KeyFamily::Groq => "gsk_AbCdEfGhIjKlMnOpQrStUvWxYz012345",
+                KeyFamily::Nvidia => "nvapi-AbCdEfGhIjKlMnOpQrStUvWxYz012345",
                 KeyFamily::Xai => "xai-AbCdEfGhIjKlMnOpQrStUvWxYz012345",
                 KeyFamily::GoogleAiStudio => "AIzaSyA1234567890abcdefghijklmnopqrstuv",
                 KeyFamily::VertexToken => "ya29.stored",

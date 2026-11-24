@@ -154,6 +154,13 @@ impl OpenRouterModel {
         self
     }
 
+    /// Apply a provider's advertised request budget to the shared limiter.
+    pub fn with_provider_rate(self, requests_per_minute: u32) -> Self {
+        self.limiter
+            .set_provider_rate(&self.provider, requests_per_minute);
+        self
+    }
+
     /// Drop OpenRouter's cost-request field for a provider that does not define it.
     pub fn without_usage_request(mut self) -> Self {
         self.request_usage = false;

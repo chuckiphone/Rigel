@@ -34,6 +34,8 @@ pub const DEEPSEEK: &str = "deepseek";
 pub const MISTRAL: &str = "mistral";
 pub const TOGETHER: &str = "together";
 pub const FIREWORKS: &str = "fireworks";
+/// NVIDIA NIM: the hosted OpenAI-compatible catalog behind `integrate.api.nvidia.com`.
+pub const NVIDIA: &str = "nvidia";
 /// Not an inference provider: the API key for the AgentMail inbox the mail tools use. It lives
 /// beside the provider keys because that is where Rigel keeps every secret it holds.
 pub const AGENTMAIL: &str = "agentmail";
@@ -68,8 +70,8 @@ pub const CUSTOM: &str = "custom";
 /// without also appearing in `rigel keys status` and in the environment scrub for commands.
 pub const PROVIDERS: &[&str] = &[
     OMNIROUTE, OPENROUTER, GEMINI, VERTEX, OPENAI, XAI, GROQ, DEEPSEEK, MISTRAL, TOGETHER,
-    FIREWORKS, META, ANTHROPIC, CURSOR, CLINE, MINIMAX, AGENTMAIL, GRAVITY, EXA, LOCAL, LLAMAFILE,
-    LLAMACPP, CUSTOM,
+    FIREWORKS, NVIDIA, META, ANTHROPIC, CURSOR, CLINE, MINIMAX, AGENTMAIL, GRAVITY, EXA, LOCAL,
+    LLAMAFILE, LLAMACPP, CUSTOM,
 ];
 
 const SERVICE: &str = "rigel";
@@ -274,6 +276,7 @@ pub fn provider_environment_variable(provider: &str) -> Option<&'static str> {
         MISTRAL => Some("MISTRAL_API_KEY"),
         TOGETHER => Some("TOGETHER_API_KEY"),
         FIREWORKS => Some("FIREWORKS_API_KEY"),
+        NVIDIA => Some("NVIDIA_API_KEY"),
         AGENTMAIL => Some("AGENTMAIL_API_KEY"),
         GRAVITY => Some("GRAVITY_API_KEY"),
         EXA => Some("EXA_API_KEY"),
@@ -389,7 +392,7 @@ mod tests {
         // added without one would silently fall back to the keychain only.
         for provider in [
             OPENAI, ANTHROPIC, OPENROUTER, OMNIROUTE, CURSOR, CLINE, GEMINI, MINIMAX, VERTEX, XAI,
-            GROQ, DEEPSEEK, MISTRAL, TOGETHER, FIREWORKS, GRAVITY, EXA,
+            GROQ, DEEPSEEK, MISTRAL, TOGETHER, FIREWORKS, NVIDIA, GRAVITY, EXA,
         ] {
             let name = provider_environment_variable(provider)
                 .unwrap_or_else(|| panic!("no environment name for {provider}"));
@@ -416,7 +419,7 @@ mod tests {
         // from it is a key the user can store but never see the state of.
         for provider in [
             OPENROUTER, OMNIROUTE, OPENAI, ANTHROPIC, CURSOR, CLINE, GEMINI, MINIMAX, VERTEX, XAI,
-            GROQ, DEEPSEEK, MISTRAL, TOGETHER, FIREWORKS, AGENTMAIL, GRAVITY, EXA,
+            GROQ, DEEPSEEK, MISTRAL, TOGETHER, FIREWORKS, NVIDIA, AGENTMAIL, GRAVITY, EXA,
         ] {
             assert!(PROVIDERS.contains(&provider), "{provider} is missing");
         }

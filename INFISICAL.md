@@ -26,7 +26,7 @@ Production entry points stay outside `infisical run`: `npm run build` in `ui/` a
 Paths and switches (not secrets):
 
 - `RIGEL_INDEX_DIR` — where `index.db` and `blobs/` live; defaults to the per-user app-data directory (`%APPDATA%\Rigel`, `~/.local/share/rigel`).
-- `RIGEL_PROVIDER` — the native agent's default provider: any row of the adapter table — `omniroute` (default), `openrouter`, `gemini`, `vertex`, `openai`, `xai`, `groq`, `deepseek`, `mistral`, `together` or `fireworks`.
+- `RIGEL_PROVIDER` — the native agent's default provider: any row of the adapter table — `omniroute` (default), `openrouter`, `gemini`, `vertex`, `openai`, `xai`, `groq`, `deepseek`, `mistral`, `together`, `fireworks` or `nvidia`.
 - `RIGEL_OMNIROUTE_URL` — base URL of the local OmniRoute router; defaults to `http://127.0.0.1:20128/v1`.
 - `RIGEL_GEMINI_BASE_URL` — Gemini API base; defaults to `https://generativelanguage.googleapis.com/v1beta/openai`.
 - `VERTEX_PROJECT` / `VERTEX_LOCATION` — the GCP project and region Vertex is billed to (`GOOGLE_CLOUD_PROJECT` is honoured for the project; the location defaults to `global`).
@@ -43,7 +43,7 @@ written by `rigel keys set`, so `infisical run` overrides a stored key for one p
 - `GEMINI_API_KEY` — the `gemini` provider (Google AI Studio) and the Gemini CLI harness, which receives it as `GEMINI_API_KEY` at spawn.
 - `VERTEX_ACCESS_TOKEN` — the `vertex` provider. A token, not a key: it expires after about an hour, and `gcloud auth print-access-token` prints a fresh one. With nothing stored, Rigel asks that command itself.
 - `OPENAI_API_KEY` — the `openai` provider, and the key Codex receives.
-- `XAI_API_KEY`, `GROQ_API_KEY`, `DEEPSEEK_API_KEY`, `MISTRAL_API_KEY`, `TOGETHER_API_KEY`, `FIREWORKS_API_KEY` — the matching vendor adapters.
+- `XAI_API_KEY`, `GROQ_API_KEY`, `DEEPSEEK_API_KEY`, `MISTRAL_API_KEY`, `TOGETHER_API_KEY`, `FIREWORKS_API_KEY`, `NVIDIA_API_KEY` — the matching vendor adapters.
 - `ANTHROPIC_API_KEY` — the `anthropic` provider, and the key Claude Code receives.
 - `CURSOR_API_KEY` — Cursor's own key, injected into the ACP child process.
 - `CLINE_API_KEY` — Cline's own key, injected into the ACP child process.
