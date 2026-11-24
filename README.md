@@ -147,7 +147,7 @@ CLI, Cursor, Cline or Muse Code.
 | Renderer | React 19.3, TypeScript 6.0 and Vite 8.3; no component or CSS framework |
 | Core | Rust 1.88 (edition 2024), Tokio 1, Reqwest 0.12 with rustls, SQLx 0.8 on SQLite |
 | Local security | `keyring` 3 (Windows native store), `ed25519-dalek` 2, `sha2`, `tokio-tungstenite` 0.24 |
-| Storage | SQLite project and index databases, with migrations `0001`–`0024` applied in order |
+| Storage | SQLite project and index databases, with migrations `0001`–`0025` applied in order |
 | Agent adapters | Native coordinator plus Codex, Claude Code, Muse Code and ACP (Gemini CLI, Cursor, Cline) |
 | Tests | Playwright 1.64 and axe-core 4.14 for the renderer; WebdriverIO 10.1 for the native Tauri window; `cargo test` for the workspace |
 | Chat sidecar | agentchattr and Python, bundled by the Windows packaging step |

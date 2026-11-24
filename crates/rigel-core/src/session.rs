@@ -10,6 +10,7 @@ use serde::Serialize;
 use sqlx::SqlitePool;
 use uuid::Uuid;
 
+use crate::agent::image::ImagePart;
 use crate::domain::Usage;
 use crate::migrate::now_ms;
 use crate::storage::{StorageError, Store};
@@ -161,6 +162,11 @@ pub struct Turn {
     pub seq: i64,
     pub status: String,
     pub prompt: Option<String>,
+    /// The image parts sent on this turn's first user message. Empty on every text-only turn,
+    /// so its serialized shape is unchanged; persisted rows from before images existed load
+    /// as empty from a NULL `images_json`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub images: Vec<ImagePart>,
     pub started_at: i64,
     pub completed_at: Option<i64>,
     pub usage: Option<Usage>,
@@ -1131,7 +1137,21 @@ impl SessionService {
         agent_id: &str,
         prompt: Option<&str>,
     ) -> Result<Turn, SessionError> {
-        self.append_turn_with_parent(agent_id, prompt, None).await
+        self.append_turn_with_parent_and_images(agent_id, prompt, None, &[])
+            .await
+    }
+
+    /// Open a turn whose first user message carries image parts. The parts are persisted with
+    /// the turn and returned through every reload, so a retry can send the same image bytes
+    /// instead of rebuilding a text-only prompt.
+    pub async fn append_turn_with_images(
+        &self,
+        agent_id: &str,
+        prompt: Option<&str>,
+        images: &[ImagePart],
+    ) -> Result<Turn, SessionError> {
+        self.append_turn_with_parent_and_images(agent_id, prompt, None, images)
+            .await
     }
 
     /// Open a turn that belongs to a parent turn (a subagent's work).
@@ -1140,6 +1160,19 @@ impl SessionService {
         agent_id: &str,
         prompt: Option<&str>,
         parent_turn_id: Option<&str>,
+    ) -> Result<Turn, SessionError> {
+        self.append_turn_with_parent_and_images(agent_id, prompt, parent_turn_id, &[])
+            .await
+    }
+
+    /// Open a turn with both its parent link and its image parts. The empty-image path stores
+    /// NULL, exactly the text-only row older builds wrote.
+    pub async fn append_turn_with_parent_and_images(
+        &self,
+        agent_id: &str,
+        prompt: Option<&str>,
+        parent_turn_id: Option<&str>,
+        images: &[ImagePart],
     ) -> Result<Turn, SessionError> {
         let exists: Option<(i64,)> = sqlx::query_as("SELECT 1 FROM agents WHERE id = ?")
             .bind(agent_id)
@@ -1157,9 +1190,16 @@ impl SessionService {
 
         let id = Uuid::new_v4().to_string();
         let started_at = now_ms();
+        let images = images.to_vec();
+        let images_json = if images.is_empty() {
+            None
+        } else {
+            Some(serde_json::to_string(&images)?)
+        };
         sqlx::query(
-            "INSERT INTO turns (id, agent_id, seq, status, prompt, started_at, parent_turn_id)
-             VALUES (?, ?, ?, 'running', ?, ?, ?)",
+            "INSERT INTO turns
+                 (id, agent_id, seq, status, prompt, started_at, parent_turn_id, images_json)
+             VALUES (?, ?, ?, 'running', ?, ?, ?, ?)",
         )
         .bind(&id)
         .bind(agent_id)
@@ -1167,6 +1207,7 @@ impl SessionService {
         .bind(prompt)
         .bind(started_at)
         .bind(parent_turn_id)
+        .bind(images_json)
         .execute(&self.pool)
         .await?;
 
@@ -1177,6 +1218,7 @@ impl SessionService {
             seq,
             status: "running".to_string(),
             prompt: prompt.map(str::to_string),
+            images,
             started_at,
             completed_at: None,
             usage: None,
@@ -1240,7 +1282,7 @@ impl SessionService {
     pub async fn turn(&self, turn_id: &str) -> Result<Turn, SessionError> {
         let row: Option<TurnRow> = sqlx::query_as(
             "SELECT id, agent_id, seq, status, prompt, started_at, completed_at,
-                    usage_json, stop_reason, parent_turn_id
+                    usage_json, stop_reason, parent_turn_id, images_json
              FROM turns WHERE id = ?",
         )
         .bind(turn_id)
@@ -1336,7 +1378,7 @@ impl SessionService {
     /// which is the one a spawned child actually records.
     pub async fn note_turn(&self, agent_id: &str) -> Result<Option<Turn>, SessionError> {
         let row: Option<TurnRow> = sqlx::query_as(
-            "SELECT id, agent_id, seq, status, prompt, started_at, completed_at, usage_json,\n                    stop_reason, parent_turn_id\n             FROM turns WHERE agent_id = ? ORDER BY started_at DESC, seq DESC LIMIT 1",
+            "SELECT id, agent_id, seq, status, prompt, started_at, completed_at, usage_json,\n                    stop_reason, parent_turn_id, images_json\n             FROM turns WHERE agent_id = ? ORDER BY started_at DESC, seq DESC LIMIT 1",
         )
         .bind(agent_id)
         .fetch_optional(&self.pool)
@@ -1464,7 +1506,7 @@ impl SessionService {
         let limit = limit.clamp(1, 2_048) as i64;
         let rows: Vec<TurnRow> = sqlx::query_as(
             "SELECT t.id, t.agent_id, t.seq, t.status, t.prompt, t.started_at, t.completed_at,
-                    t.usage_json, t.stop_reason, t.parent_turn_id
+                    t.usage_json, t.stop_reason, t.parent_turn_id, t.images_json
              FROM turns t JOIN agents a ON a.id = t.agent_id
              WHERE a.session_id = ? AND t.agent_id = ? AND t.seq < ?
                AND t.parent_turn_id IS NULL AND t.status != 'running'
@@ -1491,7 +1533,7 @@ impl SessionService {
         let session = self.get(session_id).await?;
         let turns: Vec<TurnRow> = sqlx::query_as(
             "SELECT t.id, t.agent_id, t.seq, t.status, t.prompt, t.started_at, t.completed_at,
-                    t.usage_json, t.stop_reason, t.parent_turn_id
+                    t.usage_json, t.stop_reason, t.parent_turn_id, t.images_json
              FROM turns t JOIN agents a ON a.id = t.agent_id
              WHERE a.session_id = ? ORDER BY t.started_at, t.seq",
         )
@@ -1642,7 +1684,7 @@ impl SessionService {
     pub async fn running_turns(&self, session_id: &str) -> Result<Vec<Turn>, SessionError> {
         let rows: Vec<TurnRow> = sqlx::query_as(
             "SELECT t.id, t.agent_id, t.seq, t.status, t.prompt, t.started_at, t.completed_at,
-                    t.usage_json, t.stop_reason, t.parent_turn_id
+                    t.usage_json, t.stop_reason, t.parent_turn_id, t.images_json
              FROM turns t JOIN agents a ON a.id = t.agent_id
              WHERE a.session_id = ? AND t.status = 'running'
              ORDER BY t.started_at, t.seq",
@@ -1911,6 +1953,7 @@ type TurnRow = (
     Option<String>,
     Option<String>,
     Option<String>,
+    Option<String>,
 );
 
 fn turn_from_row(row: TurnRow) -> Result<Turn, SessionError> {
@@ -1928,6 +1971,12 @@ fn turn_from_row(row: TurnRow) -> Result<Turn, SessionError> {
             .and_then(|json| serde_json::from_str::<Usage>(json).ok()),
         stop_reason: row.8,
         parent_turn_id: row.9,
+        images: row
+            .10
+            .as_deref()
+            .map(serde_json::from_str::<Vec<ImagePart>>)
+            .transpose()?
+            .unwrap_or_default(),
     })
 }
 

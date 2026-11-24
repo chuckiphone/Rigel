@@ -164,15 +164,24 @@ async fn an_image_turn_keeps_the_image_on_its_user_message() {
         .unwrap();
     assert_eq!(run.status, "completed");
 
-    let seen = model.seen.lock().unwrap();
-    let user = seen[0]
-        .messages
-        .iter()
-        .find(|message| message.role == "user")
-        .expect("the prompt is the last user message");
-    assert_eq!(user.content.as_deref(), Some("read the sign"));
-    assert_eq!(user.images.len(), 1);
-    assert_eq!(user.images[0].url, "https://example.com/sign.png");
+    let images = {
+        let seen = model.seen.lock().unwrap();
+        let user = seen[0]
+            .messages
+            .iter()
+            .find(|message| message.role == "user")
+            .expect("the prompt is the last user message");
+        assert_eq!(user.content.as_deref(), Some("read the sign"));
+        assert_eq!(user.images.len(), 1);
+        assert_eq!(user.images[0].url, "https://example.com/sign.png");
+        user.images.clone()
+    };
+
+    let stored = service.turn(&run.turn.id).await.unwrap();
+    assert_eq!(
+        stored.images, images,
+        "the turn row persists the image the model received"
+    );
 }
 
 #[tokio::test]
@@ -561,7 +570,12 @@ async fn a_paused_turn_reopens_with_the_same_messages_and_budget_once() {
         .unwrap();
     let messages = vec![
         rigel_core::agent::ChatMessage::system("RESTORED-SYSTEM-MARKER"),
-        rigel_core::agent::ChatMessage::user("finish the report"),
+        rigel_core::agent::ChatMessage::user_with_images(
+            "finish the report",
+            vec![ImagePart {
+                url: "https://example.com/sign.png".to_string(),
+            }],
+        ),
     ];
     rigel_core::store::paused::PauseStore::new(service.pool().clone())
         .save(&rigel_core::store::paused::PausedTurn {
@@ -600,6 +614,11 @@ async fn a_paused_turn_reopens_with_the_same_messages_and_budget_once() {
         assert_eq!(
             seen[0].messages[1].content.as_deref(),
             Some("finish the report")
+        );
+        assert_eq!(seen[0].messages[1].images.len(), 1);
+        assert_eq!(
+            seen[0].messages[1].images[0].url,
+            "https://example.com/sign.png"
         );
     }
     assert!(

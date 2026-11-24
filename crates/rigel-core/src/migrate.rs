@@ -24,7 +24,8 @@ pub struct Migration {
 /// polluting the top-level transcript. 0005 rebuilds `agents` to admit `gemini`, which
 /// SQLite can only do with a table rebuild. 0006 adds the team board: the file-scoped
 /// assignments the coordinator hands to native children and chat-room agents; each file
-/// says why in its header.
+/// says why in its header. 0025 stores a turn's image parts as nullable JSON; NULL is every
+/// text-only row, including all rows written before the column existed.
 pub const PROJECT_MIGRATIONS: &[Migration] = &[
     Migration {
         version: 1,
@@ -145,6 +146,11 @@ pub const PROJECT_MIGRATIONS: &[Migration] = &[
         version: 24,
         name: "0024_agent_tool_overrides",
         sql: include_str!("../../../migrations/project/0024_agent_tool_overrides.sql"),
+    },
+    Migration {
+        version: 25,
+        name: "0025_turn_images",
+        sql: include_str!("../../../migrations/project/0025_turn_images.sql"),
     },
 ];
 

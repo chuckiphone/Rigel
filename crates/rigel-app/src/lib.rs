@@ -2151,6 +2151,12 @@ fn turn_send(
     // answers its questions. The row is created here so the renderer gets it back at once, and
     // `claude::start` adopts that same row (P4.6).
     if agent_row.harness == "claude" {
+        if !images.is_empty() {
+            return Err(ModelError::ImagesNotSupported {
+                model: model_name.clone(),
+            }
+            .to_string());
+        }
         let turn = tauri::async_runtime::block_on(service.append_turn(&agent, Some(&prompt)))
             .map_err(message)?;
         let cap = stored.budget_cents;
@@ -2219,8 +2225,12 @@ fn turn_send(
     ));
 
     tauri::async_runtime::block_on(budget.reserve(&agent)).map_err(message)?;
-    let turn = tauri::async_runtime::block_on(service.append_turn(&agent, Some(&prompt)))
-        .map_err(message)?;
+    let turn = tauri::async_runtime::block_on(service.append_turn_with_images(
+        &agent,
+        Some(&prompt),
+        &images,
+    ))
+    .map_err(message)?;
 
     // The window is the approval surface (P4.10e): a command is published to the channel the card
     // reads, and the turn waits for the user's scope. Nothing is allowed by default, and a card

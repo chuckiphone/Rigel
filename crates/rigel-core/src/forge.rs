@@ -188,6 +188,7 @@ mod tests {
                 seq: 1,
                 status: "completed".to_string(),
                 prompt: Some(prompt.to_string()),
+                images: Vec::new(),
                 started_at: 1,
                 completed_at: Some(2),
                 usage: None,

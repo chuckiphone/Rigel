@@ -121,6 +121,10 @@ the four `/v1/workspace/*` routes below.
   OpenAI-compatible provider receives the standard `text` / `image_url` content array. The
   Anthropic Messages adapter and the remote `rigel` relay have no image encoder, so they answer
   `400 unsupported_content` instead of dropping the image.
+* A turn's image parts are persisted with the turn (`turns.images_json`). Turn objects return
+  an `images` array of `{ "url": "…" }` when the turn carried images; text-only turns omit the
+  field and keep their previous shape. Reloaded transcripts and retries rebuild from these stored
+  URLs, so a local image stays its inlined `data:` URL even if the attachment file changes.
 * A turn request stays open until the turn finishes. Fan out by sending concurrent requests:
   each connection runs in its own task, and each turn is recorded and billed independently.
 * `approve` defaults to **false**. With it off, every `run_command`, `fetch_url` and writable

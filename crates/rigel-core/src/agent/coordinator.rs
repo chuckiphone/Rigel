@@ -872,7 +872,7 @@ impl Coordinator {
         self.reserve_turn(agent_id).await?;
         let turn = self
             .session
-            .append_turn_with_parent(agent_id, Some(prompt), parent_turn_id)
+            .append_turn_with_parent_and_images(agent_id, Some(prompt), parent_turn_id, &images)
             .await?;
         self.run_existing_with_images(session_id, agent_id, turn, prompt, images)
             .await

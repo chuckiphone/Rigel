@@ -988,6 +988,8 @@ export interface Turn {
   seq: number;
   status: "running" | "completed" | "failed" | "cancelled" | string;
   prompt: string | null;
+  /** Image parts persisted with the first user message; omitted on text-only turns. */
+  images?: { url: string }[];
   started_at: number;
   completed_at: number | null;
   usage: Usage | null;

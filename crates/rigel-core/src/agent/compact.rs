@@ -276,7 +276,10 @@ fn bound(text: &str, max: usize) -> String {
 fn messages_for(transcript: &TurnTranscript) -> Vec<ChatMessage> {
     let mut messages = Vec::new();
     if let Some(prompt) = &transcript.turn.prompt {
-        messages.push(ChatMessage::user(prompt));
+        messages.push(ChatMessage::user_with_images(
+            prompt.clone(),
+            transcript.turn.images.clone(),
+        ));
     }
     for item in &transcript.items {
         if item.kind != "message" {
@@ -295,6 +298,7 @@ fn messages_for(transcript: &TurnTranscript) -> Vec<ChatMessage> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::agent::ImagePart;
     use crate::domain::Usage;
     use crate::session::Turn;
 
@@ -307,6 +311,7 @@ mod tests {
                 seq,
                 status: "completed".to_string(),
                 prompt: Some(prompt.to_string()),
+                images: Vec::new(),
                 started_at: seq,
                 completed_at: Some(seq),
                 usage: Some(Usage::default()),
@@ -323,6 +328,22 @@ mod tests {
                 raw: None,
             }],
         }
+    }
+
+    #[test]
+    fn rebuilt_history_keeps_image_parts_on_the_user_message() {
+        let mut transcript = turn("t-image", 1, "read the sign");
+        transcript.turn.images = vec![ImagePart {
+            url: "data:image/png;base64,iVBORw0KGgo=".to_string(),
+        }];
+
+        let messages = messages_for(&transcript);
+        let user = messages
+            .iter()
+            .find(|message| message.role == "user")
+            .expect("the rebuilt turn has its user message");
+        assert_eq!(user.content.as_deref(), Some("read the sign"));
+        assert_eq!(user.images, transcript.turn.images);
     }
 
     #[test]

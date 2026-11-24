@@ -621,6 +621,8 @@ mod tests {
 
     use crate::agent::image::ImagePart;
     use crate::agent::model::{ChatMessage, ChatRequest, ToolCallBuilder};
+    use crate::agent::{Cancels, Coordinator, SubagentPolicy};
+    use crate::{BudgetService, NullSink, SessionService, StopAt, Tools};
 
     /// A two-connection server: 429 with Retry-After on the first request, SSE on the second.
     async fn fake_provider() -> (String, Arc<Mutex<Vec<String>>>) {
@@ -808,6 +810,153 @@ mod tests {
             body["messages"][0]["content"][1]["image_url"]["url"],
             "data:image/png;base64,iVBORw0KGgo="
         );
+    }
+
+    /// The same image parts that reached the provider are on the persisted turn. After a
+    /// service reopen, a retry builds a new turn from those parts and the stub transport sees
+    /// the same `image_url` entries again, including the inlined local attachment.
+    #[tokio::test]
+    async fn a_persisted_image_turn_is_resent_after_reload_and_retry() {
+        let project = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(project.path().join(".rigel/attachments")).unwrap();
+        std::fs::write(
+            project.path().join(".rigel/attachments/sign.png"),
+            b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR",
+        )
+        .unwrap();
+        let images = vec![
+            ImagePart::from_reference(project.path(), "https://example.com/sign.png").unwrap(),
+            ImagePart::from_reference(project.path(), ".rigel/attachments/sign.png").unwrap(),
+        ];
+        let local_url = images[1].url.clone();
+
+        let service = SessionService::open(project.path()).await.unwrap();
+        let session = service
+            .start(Some("persisted images"), Some(25))
+            .await
+            .unwrap();
+        let agent = service
+            .register_agent(&session.id, "native", Some("worker"))
+            .await
+            .unwrap();
+        let (first_base, first_seen) = streamed(concat!(
+            "data: {\"choices\":[{\"delta\":{\"content\":\"sign seen\"}}]}\n\n",
+            "data: [DONE]\n\n",
+        ))
+        .await;
+        let first = coordinator_for(
+            project.path(),
+            &service,
+            Arc::new(OpenRouterModel::with_base_url("test-key", first_base)),
+        );
+        let run = first
+            .run_with_images(&session.id, &agent.id, "read the sign", images.clone())
+            .await
+            .unwrap();
+        assert_eq!(run.status, "completed");
+        assert_eq!(service.turn(&run.turn.id).await.unwrap().images, images);
+
+        let first_body = sent_body(&first_seen.lock().unwrap()[0]);
+        let first_content = sent_user_content(&first_body);
+        assert_eq!(first_content[1]["image_url"]["url"], images[0].url);
+        assert_eq!(first_content[2]["image_url"]["url"], local_url);
+
+        // A restarted app reads the turn back from SQLite; this is the retry source.
+        let reopened = SessionService::open(project.path()).await.unwrap();
+        let transcript = reopened.transcript(&session.id).await.unwrap();
+        let stored = &transcript
+            .iter()
+            .find(|entry| entry.turn.id == run.turn.id)
+            .expect("the image turn is in the reloaded transcript")
+            .turn;
+        assert_eq!(stored.images, images);
+        let retry = reopened
+            .append_turn_with_images(&agent.id, stored.prompt.as_deref(), &stored.images)
+            .await
+            .unwrap();
+
+        let (retry_base, retry_seen) = streamed(concat!(
+            "data: {\"choices\":[{\"delta\":{\"content\":\"same sign\"}}]}\n\n",
+            "data: [DONE]\n\n",
+        ))
+        .await;
+        let retry_coordinator = coordinator_for(
+            project.path(),
+            &reopened,
+            Arc::new(OpenRouterModel::with_base_url("test-key", retry_base)),
+        );
+        retry_coordinator
+            .run_existing_with_images(
+                &session.id,
+                &agent.id,
+                retry,
+                stored.prompt.as_deref().unwrap_or("read the sign"),
+                stored.images.clone(),
+            )
+            .await
+            .unwrap();
+
+        let retry_body = sent_body(&retry_seen.lock().unwrap()[0]);
+        let retry_content = sent_user_content(&retry_body);
+        assert_eq!(retry_content[1]["image_url"]["url"], images[0].url);
+        assert_eq!(retry_content[2]["image_url"]["url"], local_url);
+    }
+
+    /// The coordinator the real CLI, HTTP and desktop surfaces build, reduced to the fields
+    /// this test needs. No tool is called, so the tool table stays empty.
+    fn coordinator_for(
+        project: &std::path::Path,
+        service: &SessionService,
+        model: Arc<OpenRouterModel>,
+    ) -> Coordinator {
+        let cancels = Arc::new(Cancels::new());
+        let budget = Arc::new(BudgetService::new(
+            service.pool().clone(),
+            cancels.clone() as Arc<dyn crate::InterruptSink>,
+        ));
+        let tools = Tools::new(
+            project.to_path_buf(),
+            service.clone(),
+            budget.clone(),
+            project.join("index"),
+            StopAt::Never,
+        );
+        Coordinator {
+            session: service.clone(),
+            budget,
+            tools,
+            model,
+            sink: Arc::new(NullSink),
+            cancels,
+            project_root: project.to_path_buf(),
+            model_name: "openrouter".to_string(),
+            effort: None,
+            max_steps: 2,
+            subagents: SubagentPolicy::default(),
+            depth: 0,
+            parent_cancel: None,
+            worktree_dir: None,
+            chat_parent: None,
+        }
+    }
+
+    fn sent_body(raw: &str) -> serde_json::Value {
+        let body = raw
+            .split_once("\r\n\r\n")
+            .map(|(_, body)| body)
+            .expect("headers and a JSON body");
+        serde_json::from_str(body).unwrap()
+    }
+
+    fn sent_user_content(body: &serde_json::Value) -> &serde_json::Value {
+        let message = body["messages"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .rev()
+            .find(|message| message["role"] == "user")
+            .expect("a user message");
+        &message["content"]
     }
 
     #[tokio::test]
@@ -1008,11 +1157,8 @@ mod tests {
             let Ok((mut socket, _)) = listener.accept().await else {
                 return;
             };
-            let mut buffer = vec![0u8; 16384];
-            let read = socket.read(&mut buffer).await.unwrap_or(0);
-            log.lock()
-                .unwrap()
-                .push(String::from_utf8_lossy(&buffer[..read]).to_string());
+            let raw = read_http_request(&mut socket).await;
+            log.lock().unwrap().push(raw);
             let header = format!(
                 "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nContent-Length: {}\r\n\
                  Connection: close\r\n\r\n",
@@ -1023,6 +1169,37 @@ mod tests {
             let _ = socket.shutdown().await;
         });
         (format!("http://{address}"), seen)
+    }
+
+    /// A coordinator request includes the full system prompt and tool table, so the old
+    /// single-16-KiB read cut a JSON body before its final image. Read to the declared
+    /// Content-Length instead; every stub in this module can use the complete request.
+    async fn read_http_request(socket: &mut tokio::net::TcpStream) -> String {
+        let mut raw = Vec::new();
+        loop {
+            let mut chunk = [0u8; 8192];
+            let read = socket.read(&mut chunk).await.unwrap_or(0);
+            if read == 0 {
+                break;
+            }
+            raw.extend_from_slice(&chunk[..read]);
+            let Some(header_end) = raw.windows(4).position(|window| window == b"\r\n\r\n") else {
+                continue;
+            };
+            let headers = String::from_utf8_lossy(&raw[..header_end]);
+            let content_length = headers
+                .lines()
+                .find_map(|line| {
+                    line.to_ascii_lowercase()
+                        .strip_prefix("content-length:")
+                        .and_then(|value| value.trim().parse::<usize>().ok())
+                })
+                .unwrap_or(0);
+            if raw.len() >= header_end + 4 + content_length {
+                break;
+            }
+        }
+        String::from_utf8_lossy(&raw).to_string()
     }
 
     #[test]

@@ -56,19 +56,29 @@ signal, and the request is the final authority.
 
 ## Storage and remaining gaps
 
-* The first user message keeps its image parts in memory and in a paused-turn snapshot, so a
-  pause/resume keeps them. The `turns` row itself stores only the text prompt; a later turn's
-  rebuilt history does not re-send earlier images, and retrying a completed image turn from the
-  transcript starts with text only.
+* Each turn persists its image parts in `turns.images_json` (migration `0025_turn_images`) as a
+  JSON array of the exact `ImagePart` URLs sent: a remote HTTPS URL stays that URL, and a local
+  `.rigel/attachments` image stays its inlined `data:` URL. Reloading the turn, the transcript
+  and the history query all return the same parts. A retry from the transcript or a continuation
+  sends those stored parts again, even if the local attachment has since changed or disappeared.
+  A paused turn already stores the exact built messages, so its resume keeps the same images too.
+* The column is nullable. Every text-only turn, including every row written before the migration,
+  stores `NULL`; its `Turn` JSON has no `images` field, so the old text-only shape is unchanged.
+  Exported/API turn objects grow an `images` array only when the turn actually carried images.
 * There is no downscale. An image below the 8 MB cap is sent at its original dimensions; a
   provider's own image-token limits may still reject it.
 * The Anthropic image block and Gemini's native `inline_data` encoder are not built. Those
   adapters fail explicitly rather than silently omitting the image.
+* Image tokens are not counted in the local preflight estimate. The persisted data URL is not
+  re-counted as prompt tokens either.
 * The desktop composer marks every attached image as an image part by extension, but the model
   still receives the attachment paths in the text preamble. The tool can read text attachments;
   it cannot read image bytes through `read_file`.
 
 Tests: `agent::image::tests` (local MIME, path jail, URL rules, inline data), the OpenRouter body
-and stub-transport tests, `agent::anthropic::tests::an_image_is_refused_by_this_adapter_before_the_wire`,
-`tests/native.rs` (image turn reaches the first user message; a text-only model refuses before a
-turn row), and `store::paused::tests` (image parts survive a pause).
+and stub-transport tests (including a persisted turn reloaded and retried with the same two image
+parts), `agent::compact::tests` (rebuilt history keeps images on its user message),
+`tests/sessions.rs` (remote and inlined images round-trip through a service reopen and history;
+text-only rows stay image-free), `agent::anthropic::tests::an_image_is_refused_by_this_adapter_before_the_wire`,
+`tests/native.rs` (the persisted coordinator turn keeps its images; a paused resume keeps them;
+a text-only model refuses before a turn row), and `store::paused::tests`.

@@ -2186,7 +2186,11 @@ export default function SessionView({
         );
         return;
       }
-      void deliver(entry.turn.prompt, { agentId: stopped.id, keepComposer: true });
+      void deliver(entry.turn.prompt, {
+        agentId: stopped.id,
+        keepComposer: true,
+        images: entry.turn.images?.map((image) => image.url),
+      });
     },
     [agents, busy, deliver, liveTurn],
   );
@@ -3839,6 +3843,7 @@ export default function SessionView({
             void deliver(entry.turn.prompt, {
               agentId: entry.turn.agent_id,
               keepComposer: true,
+              images: entry.turn.images?.map((image) => image.url),
             });
           }}
           onFallback={(entry, offer) => {
@@ -3849,6 +3854,7 @@ export default function SessionView({
                 keepComposer: true,
                 model: offer.model,
                 provider: offer.provider,
+                images: entry.turn.images?.map((image) => image.url),
               }),
             );
           }}

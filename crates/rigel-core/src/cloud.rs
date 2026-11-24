@@ -2450,6 +2450,7 @@ mod tests {
                 seq: 2,
                 status: "completed".to_string(),
                 prompt: Some(prompt.to_string()),
+                images: Vec::new(),
                 started_at: 1_760_961_600_000,
                 completed_at: Some(1_760_961_601_000),
                 usage: Some(Usage {

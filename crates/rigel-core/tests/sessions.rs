@@ -1,6 +1,6 @@
 //! The session log is the product's spine: if these break, replay and resume are fiction.
 
-use rigel_core::{SessionError, SessionService, SessionStatus};
+use rigel_core::{ImagePart, SessionError, SessionService, SessionStatus};
 use tempfile::TempDir;
 
 #[tokio::test]
@@ -290,6 +290,103 @@ async fn turns_are_sequenced_per_agent_and_close_exactly_once() {
         service.append_turn("no-such-agent", None).await,
         Err(SessionError::AgentNotFound(_))
     ));
+}
+
+/// The turn row is the only place a rebuilt request can learn which image the user attached.
+/// Both a remote URL and an already-inlined local image must survive a service reopen, the
+/// transcript, and the history query compaction uses.
+#[tokio::test]
+async fn image_parts_round_trip_through_the_turn_record_and_history() {
+    let tmp = TempDir::new().unwrap();
+    let images = vec![
+        ImagePart {
+            url: "https://example.com/sign.png".to_string(),
+        },
+        ImagePart {
+            url: "data:image/png;base64,iVBORw0KGgo=".to_string(),
+        },
+    ];
+    let (session_id, agent_id, turn_id) = {
+        let service = SessionService::open(tmp.path()).await.unwrap();
+        let session = service.start(Some("images"), Some(25)).await.unwrap();
+        let agent = service
+            .register_agent(&session.id, "native", Some("worker"))
+            .await
+            .unwrap();
+        let turn = service
+            .append_turn_with_images(&agent.id, Some("read the sign"), &images)
+            .await
+            .unwrap();
+        assert_eq!(
+            turn.images, images,
+            "the append returns the persisted parts"
+        );
+        let loaded = service.turn(&turn.id).await.unwrap();
+        assert_eq!(loaded.images, images, "a direct load keeps the exact parts");
+        service.finish_turn(&turn.id, "completed").await.unwrap();
+        (session.id, agent.id, turn.id)
+    };
+
+    // A second service stands in for an app restart.
+    let reopened = SessionService::open(tmp.path()).await.unwrap();
+    let current = reopened
+        .append_turn(&agent_id, Some("what did the sign say?"))
+        .await
+        .unwrap();
+    let history = reopened
+        .history_for_agent(&session_id, &agent_id, &current.id, 20)
+        .await
+        .unwrap();
+    let stored = history
+        .iter()
+        .find(|transcript| transcript.turn.id == turn_id)
+        .expect("the image turn is in the rebuilt history");
+    assert_eq!(stored.turn.images, images);
+
+    let transcript = reopened.transcript(&session_id).await.unwrap();
+    let rendered = transcript
+        .iter()
+        .find(|entry| entry.turn.id == turn_id)
+        .expect("the image turn is in the transcript");
+    assert_eq!(rendered.turn.images, images);
+}
+
+/// A text-only turn has no image field on its public shape and a NULL image column, so old
+/// rows and new text-only rows carry exactly the pre-image record.
+#[tokio::test]
+async fn a_text_only_turn_record_is_unchanged() {
+    let tmp = TempDir::new().unwrap();
+    let service = SessionService::open(tmp.path()).await.unwrap();
+    let session = service.start(Some("text"), None).await.unwrap();
+    let agent = service
+        .register_agent(&session.id, "native", None)
+        .await
+        .unwrap();
+    let turn = service
+        .append_turn(&agent.id, Some("explain this"))
+        .await
+        .unwrap();
+    assert!(turn.images.is_empty());
+    let json = serde_json::to_string(&turn).unwrap();
+    assert!(!json.contains("\"images\""), "{json}");
+
+    let stored = service.turn(&turn.id).await.unwrap();
+    assert!(stored.images.is_empty());
+    assert!(
+        !serde_json::to_string(&stored)
+            .unwrap()
+            .contains("\"images\"")
+    );
+    let images_json: Option<String> =
+        sqlx::query_scalar("SELECT images_json FROM turns WHERE id = ?")
+            .bind(&turn.id)
+            .fetch_one(service.pool())
+            .await
+            .unwrap();
+    assert!(
+        images_json.is_none(),
+        "a text-only row keeps the old NULL shape"
+    );
 }
 
 #[tokio::test]
