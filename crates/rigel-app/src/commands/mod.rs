@@ -4,6 +4,7 @@
 //! subsystem and uses the shared types and helpers in the crate root.
 
 pub(crate) mod agents;
+pub(crate) mod audit;
 pub(crate) mod chat;
 pub(crate) mod cloud;
 pub(crate) mod coordination;

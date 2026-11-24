@@ -12,9 +12,9 @@ directory. A current, offline, 404 or truncated feed stays silent; every failure
 `update.log` or `updates/apply.log`. `crates/rigel-core/tests/updater_apply_e2e.rs` proves both
 branches with a loopback feed and a real binary swap. See [updates.md](updates.md).
 
-**Tally (2026-11-24):** 95 Done · 6 Blocked · 99 Open. The 0.3.0 preview tree ships every Done
+**Tally (2026-11-24):** 96 Done · 6 Blocked · 98 Open. The 0.3.0 preview tree ships every Done
 item. The previous pass closed 53, 60, 64, 67, 69, 70, 75, 78, 80, 106, 107, 130, 140 and 182;
-this pass closed 43, 44, 45, 46, 47, 48, 49, 52, 55, 56, 57, 58, 61, 62, 63, 65, 66, 68, 74, 76, 77 and 84. The
+this pass closed 43, 44, 45, 46, 47, 48, 49, 52, 55, 56, 57, 58, 61, 62, 63, 65, 66, 68, 74, 76, 77, 83 and 84. The
 remaining open and blocked items below are unchanged by these passes.
 
 **Verified gate (2026-11-08).** `cargo fmt --all -- --check`, `cargo clippy --workspace
@@ -1014,6 +1014,11 @@ done signal, and the eight-state table is the evidence a review will use.
 83. **W3 · P1 · M · Audit log surface.** `ui/src/audit-log.tsx` makes approvals, denials and
     overrides searchable by project, session, agent and turn. — done when a filter round-trips
     through the URL and the export carries the same rows.
+    **Done (2026-11-24):** Settings → Audit log reads `.rigel/audit/approvals.jsonl` through
+    `crates/rigel-core/src/audit/log.rs`; the six filters live in `ui/src/audit-filter.ts` and
+    round-trip through `#settings/audit?...`. **Export filtered CSV** uses the same matcher and
+    adds the project column, the byte SHA-256 and the intact chain tip. `cargo test -p rigel-core
+    --lib audit::log` -> 2 passed; `npx tsx --test ui/tests/audit-filter.test.ts` -> 2 passed.
 
 84. **W3 · P1 · M · Command provenance.** `crates/rigel-core/src/audit/provenance.rs` links each
     command to its model step, tool call, approval and snapshot. — done when a missing link prints

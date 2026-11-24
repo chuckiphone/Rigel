@@ -10477,3 +10477,126 @@ html[data-surface="tray"] #root {
   background: var(--text);
   box-shadow: 0 0 0 2px var(--hairline);
 }
+
+/* Roadmap 83: the approval ledger's read side. Filters are one row until the pane is narrow,
+   and the table scrolls inside its own frame so a long request never widens the page. */
+.audit-filters {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px 12px;
+}
+
+.audit-filters label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.audit-filters label > span {
+  color: var(--faint);
+  font-size: 10px;
+  font-weight: 500;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.audit-filters input,
+.audit-filters select {
+  min-width: 0;
+  padding: 8px 10px;
+  border: 1px solid var(--hairline);
+  border-radius: 6px;
+  background: var(--raised);
+  color: var(--text);
+  font-family: var(--mono);
+  font-size: 11px;
+}
+
+.audit-filters .audit-query {
+  grid-column: span 2;
+}
+
+.audit-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.audit-actions .fine {
+  flex: 1 1 220px;
+  margin: 0;
+}
+
+.audit-table-wrap {
+  overflow: auto;
+  max-height: 62vh;
+  border: 1px solid var(--hairline);
+  border-radius: 8px;
+  background: var(--surface);
+}
+
+.audit-table {
+  width: 100%;
+  min-width: 1080px;
+  border-collapse: collapse;
+  font-size: 11px;
+}
+
+.audit-table th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--hairline);
+  background: var(--bg);
+  color: var(--faint);
+  font-size: 9px;
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  text-align: left;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.audit-table td {
+  max-width: 220px;
+  padding: 8px 10px;
+  overflow: hidden;
+  border-bottom: 1px solid var(--hairline);
+  color: var(--muted);
+  text-overflow: ellipsis;
+  vertical-align: top;
+  white-space: nowrap;
+}
+
+.audit-table tr:last-child td {
+  border-bottom: none;
+}
+
+.audit-table .audit-id {
+  color: var(--faint);
+  font-family: var(--mono);
+  font-size: 10px;
+}
+
+.audit-table .audit-path {
+  max-width: 220px;
+  color: var(--muted);
+  font-family: var(--mono);
+  font-size: 10px;
+}
+
+.audit-table .audit-request {
+  max-width: 300px;
+  color: var(--text);
+  font-family: var(--mono);
+  font-size: 10px;
+}
+
+@media (max-width: 900px) {
+  .audit-filters {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}

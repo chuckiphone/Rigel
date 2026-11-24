@@ -288,7 +288,7 @@ pub fn read_records(path: &Path) -> Result<Vec<ApprovalRecord>, ChainError> {
     Ok(records)
 }
 
-fn check_records(path: &Path, records: &[ApprovalRecord]) -> VerifyReport {
+pub(crate) fn check_records(path: &Path, records: &[ApprovalRecord]) -> VerifyReport {
     let mut previous = GENESIS_HASH.to_string();
     for (index, record) in records.iter().enumerate() {
         let line = index + 1;
@@ -460,7 +460,7 @@ pub fn export(
     })
 }
 
-fn csv_field(value: &str) -> String {
+pub(crate) fn csv_field(value: &str) -> String {
     if value
         .chars()
         .any(|character| matches!(character, ',' | '"' | '\n' | '\r'))
@@ -471,7 +471,7 @@ fn csv_field(value: &str) -> String {
     }
 }
 
-fn digest_bytes(bytes: &[u8]) -> String {
+pub(crate) fn digest_bytes(bytes: &[u8]) -> String {
     let mut hasher = Sha256::new();
     hasher.update(bytes);
     hasher

@@ -826,6 +826,17 @@ recovery limits. The workspace vendors `libsqlite3-sys` with SQLCipher's libtomc
 Windows build no longer needs OpenSSL's Perl toolchain. Tests: `cargo test -p rigel-core --test
 cipher` (3 passed) and `cargo test -p rigel-core --lib store::cipher` (3 passed).
 
+**Audit log surface (24 Nov 2026):** roadmap-0.3 item 83 is closed. Settings → Audit log is a
+read-only view of the same approval ledger, with project, session, agent, turn, decision and
+free-text filters carried in `#settings/audit?...`. `ui/src/audit-log.tsx` renders the chain
+verdict and the rows; `ui/src/audit-filter.ts` owns the URL round-trip, and
+`crates/rigel-core/src/audit/log.rs` owns one matcher shared by the query and **Export filtered
+CSV**, so the file cannot carry rows the screen did not show. The filtered CSV adds a `project`
+column, its byte SHA-256 and the intact chain tip; it is a view, not an offline-verifiable chain.
+The full JSONL export remains the verifiable artifact, and both refuse a broken chain. Tests:
+`cargo test -p rigel-core --lib audit::log` (2 passed) and
+`npx tsx --test ui/tests/audit-filter.test.ts` (2 passed).
+
 ---
 
 ## 3. Decisions of record

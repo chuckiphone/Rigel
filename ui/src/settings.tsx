@@ -44,6 +44,7 @@ import {
   type UpdateStatus,
 } from "./api";
 import { UI_SCALES, applyDisplay } from "./display";
+import AuditLogPage from "./audit-log";
 import ConcordPage from "./concord";
 import { ModelControls } from "./modelpicker";
 import { RouteInspector } from "./route-inspector";
@@ -287,6 +288,7 @@ const PAGES = [
   { id: "permissions", group: "Guardrails", label: "Permissions", blurb: "The project tool ceiling, role narrowing and each agent's effective grant" },
   { id: "network", group: "Guardrails", label: "Network", blurb: "The project kill switch, ordered host rules and disabled sessions" },
   { id: "spending", group: "Guardrails", label: "Spending", blurb: "Recorded turns, grouped by day and session" },
+  { id: "audit", group: "Guardrails", label: "Audit log", blurb: "Every approval, denial and override, with a filter and a CSV view" },
   { id: "shelf", group: "Workspace", label: "Skill shelf", blurb: "Sources, freshness and indexing a repository" },
   { id: "plugins", group: "Workspace", label: "Plugins", blurb: "The searchable catalogue, installed tools and their capabilities" },
   { id: "rules", group: "Workspace", label: "Project rules", blurb: "AGENTS.md, CLAUDE.md and memory export" },
@@ -319,6 +321,12 @@ type PageId = (typeof PAGES)[number]["id"];
 
 export type SettingsPage = PageId;
 
+/** A page can be opened directly; the Audit log may carry its filter after a `?`. */
+function pageFromHash(): PageId | null {
+  const target = /^#settings\/([a-z]+)/.exec(window.location.hash)?.[1];
+  return target && PAGES.some((row) => row.id === target) ? (target as PageId) : null;
+}
+
 /** One line icon per page. They are decorative; the label and its fact carry the meaning. */
 const PAGE_ICONS: Record<PageId, string> = {
   agent:
@@ -331,6 +339,7 @@ const PAGE_ICONS: Record<PageId, string> = {
   network:
     "M10 3a7 7 0 1 0 0 14 7 7 0 0 0 0-14Z M3 10h14 M10 3c2.2 2.2 2.2 11.8 0 14 M10 3c-2.2 2.2-2.2 11.8 0 14",
   spending: "M3 16.5h14 M5.5 13v-3 M10 13V6 M14.5 13V8.5",
+  audit: "M4 5h12 M4 10h12 M4 15h6 M13.5 14.5a2.5 2.5 0 1 0 0 5 2.5 2.5 0 0 0 0-5Z M15.3 18.3l1.7 1.7",
   appearance:
     "M10 6.5a3.5 3.5 0 1 0 0 7 3.5 3.5 0 0 0 0-7Z M10 2.5v1.5 M10 16v1.5 M2.5 10H4 M16 10h1.5 M4.7 4.7l1 1 M14.3 14.3l1 1 M15.3 4.7l-1 1 M5.7 14.3l-1 1",
   sponsors: "M4 8v4l9 4V4L4 8Z M6.5 12v3.5h2.5V13.5 M14.5 8.5a3 3 0 0 1 0 3",
@@ -361,6 +370,7 @@ const SETTINGS_KEYWORDS: Record<PageId, string> = {
   permissions: "tool grants matrix roles agents project ceiling allow deny",
   network: "network egress fetch allowlist denylist rules kill switch disabled sessions origins hosts",
   spending: "cost usage tokens spend money",
+  audit: "approval denials overrides audit ledger chain export csv session agent turn tamper",
   appearance: "theme dark light scale density compact display",
   shortcuts: "keyboard keys bindings rebind shortcut palette focus search",
   shelf: "skills sources refresh index repository stale roblox",
@@ -623,7 +633,11 @@ export default function SettingsView({
   onKeys,
   onNotice,
 }: Props) {
-  const [page, setPage] = useState<PageId>(initialPage);
+  // An explicit deep link wins over a stale address (Account → Settings can name a page while
+  // an older audit filter is still in the hash). The default "agent" trusts the address.
+  const [page, setPage] = useState<PageId>(() =>
+    initialPage === "agent" ? (pageFromHash() ?? "agent") : initialPage,
+  );
   const [notesOpen, setNotesOpen] = useState(notesOpenFromStore);
   const toggleNotes = useCallback(() => {
     setNotesOpen((open) => {
@@ -639,10 +653,14 @@ export default function SettingsView({
   // Q294: a settings page has an address. Opening `#settings/safety` from a note or a second
   // window lands on that page, and the address follows the sidebar so it can be copied.
   useEffect(() => {
-    const target = /^#settings\/([a-z]+)$/.exec(window.location.hash)?.[1];
-    if (target && PAGES.some((row) => row.id === target)) setPage(target as PageId);
-  }, []);
+    if (initialPage !== "agent") return;
+    const target = pageFromHash();
+    if (target) setPage(target);
+  }, [initialPage]);
   useEffect(() => {
+    // The Audit log owns its query string; its filter component writes the hash. Every other
+    // page has no query, so replacing the hash here is still the whole address.
+    if (page === "audit") return;
     window.history.replaceState(null, "", `#settings/${page}`);
   }, [page]);
   const contextMenu = useMenu();
@@ -1613,6 +1631,8 @@ export default function SettingsView({
         return { text: "project policy", dot: null };
       case "spending":
         return { text: spend ? dollars(spend.total_micros) : "…", dot: null };
+      case "audit":
+        return { text: "ledger", dot: null };
       case "appearance":
         return { text: settings?.theme ?? "dark", dot: null };
       case "shortcuts":
@@ -4080,6 +4100,8 @@ export default function SettingsView({
         return <NetworkPolicyEditor project={project} session={session} onNotice={onNotice} />;
       case "spending":
         return spendingPage;
+      case "audit":
+        return <AuditLogPage project={project} onNotice={onNotice} />;
       case "appearance":
         return appearancePage;
       case "shortcuts":
@@ -4359,6 +4381,25 @@ export default function SettingsView({
               defaults above.
             </p>
           </div>
+        ) : null}
+        {page === "audit" ? (
+          <>
+            <div>
+              <h3>Read-only</h3>
+              <p className="fine">
+                This page never approves, denies or edits. The ledger is sealed when a decision is
+                made; a filter only chooses which sealed rows to read.
+              </p>
+            </div>
+            <div>
+              <h3>Two exports</h3>
+              <p className="fine">
+                The filtered CSV is the rows on screen. For evidence that can be checked offline,
+                use <code>rigel audit export</code>, which writes the full chain and refuses a
+                broken one.
+              </p>
+            </div>
+          </>
         ) : null}
         {page === "appearance" ? (
           <>

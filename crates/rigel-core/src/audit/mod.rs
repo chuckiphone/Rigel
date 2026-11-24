@@ -6,12 +6,14 @@
 //! call, approval and snapshot.
 
 pub mod chain;
+pub mod log;
 pub mod provenance;
 
 pub use chain::{
     ApprovalInput, ApprovalRecord, BrokenLink, ChainError, ExportFormat, ExportReport,
     VerifyReport, append, export, ledger_path, verify, verify_file,
 };
+pub use log::{AuditFilter, AuditView, FilteredExport, export_csv, query};
 pub use provenance::{
     ApprovalLink, CommandProvenance, Link, ProvenanceError, ToolCallLink, command,
 };

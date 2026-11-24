@@ -44,6 +44,19 @@ chain tip:
 The hash chain is evidence of local tampering, not a signature by a remote authority. It proves
 the exported lines have not changed since they were sealed; it does not prove who wrote them.
 
+## Filtered view in the app
+
+Settings → Audit log reads the same ledger. Project, session, agent, turn, decision and free-text
+filters are kept in the address (`#settings/audit?session=…&decision=denied`), so a copied URL
+opens the same rows. **Export filtered CSV** writes the rows currently matched, with a leading
+`project` column and the same escaping as the full CSV above. Its report also carries the SHA-256
+of the exact bytes and the intact chain tip the view came from.
+
+A filtered CSV is deliberately not an offline-verifiable artifact: omitted rows cannot be checked
+as a continuous chain. Use `rigel audit export --format jsonl` for the full ledger when a reviewer
+needs to verify it. Both paths refuse a broken chain; the page still shows the readable rows and
+names the first broken line so the damage is visible.
+
 ## Examples
 
 ```sh
@@ -61,3 +74,8 @@ rigel audit export --format csv --out /tmp/approvals.csv
 round-trip through `verify_file`, CSV escaping and row shape, refusal of a broken chain and
 refusal to overwrite. `crates/rigel-cli/tests/audit.rs` drives the real binary through JSONL
 export, CSV export, offline verification and a tampered export.
+
+`crates/rigel-core/src/audit/log.rs` covers every filter (including a wrong project), the shared
+matcher used by query and CSV export, the matching row count, and refusal to export a broken
+chain. `ui/tests/audit-filter.test.ts` round-trips the six filter fields through the settings
+hash.

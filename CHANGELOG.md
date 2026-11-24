@@ -4,6 +4,11 @@ Every release, newest first. The heading is the version its `v*` tag publishes.
 
 ## 0.4.0-1 — 2026-11-24
 
+- feat(audit): add Settings → Audit log, a read-only filtered view of the approval ledger by
+  project, session, agent, turn, decision and free text; the filter round-trips through the
+  settings hash and **Export filtered CSV** writes exactly the matched rows with a leading
+  `project` column, a byte digest and the intact chain tip. A broken chain still shows its rows
+  but names the first broken line and refuses export ([audit](docs/audit.md))
 - security(db): add opt-in SQLCipher 4 encryption for `.rigel/rigel.db`; the 32-byte key comes
   from `RIGEL_DB_KEY` or the OS keychain, plaintext databases migrate in place with an integrity
   check, keyed backups stay encrypted, and a missing or wrong key fails closed with an actionable

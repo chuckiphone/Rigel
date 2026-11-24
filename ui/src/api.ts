@@ -2102,6 +2102,50 @@ export interface PendingApproval {
 
 export type ApprovalAnswer = "once" | "session" | "project" | "always" | "deny";
 
+/** Roadmap 83: the Audit log page's filter. Empty fields mean "all". */
+export interface AuditFilter {
+  project: string;
+  q: string;
+  session: string;
+  agent: string;
+  turn: string;
+  decision: string;
+}
+
+export interface AuditRecord {
+  schema: string;
+  seq: number;
+  approval_id: string;
+  session_id: string;
+  agent_id: string;
+  turn_id: string | null;
+  kind: string;
+  request: unknown;
+  decision: string;
+  scope: string | null;
+  requested_at: number;
+  decided_at: number | null;
+  prev_hash: string;
+  hash: string;
+}
+
+export interface AuditView {
+  project: string;
+  total: number;
+  matched: number;
+  valid: boolean;
+  first_bad: { line: number; seq: number | null; reason: string } | null;
+  records: AuditRecord[];
+}
+
+export interface AuditExport {
+  csv: string;
+  rows: number;
+  total: number;
+  sha256: string;
+  chain_tip: string;
+}
+
 
 /** One claim in the ledger, as the Rust struct serialises. */
 export interface Claim {
@@ -2332,6 +2376,20 @@ export const api = {
         skip: options?.skip ?? false,
         note: options?.note ?? null,
       });
+    },
+  },
+
+  /** Roadmap 83: the approval ledger, filtered by the same fields the page shows. */
+  audit: {
+    async query(project: string, filter: AuditFilter): Promise<AuditView> {
+      if (!isTauri()) {
+        return { project, total: 0, matched: 0, valid: true, first_bad: null, records: [] };
+      }
+      return call<AuditView>("audit_query", { project, filter });
+    },
+    async exportCsv(project: string, filter: AuditFilter): Promise<AuditExport> {
+      if (!isTauri()) throw new Error("Export the audit log in the desktop app.");
+      return call<AuditExport>("audit_export", { project, filter });
     },
   },
 

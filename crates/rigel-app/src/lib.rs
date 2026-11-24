@@ -1907,6 +1907,8 @@ pub fn run() {
             commands::turns::watch_project,
             commands::swarm::swarm_enqueue,
             commands::coordination::claim_list,
+            commands::audit::audit_query,
+            commands::audit::audit_export,
             commands::coordination::merge_queue,
             commands::coordination::writable_list,
             commands::coordination::writable_diff,
