@@ -258,6 +258,27 @@ pub fn manifest_url(settings: &UpdateSettings) -> &str {
         .unwrap_or(GITHUB_MANIFEST_URL)
 }
 
+/// The release channel this build belongs to. A semantic pre-release suffix is the only
+/// distinction the updater needs today: a build without one is the stable `latest` channel.
+pub fn channel(version: &str) -> &'static str {
+    if version.contains('-') {
+        "prerelease"
+    } else {
+        "stable"
+    }
+}
+
+/// The last non-empty line of one of the updater's logs. Doctor reports it as the receipt of
+/// the last check or apply step; an absent or unreadable log is `None`, never an invented state.
+pub fn last_log_line(path: &Path) -> Option<String> {
+    let text = std::fs::read_to_string(path).ok()?;
+    text.lines()
+        .rev()
+        .map(str::trim)
+        .find(|line| !line.is_empty())
+        .map(|line| line.chars().take(180).collect())
+}
+
 pub fn save_settings(data_dir: &Path, settings: &UpdateSettings) -> Result<(), UpdateError> {
     std::fs::create_dir_all(data_dir)?;
     let path = settings_path(data_dir);
@@ -1720,6 +1741,13 @@ mod tests {
         .unwrap();
         let result = check(dir.path(), &manifest, "0.1.0").unwrap();
         assert!(result.verified && result.available);
+    }
+
+    #[test]
+    fn a_prerelease_suffix_is_the_prerelease_channel() {
+        assert_eq!(channel("0.4.0-1"), "prerelease");
+        assert_eq!(channel("0.4.0"), "stable");
+        assert_eq!(channel("not a version"), "stable");
     }
 
     fn encode_hex(bytes: &[u8]) -> String {

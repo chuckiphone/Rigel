@@ -233,3 +233,61 @@ async fn an_install_that_never_finished_is_a_warning_with_its_own_row() {
         .unwrap();
     assert!(detail.contains("never finished"), "{detail}");
 }
+
+#[tokio::test]
+async fn the_update_receipt_names_the_channel_manifest_and_last_outcomes() {
+    let data = TempDir::new().unwrap();
+    let project = TempDir::new().unwrap();
+    let manifest = "https://example.test/latest.json";
+
+    let (enabled, _) = rigel(
+        data.path(),
+        &["update", "enable", "--manifest", manifest, "--json"],
+    );
+    assert_eq!(enabled, 0, "the test feed switch is saved");
+    std::fs::write(data.path().join("update-pubkey.txt"), "00".repeat(32)).unwrap();
+    std::fs::write(
+        data.path().join("update.log"),
+        "up to date 0.3.0\nno update: could not fetch the manifest: offline\n",
+    )
+    .unwrap();
+    std::fs::create_dir_all(data.path().join("updates")).unwrap();
+    std::fs::write(
+        data.path().join("updates").join("apply.log"),
+        "apply 0.4.0: swapped C:\\Rigel\\rigel-app.exe\n",
+    )
+    .unwrap();
+
+    let (_, json) = rigel(
+        data.path(),
+        &[
+            "doctor",
+            "--project",
+            project.path().to_str().unwrap(),
+            "--json",
+        ],
+    );
+    assert_eq!(status_of(&json, "updates"), Some("ok"), "{json}");
+    let detail = json["checks"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|check| check["id"] == "updates")
+        .unwrap()["detail"]
+        .as_str()
+        .unwrap();
+    let channel = rigel_core::update::channel(env!("CARGO_PKG_VERSION"));
+    assert!(
+        detail.contains(&format!("{channel} v{}", env!("CARGO_PKG_VERSION"))),
+        "{detail}"
+    );
+    assert!(detail.contains(manifest), "{detail}");
+    assert!(
+        detail.contains("last check: no update: could not fetch the manifest: offline"),
+        "{detail}"
+    );
+    assert!(
+        detail.contains("last install: apply 0.4.0: swapped"),
+        "{detail}"
+    );
+}

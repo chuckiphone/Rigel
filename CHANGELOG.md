@@ -25,6 +25,8 @@ Every release, newest first. The heading is the version its `v*` tag publishes.
   installer path
 - fix(update): refuse malformed and four-part tags, compare pre-releases semantically, and remove a
   truncated or mismatched download instead of leaving it beside the data directory
+- feat(update): make `rigel doctor` report the channel, current version, manifest URL and the last
+  check or install line, so the update receipt is one command rather than a log hunt
 - feat(agent): add a keyless `llamacpp` door for a GGUF served by llama.cpp's `llama-server`, with
   a managed start, `/health` wait and PID-checked stop from Settings → Providers and
   `rigel local status|start|stop|setup` ([local models](docs/local-models.md))

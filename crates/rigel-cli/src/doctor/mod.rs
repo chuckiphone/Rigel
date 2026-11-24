@@ -499,22 +499,38 @@ async fn installs(store: &Store) -> Check {
 }
 
 /// The update switch is a row of its own: N5 says the fetch can be disabled, and a user
-/// reading `doctor` should not have to open a JSON file to find out which way it is set or
-/// which manifest it will read.
+/// reading `doctor` should not have to open a JSON file to find out which way it is set,
+/// which manifest it will read, or what happened on the last launch check. The channel and
+/// the last lines are evidence, not a new state: the logs remain the source of truth.
 fn updates(data_dir: &Path) -> Check {
+    let current = env!("CARGO_PKG_VERSION");
     let settings = rigel_core::update::load_settings(data_dir);
+    let channel = rigel_core::update::channel(current);
+    let manifest = rigel_core::update::manifest_url(&settings);
+    let last_check = rigel_core::update::last_log_line(&data_dir.join("update.log"))
+        .unwrap_or_else(|| "none recorded".to_string());
+    let last_apply = rigel_core::update::last_log_line(
+        &data_dir
+            .join(rigel_core::update::UPDATE_DIR)
+            .join("apply.log"),
+    );
+    let mut detail = format!(
+        "{} · {channel} v{current} · {manifest} · last check: {last_check}",
+        if settings.enabled { "on" } else { "off" }
+    );
+    if let Some(apply) = last_apply {
+        detail.push_str(&format!(" · last install: {apply}"));
+    }
+
     if !settings.enabled {
-        return Check::ok("updates", "off — no request is made");
+        return Check::ok("updates", detail);
     }
     match rigel_core::update::public_key(data_dir) {
-        Ok(_) => Check::ok(
-            "updates",
-            format!("on · {}", rigel_core::update::manifest_url(&settings)),
-        ),
+        Ok(_) => Check::ok("updates", detail),
         Err(_) => Check::warn(
             "updates",
-            "on, but no public key is configured",
-            "put the publisher's 64 hex characters in update-pubkey.txt; without it a check cannot verify anything",
+            detail,
+            "no public key is configured; put the publisher's 64 hex characters in update-pubkey.txt, or no check can verify anything",
         ),
     }
 }

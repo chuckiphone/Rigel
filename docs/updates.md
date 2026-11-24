@@ -110,6 +110,19 @@ apply 0.4.0: failed: the artifact is …, but the signed manifest says …
 The helper never shows a window and never writes to the app's UI. A failure appears once, in the
 log, and the current build keeps running.
 
+## The doctor receipt
+
+`rigel doctor` includes one `updates` row that answers “which channel, feed and result am I on?”
+without opening any file. It prints the switch, the release channel (`stable` or `prerelease`),
+this build's version, the manifest URL, and the last non-empty line of `update.log`. When
+`updates/apply.log` exists, its last line follows as `last install: …`. An absent log is reported
+as `last check: none recorded` rather than invented; the row turns into a warning only when the
+switch is on and the public key is missing.
+
+```
+ok     updates                on · prerelease v0.4.0-1 · https://github.com/chuckiphone/Rigel/releases/latest/download/latest.json · last check: up to date 0.4.0-1
+```
+
 ## Proving it without publishing
 
 `crates/rigel-core/tests/updater_apply_e2e.rs` serves a signed release from a loopback HTTP server
