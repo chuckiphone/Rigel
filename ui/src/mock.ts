@@ -244,27 +244,36 @@ export class PreviewSkillSource implements SkillSource {
     return detailFor(row);
   }
 
+  // A browser preview cannot run the checker, so it shows the healthy shape the real window
+  // reaches after its first pass instead of a permanent stale/broken line that no button in this
+  // process could fix. Timestamps are now, not the sample rows' fixed date.
   private sources: SourceStatus[] = [
     {
       id: "github",
       base_url: "https://api.github.com",
       state: "ok",
-      last_sync_at: seen,
+      last_sync_at: Date.now(),
+      last_attempt_at: Date.now(),
+      failures: 0,
       error: null,
     },
     {
       id: "skillsmp",
       base_url: "https://skillsmp.com",
-      state: "stale",
-      last_sync_at: seen,
+      state: "ok",
+      last_sync_at: Date.now(),
+      last_attempt_at: Date.now(),
+      failures: 0,
       error: null,
     },
     {
       id: "skillhub",
       base_url: "https://skills.browseract.com",
-      state: "broken",
-      last_sync_at: seen,
-      error: "connection reset",
+      state: "ok",
+      last_sync_at: Date.now(),
+      last_attempt_at: Date.now(),
+      failures: 0,
+      error: null,
     },
   ];
 
@@ -278,7 +287,15 @@ export class PreviewSkillSource implements SkillSource {
    */
   async refresh() {
     const before = this.sources;
-    this.sources = before.map((row) => ({ ...row, state: "ok", error: null }));
+    const now = Date.now();
+    this.sources = before.map((row) => ({
+      ...row,
+      state: "ok",
+      last_sync_at: now,
+      last_attempt_at: now,
+      failures: 0,
+      error: null,
+    }));
     return {
       checked: before.length,
       refreshed: before.filter((row) => row.state !== "ok").length,

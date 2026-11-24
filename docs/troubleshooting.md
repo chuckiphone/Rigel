@@ -116,3 +116,14 @@ and optional MSI fields, so any edit fails this check.
 **Fix.** Use a manifest signed by the release key, or rebuild the binary with the matching
 `RIGEL_UPDATE_PUBKEY`. Auto-install never starts an artifact whose hash does not match the signed
 manifest; do not bypass this line.
+
+## Update: the installer ran but Rigel did not reopen
+
+**Cause.** The NSIS setup starts the app itself; a per-machine MSI does not. Rigel therefore runs a
+detached helper for MSI updates. The helper starts the app only when `msiexec` reports success; a
+cancelled UAC prompt, a failed install or an installer that returns a reboot-required code leaves
+it closed on purpose.
+
+**Fix.** Check the MSI result in Windows Installer's log or Event Viewer, resolve the install error,
+and start Rigel from the Start menu once. A successful automatic MSI update reopens the installed
+`rigel-app.exe`; if it did not, the install did not complete successfully.

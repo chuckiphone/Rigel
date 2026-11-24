@@ -30,7 +30,7 @@ const OUT = flag("out", "data/mcp-catalog.json");
 const MAX_PAGES = Number(flag("max-pages", "400"));
 const DELAY_MS = Number(flag("delay", "120"));
 
-const UA = "rigel-catalog/1.0 (+https://github.com/OkVurb/Rigel)";
+const UA = "rigel-catalog/1.0 (+https://github.com/chuckiphone/Rigel)";
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 async function getJson(url, tries = 2) {

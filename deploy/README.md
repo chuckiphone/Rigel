@@ -53,6 +53,12 @@ deploy if you want a different admin login.
 `MUSE_RELAY_TOKEN` values. Keep the first on the Rigel machine and install the second in Muse's
 secure store; never copy either into source, logs, URLs, or chat.
 
+On a machine that should use this deployment instead of the hosted API, open
+**Settings → Rigel API**, choose **Self-hosted**, enter the public API origin (for example
+`https://api.askrigel.com`), and paste that machine's `RIGEL_RELAY_TOKEN`. The choice is stored
+in `backend.json` and used by both the `rigel` model door and the room relay. See
+[`docs/backend.md`](../docs/backend.md).
+
 Fill in the optional external values when they are available:
 
 - `RESEND_API_KEY` for verification/reset/contact mail.

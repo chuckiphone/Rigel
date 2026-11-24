@@ -20,6 +20,10 @@ fn manifest(seed: u8, version: &str, sha: &str) -> (UpdateManifest, [u8; 32]) {
         published_at: Some(1_760_000_000_000),
         msi_url: None,
         msi_sha256: None,
+        bin_url: None,
+        bin_sha256: None,
+        bin_signature: None,
+        bin_target: None,
     };
     let signature = key.sign(&manifest.signed_bytes());
     manifest.signature = signature

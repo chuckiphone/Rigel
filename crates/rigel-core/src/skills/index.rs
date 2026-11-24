@@ -524,9 +524,10 @@ impl SkillIndex {
     /// each marketplace. The freshness policy still applies, so an unchanged tree costs a tree
     /// call and no bodies.
     ///
-    /// A **broken** source is retried only once its last *success* is older than the stale
-    /// window. A failed walk does not move `last_sync_at`, so that is one retry per window
-    /// rather than a loop against a dead URL.
+    /// A **broken** source is retried on a bounded backoff measured from its last attempt, not
+    /// from its last success: five minutes, then fifteen, thirty, one hour, three hours, and
+    /// finally every six hours. That recovers a short outage quickly without turning a dead URL
+    /// into a request loop. A success resets the count.
     pub async fn refresh_stale(&self) -> Result<RefreshReport, SkillsError> {
         self.refresh_sources(false).await
     }
@@ -551,9 +552,9 @@ impl SkillIndex {
                 || match status.state {
                     SourceState::Ok => false,
                     SourceState::Stale => true,
-                    SourceState::Broken => match status.last_sync_at {
+                    SourceState::Broken => match status.last_attempt_at {
                         None => true,
-                        Some(at) => now_ms() - at >= super::STALE_AFTER_MS,
+                        Some(at) => now_ms() - at >= broken_retry_after(status.failures),
                     },
                 };
             if !due {
@@ -562,7 +563,10 @@ impl SkillIndex {
                     state: status.state,
                     detail: match status.state {
                         SourceState::Ok => "fresh".to_string(),
-                        _ => "failed inside the window; left for the next pass".to_string(),
+                        SourceState::Broken => {
+                            "failed recently; retrying after a short backoff".to_string()
+                        }
+                        SourceState::Stale => "left for the next pass".to_string(),
                     },
                 });
                 continue;
@@ -766,26 +770,32 @@ impl SkillIndex {
         state: SourceState,
         error: Option<&str>,
     ) -> Result<(), SkillsError> {
-        let now = if matches!(state, SourceState::Ok) {
-            Some(now_ms())
+        let now = now_ms();
+        let synced = matches!(state, SourceState::Ok).then_some(now);
+        let failed = if matches!(state, SourceState::Ok) {
+            0
         } else {
-            None
+            1
         };
 
         sqlx::query(
-            "INSERT INTO sources (id, base_url, last_sync_at, status, error)
-             VALUES (?, ?, ?, ?, ?)
+            "INSERT INTO sources (id, base_url, last_sync_at, status, error, last_attempt_at, failures)
+             VALUES (?, ?, ?, ?, ?, ?, ?)
              ON CONFLICT(id) DO UPDATE SET
                base_url = excluded.base_url,
                status = excluded.status,
                error = excluded.error,
-               last_sync_at = COALESCE(excluded.last_sync_at, sources.last_sync_at)",
+               last_sync_at = COALESCE(excluded.last_sync_at, sources.last_sync_at),
+               last_attempt_at = excluded.last_attempt_at,
+               failures = CASE WHEN excluded.status = 'ok' THEN 0 ELSE sources.failures + 1 END",
         )
         .bind(id)
         .bind(base_url)
-        .bind(now)
+        .bind(synced)
         .bind(state.as_str())
         .bind(error)
+        .bind(now)
+        .bind(failed)
         .execute(self.store.pool())
         .await?;
         Ok(())
@@ -1397,6 +1407,23 @@ const AUTO_REFRESH_REPOS: usize = 3;
 /// record of the query that found them, so the shelf's own default query is used.
 const AUTO_REFRESH_QUERY: &str = "agent";
 const AUTO_REFRESH_LIMIT: usize = 30;
+
+/// How long a broken source waits before another attempt. The first retry is deliberately quick
+/// (a dropped connection is often momentary); the rest back off so a dead endpoint is not polled
+/// every time the window checks. The last value is the steady state.
+const BROKEN_RETRY_MS: [i64; 6] = [
+    5 * 60 * 1000,
+    15 * 60 * 1000,
+    30 * 60 * 1000,
+    60 * 60 * 1000,
+    3 * 60 * 60 * 1000,
+    6 * 60 * 60 * 1000,
+];
+
+fn broken_retry_after(failures: u32) -> i64 {
+    let step = (failures.max(1) as usize).saturating_sub(1);
+    BROKEN_RETRY_MS[step.min(BROKEN_RETRY_MS.len() - 1)]
+}
 
 fn row_to_hit(row: &sqlx::sqlite::SqliteRow) -> SearchHit {
     SearchHit {

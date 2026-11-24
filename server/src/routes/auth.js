@@ -494,6 +494,15 @@ export async function registerAuthRoutes(app) {
     if (request.body?.confirm !== 'DELETE') {
       return reply.code(400).send({ error: 'confirmation_required' });
     }
+    // A stolen access token must not be enough to destroy an account. Deletion is the one
+    // irreversible action on this surface, so it takes the password the owner knows.
+    const password = String(request.body?.password ?? '');
+    const { rows } = await app.db.query('SELECT password_hash FROM users WHERE id = $1', [
+      request.user.id,
+    ]);
+    if (!rows[0]?.password_hash || !(await verifyPassword(password, rows[0].password_hash))) {
+      return reply.code(403).send({ error: 'invalid_current_password' });
+    }
     await app.db.query('DELETE FROM users WHERE id = $1', [request.user.id]);
     clearRefreshCookie(reply, config);
     return reply.code(204).send();

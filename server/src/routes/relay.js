@@ -157,7 +157,11 @@ export async function registerRelayRoutes(app) {
 
   app.post('/v1/relay/messages/:id/ack', { preHandler: relayAuth }, async (request, reply) => {
     const id = String(request.params?.id ?? '');
-    if (!/^[0-9a-f-]{36}$/i.test(id)) return reply.code(404).send({ error: 'not_found' });
+    // The column is UUID. Validate the shape before it reaches Postgres, so a malformed id is a
+    // 404 rather than a 22P02 cast error and a 500.
+    if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id)) {
+      return reply.code(404).send({ error: 'not_found' });
+    }
     const { rows } = await app.db.query(
       `UPDATE relay_messages
           SET acknowledged_at = COALESCE(acknowledged_at, now())

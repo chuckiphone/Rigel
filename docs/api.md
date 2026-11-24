@@ -5,6 +5,10 @@ It is the third client of the same service layer the window and the CLI use: a t
 HTTP is a normal session turn, billed to that session, recorded in the same transcript, and
 stopped by the same budget cap.
 
+This is the **local** coordinator API. The `rigel` model door's relay and the room bridge use a
+separate Rigel API, which is hosted by default or self-hosted from `deploy/`; see
+[backend.md](backend.md).
+
 The API is **local by default**: it binds `127.0.0.1`. For a tailnet peer, name the machine's
 Tailscale address; `0.0.0.0` is refused because it would also listen on Wi-Fi and Ethernet. A
 hosted orchestrator cannot reach `127.0.0.1`; see [Reaching it over Tailscale](#reaching-it-over-tailscale)

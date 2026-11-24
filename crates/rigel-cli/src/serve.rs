@@ -200,7 +200,28 @@ fn write_config(
         "version": VERSION,
         "created_at": now_ms(),
     });
-    std::fs::write(path, serde_json::to_vec_pretty(&body).unwrap_or_default())
+    let text = serde_json::to_vec_pretty(&body).unwrap_or_default();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        // The token is a bearer credential for a possibly full-access API. Create the file
+        // owner-only and tighten an existing file at the same time; the default umask would
+        // otherwise leave it readable by another account on the same machine.
+        let mut file = std::fs::OpenOptions::new()
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .mode(0o600)
+            .open(path)?;
+        file.write_all(&text)?;
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))?;
+        Ok(())
+    }
+    #[cfg(not(unix))]
+    {
+        std::fs::write(path, text)
+    }
 }
 
 fn loopback(host: &str) -> bool {
@@ -3559,6 +3580,17 @@ mod tests {
         assert_eq!(token.len(), 64);
         assert!(token.chars().all(|character| character.is_ascii_hexdigit()));
         assert_ne!(token, new_token());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn the_api_token_file_is_owner_only() {
+        use std::os::unix::fs::PermissionsExt;
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("api.json");
+        write_config(&path, &new_token(), "127.0.0.1", 20140, root.path()).unwrap();
+        let mode = std::fs::metadata(&path).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode, 0o600, "api.json holds the bearer token");
     }
 
     #[test]

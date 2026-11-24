@@ -16,10 +16,15 @@
 //!   paired with a fresh signature.
 //! * **Installing is a separate choice.** Auto-install defaults to `true` but is its own switch;
 //!   when it is on, a verified installer is started and the window exits so the installer can
-//!   replace it. The update is never run from a path the manifest did not name and the hash did
-//!   not match.
+//!   replace it. A release may also publish a raw binary with its own signature; that path uses
+//!   [`apply`] to wait for this process to exit, swap the executable and start the new build. The
+//!   update is never run from a path the manifest did not name and the hash did not match.
 
+use std::io::Write;
 use std::path::{Path, PathBuf};
+
+pub mod apply;
+pub use apply::{ApplyPlan, HELPER_FLAG, UPDATED_ENV};
 
 use ed25519_dalek::{Signature, VerifyingKey};
 use futures::StreamExt;
@@ -32,7 +37,7 @@ pub const PUBKEY_FILE: &str = "update-pubkey.txt";
 /// The manifest the window checks when the switch is on. A GitHub release attaches this file,
 /// so `releases/latest` always resolves to the newest published manifest.
 pub const GITHUB_MANIFEST_URL: &str =
-    "https://github.com/OkVurb/Rigel/releases/latest/download/latest.json";
+    "https://github.com/chuckiphone/Rigel/releases/latest/download/latest.json";
 /// Downloaded installers live here until the app exits to run them.
 pub const UPDATE_DIR: &str = "updates";
 /// A release installer is tens of megabytes; this is a ceiling, not an expectation.
@@ -79,6 +84,15 @@ pub enum UpdateError {
     #[error("the update artifact has an unsupported type: {0}")]
     UnsupportedArtifact(String),
 
+    #[error("the binary update needs url, sha256 and signature together")]
+    IncompleteBinary,
+
+    #[error("the binary update signature does not verify against this key")]
+    BadBinarySignature,
+
+    #[error("the download ended at {found} of {expected} bytes")]
+    Truncated { expected: u64, found: u64 },
+
     #[error("could not start the installer: {0}")]
     Install(String),
 
@@ -109,6 +123,18 @@ pub struct UpdateManifest {
     pub msi_url: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub msi_sha256: Option<String>,
+    /// A raw executable for the deferred self-replace path. Its own signature keeps the three- or
+    /// five-line installer payload valid for older clients, which ignore these fields.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bin_url: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bin_sha256: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bin_signature: Option<String>,
+    /// The platform the binary is for, e.g. `windows-x86_64`. A mismatch disables the binary path
+    /// for this build rather than downloading an executable it cannot run.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bin_target: Option<String>,
 }
 
 impl UpdateManifest {
@@ -124,6 +150,21 @@ impl UpdateManifest {
             text.push_str(sha256);
         }
         text.into_bytes()
+    }
+
+    /// The bytes the optional binary signature covers. Kept apart from [`Self::signed_bytes`] so
+    /// a manifest with a binary still verifies on a build that predates the field.
+    pub fn binary_signed_bytes(&self) -> Option<Vec<u8>> {
+        match (&self.bin_url, &self.bin_sha256) {
+            (Some(url), Some(sha256)) => Some(
+                format!(
+                    "{url}\n{sha256}\n{}",
+                    self.bin_target.as_deref().unwrap_or_default()
+                )
+                .into_bytes(),
+            ),
+            _ => None,
+        }
     }
 }
 
@@ -165,6 +206,8 @@ pub struct UpdateCheck {
     pub notes: Option<String>,
     pub msi_url: Option<String>,
     pub msi_sha256: Option<String>,
+    pub bin_url: Option<String>,
+    pub bin_sha256: Option<String>,
 }
 
 pub fn settings_path(data_dir: &Path) -> PathBuf {
@@ -172,10 +215,39 @@ pub fn settings_path(data_dir: &Path) -> PathBuf {
 }
 
 pub fn load_settings(data_dir: &Path) -> UpdateSettings {
-    std::fs::read_to_string(settings_path(data_dir))
+    let mut settings = std::fs::read_to_string(settings_path(data_dir))
         .ok()
         .and_then(|text| parse_settings(&text).ok())
-        .unwrap_or_default()
+        .unwrap_or_default();
+    // Environment switches win over the file so a test feed or a managed install can override a
+    // saved setting without editing the data directory.
+    if env_flag("RIGEL_UPDATE_DISABLE") {
+        settings.enabled = false;
+    }
+    if let Some(url) = std::env::var("RIGEL_UPDATE_MANIFEST_URL")
+        .ok()
+        .filter(|url| !url.trim().is_empty())
+    {
+        settings.manifest_url = Some(url.trim().to_string());
+    }
+    if env_false("RIGEL_UPDATE_AUTO_INSTALL") {
+        settings.auto_install = false;
+    }
+    settings
+}
+
+fn env_flag(name: &str) -> bool {
+    matches!(
+        std::env::var(name).ok().as_deref(),
+        Some("1") | Some("true") | Some("yes") | Some("on")
+    )
+}
+
+fn env_false(name: &str) -> bool {
+    matches!(
+        std::env::var(name).ok().as_deref(),
+        Some("0") | Some("false") | Some("no") | Some("off")
+    )
 }
 
 /// The configured manifest, or the release asset GitHub publishes from the workflow.
@@ -216,15 +288,38 @@ pub fn public_key(data_dir: &Path) -> Result<[u8; 32], UpdateError> {
 }
 
 pub fn verify_manifest(manifest: &UpdateManifest, key: &[u8; 32]) -> Result<(), UpdateError> {
-    let signature = decode_hex(&manifest.signature)
-        .ok_or_else(|| UpdateError::BadSignature(manifest.signature.clone()))?;
+    let verifying =
+        VerifyingKey::from_bytes(key).map_err(|error| UpdateError::BadKey(error.to_string()))?;
+    verify_with(&verifying, &manifest.signature, &manifest.signed_bytes())?;
+
+    match (
+        manifest.bin_url.is_some(),
+        manifest.bin_sha256.is_some(),
+        manifest.bin_signature.as_deref(),
+    ) {
+        (false, false, _) => Ok(()),
+        (true, true, Some(signature)) => verify_with(
+            &verifying,
+            signature,
+            &manifest.binary_signed_bytes().unwrap_or_default(),
+        )
+        .map_err(|_| UpdateError::BadBinarySignature),
+        _ => Err(UpdateError::IncompleteBinary),
+    }
+}
+
+fn verify_with(
+    verifying: &VerifyingKey,
+    signature: &str,
+    payload: &[u8],
+) -> Result<(), UpdateError> {
+    let signature =
+        decode_hex(signature).ok_or_else(|| UpdateError::BadSignature(signature.to_string()))?;
     let signature: [u8; 64] = signature
         .try_into()
         .map_err(|bytes: Vec<u8>| UpdateError::BadSignature(format!("{} bytes", bytes.len())))?;
-    let verifying =
-        VerifyingKey::from_bytes(key).map_err(|error| UpdateError::BadKey(error.to_string()))?;
     verifying
-        .verify_strict(&manifest.signed_bytes(), &Signature::from_bytes(&signature))
+        .verify_strict(payload, &Signature::from_bytes(&signature))
         .map_err(|_| UpdateError::BadSignatureCheck)
 }
 
@@ -239,13 +334,34 @@ pub fn parse_settings(text: &str) -> Result<UpdateSettings, UpdateError> {
 }
 
 /// Fetch a manifest over https. Called only when someone typed the URL or turned the switch on;
-/// nothing in the app does this on a timer.
+/// nothing in the app does this on a timer. The loopback exception exists only for the E2E test;
+/// production callers use this public function and never the test-only policy below.
 pub async fn fetch_manifest(url: &str) -> Result<UpdateManifest, UpdateError> {
-    if !url.starts_with("https://") {
+    fetch_manifest_with_policy(url, false).await
+}
+
+async fn fetch_manifest_with_policy(
+    url: &str,
+    allow_loopback: bool,
+) -> Result<UpdateManifest, UpdateError> {
+    let loopback = url.starts_with("http://127.0.0.1:") || url.starts_with("http://localhost:");
+    if !url.starts_with("https://") && !(allow_loopback && loopback) {
+        return Err(UpdateError::NotHttps(url.to_string()));
+    }
+    fetch_manifest_with(url, allow_loopback, std::time::Duration::from_secs(10)).await
+}
+
+async fn fetch_manifest_with(
+    url: &str,
+    allow_loopback: bool,
+    timeout: std::time::Duration,
+) -> Result<UpdateManifest, UpdateError> {
+    let loopback = url.starts_with("http://127.0.0.1:") || url.starts_with("http://localhost:");
+    if !url.starts_with("https://") && !(allow_loopback && loopback) {
         return Err(UpdateError::NotHttps(url.to_string()));
     }
     let client = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(15))
+        .timeout(timeout)
         .user_agent("rigel/0.1")
         .build()
         .map_err(|error| UpdateError::Network(error.to_string()))?;
@@ -275,6 +391,31 @@ pub async fn fetch_manifest(url: &str) -> Result<UpdateManifest, UpdateError> {
 
 /// Check the manifest the switch points at, defaulting to GitHub's newest release asset.
 pub async fn check_latest(data_dir: &Path, current: &str) -> Result<UpdateCheck, UpdateError> {
+    // Loopback is allowed so a local signed feed can be tested; the trusted key still decides.
+    check_latest_with_policy(data_dir, current, true).await
+}
+
+/// A check against an explicit manifest URL. Loopback http is allowed so a locally served feed
+/// can exercise the updater end to end; every other URL still has to be https and signed.
+pub async fn check_latest_at(
+    data_dir: &Path,
+    current: &str,
+    url: &str,
+) -> Result<UpdateCheck, UpdateError> {
+    let settings = load_settings(data_dir);
+    if !settings.enabled {
+        return Err(UpdateError::Disabled);
+    }
+    public_key(data_dir)?;
+    let manifest = fetch_manifest_with_policy(url, true).await?;
+    check(data_dir, &manifest, current)
+}
+
+async fn check_latest_with_policy(
+    data_dir: &Path,
+    current: &str,
+    allow_loopback: bool,
+) -> Result<UpdateCheck, UpdateError> {
     let settings = load_settings(data_dir);
     if !settings.enabled {
         return Err(UpdateError::Disabled);
@@ -283,7 +424,9 @@ pub async fn check_latest(data_dir: &Path, current: &str) -> Result<UpdateCheck,
     // key should fail here, before GitHub sees anything.
     public_key(data_dir)?;
     let url = manifest_url(&settings).to_string();
-    let manifest = fetch_manifest(&url).await?;
+    // A loopback feed is allowed so a locally served signed manifest can be tested; the signature
+    // and the trusted key still decide whether anything is installed.
+    let manifest = fetch_manifest_with_policy(&url, allow_loopback).await?;
     check(data_dir, &manifest, current)
 }
 
@@ -294,6 +437,13 @@ pub fn artifact_for(check: &UpdateCheck, prefer_msi: bool) -> (&str, &str) {
         return (url, sha256);
     }
     (&check.url, &check.sha256)
+}
+
+/// The artifact to install, or `None` when the signed manifest was not newer. This is the
+/// production no-op branch shared by the launch path and the CLI; callers never construct an
+/// installer command for a current build.
+pub fn available_artifact(check: &UpdateCheck, prefer_msi: bool) -> Option<(&str, &str)> {
+    check.available.then(|| artifact_for(check, prefer_msi))
 }
 
 /// Download one installer and verify the signed hash before returning its path. The file is
@@ -327,10 +477,8 @@ pub async fn download_artifact(
     if !response.status().is_success() {
         return Err(UpdateError::Network(format!("HTTP {}", response.status())));
     }
-    if response
-        .content_length()
-        .is_some_and(|length| length > MAX_ARTIFACT_BYTES)
-    {
+    let declared = response.content_length();
+    if declared.is_some_and(|length| length > MAX_ARTIFACT_BYTES) {
         return Err(UpdateError::TooLarge);
     }
 
@@ -339,7 +487,22 @@ pub async fn download_artifact(
     let mut total = 0u64;
     let mut stream = response.bytes_stream();
     while let Some(chunk) = stream.next().await {
-        let chunk = chunk.map_err(|error| UpdateError::Network(error.to_string()))?;
+        let chunk = match chunk {
+            Ok(chunk) => chunk,
+            Err(error) => {
+                // A connection that closes before the declared length is a truncated download, not
+                // a network failure the caller should retry blindly. Either way, remove the part.
+                drop(file);
+                let _ = tokio::fs::remove_file(&path).await;
+                return Err(match declared {
+                    Some(expected) if total < expected => UpdateError::Truncated {
+                        expected,
+                        found: total,
+                    },
+                    _ => UpdateError::Network(error.to_string()),
+                });
+            }
+        };
         total += chunk.len() as u64;
         if total > MAX_ARTIFACT_BYTES {
             drop(file);
@@ -350,6 +513,17 @@ pub async fn download_artifact(
         file.write_all(&chunk).await?;
     }
     file.flush().await?;
+
+    if let Some(expected) = declared
+        && total != expected
+    {
+        drop(file);
+        let _ = tokio::fs::remove_file(&path).await;
+        return Err(UpdateError::Truncated {
+            expected,
+            found: total,
+        });
+    }
 
     let found = format!("{:x}", hasher.finalize());
     if !found.eq_ignore_ascii_case(sha256) {
@@ -385,9 +559,10 @@ fn artifact_name(url: &str) -> String {
     }
 }
 
-/// Run the downloaded installer. NSIS is silent with `/S` and relaunches this app with `/R`;
-/// MSI uses a basic progress UI and never reboots. The caller exits the window after this
-/// returns, so the installer can replace the running executable.
+/// Run the downloaded installer. NSIS is silent with `/S` and relaunches this app with `/R`.
+/// MSI has no equivalent relaunch flag, so a per-machine update starts a detached helper that
+/// waits for this process to exit, runs the MSI, and then starts the app again. The caller exits
+/// the window after this returns, so either installer can replace the running executable.
 pub fn install_artifact(path: &Path) -> Result<(), UpdateError> {
     if !path.is_file() {
         return Err(UpdateError::Io(std::io::Error::new(
@@ -402,34 +577,63 @@ pub fn install_artifact(path: &Path) -> Result<(), UpdateError> {
     }
     #[cfg(windows)]
     {
-        let extension = path
-            .extension()
-            .and_then(|extension| extension.to_str())
-            .unwrap_or_default()
-            .to_ascii_lowercase();
-        let mut command = match extension.as_str() {
-            "msi" => {
-                let mut command = std::process::Command::new("msiexec");
-                command.args(["/i"]).arg(path).args(["/qb", "/norestart"]);
-                command
-            }
-            "exe" => {
-                let mut command = std::process::Command::new(path);
-                // Tauri's NSIS template reads `/R` in silent mode and starts the new build after
-                // the install, so an automatic update does not leave the user with a closed app.
-                command.args(["/S", "/R"]);
-                command
-            }
-            _ => {
-                return Err(UpdateError::UnsupportedArtifact(path.display().to_string()));
-            }
-        };
+        let exe =
+            std::env::current_exe().map_err(|error| UpdateError::Install(error.to_string()))?;
+        let plan = installer_command(path, &exe)?;
+        let mut command = std::process::Command::new(&plan.program);
+        command.args(&plan.args);
         crate::process::hide(&mut command);
         command
             .spawn()
             .map_err(|error| UpdateError::Install(error.to_string()))?;
         Ok(())
     }
+}
+
+/// The exact process a downloaded installer would start. Kept separate from the spawn so the
+/// launch test can assert the command without running an MSI or a downloaded executable.
+#[cfg(windows)]
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct InstallerCommand {
+    program: PathBuf,
+    args: Vec<String>,
+}
+
+#[cfg(windows)]
+fn installer_command(path: &Path, exe: &Path) -> Result<InstallerCommand, UpdateError> {
+    let extension = path
+        .extension()
+        .and_then(|extension| extension.to_str())
+        .unwrap_or_default()
+        .to_ascii_lowercase();
+    match extension.as_str() {
+        "msi" => Ok(InstallerCommand {
+            program: std::env::var_os("COMSPEC")
+                .map(PathBuf::from)
+                .unwrap_or_else(|| PathBuf::from("cmd.exe")),
+            args: vec!["/D".into(), "/C".into(), msi_relaunch_script(path, exe)],
+        }),
+        "exe" => Ok(InstallerCommand {
+            // Tauri's NSIS template reads `/R` in silent mode and starts the new build after the
+            // install, so an automatic update does not leave the user with a closed app.
+            program: path.to_path_buf(),
+            args: vec!["/S".into(), "/R".into()],
+        }),
+        _ => Err(UpdateError::UnsupportedArtifact(path.display().to_string())),
+    }
+}
+
+/// The command a detached `cmd.exe` runs for a per-machine MSI update. `ping` is the delay: a
+/// no-console helper cannot use `timeout` because that command wants an interactive console.
+/// `start /wait` returns `msiexec`'s exit status, so `&&` starts Rigel only after a successful
+/// install. Both paths are quoted; the MSI path comes from the signed manifest.
+#[cfg(windows)]
+fn msi_relaunch_script(installer: &Path, exe: &Path) -> String {
+    format!(
+        "ping -n 3 127.0.0.1 >nul & start \"\" /wait msiexec.exe /i \"{}\" /qb /norestart && start \"\" \"{}\"",
+        installer.display(),
+        exe.display()
+    )
 }
 
 /// Verify a downloaded artifact against either signed hash. A release has a setup executable and
@@ -440,6 +644,10 @@ pub fn verify_artifact(path: &Path, manifest: &UpdateManifest) -> Result<String,
     let matches = found.eq_ignore_ascii_case(&manifest.sha256)
         || manifest
             .msi_sha256
+            .as_deref()
+            .is_some_and(|sha| found.eq_ignore_ascii_case(sha))
+        || manifest
+            .bin_sha256
             .as_deref()
             .is_some_and(|sha| found.eq_ignore_ascii_case(sha));
     if matches {
@@ -465,6 +673,17 @@ pub fn check(
     let key = public_key(data_dir)?;
     verify_manifest(manifest, &key)?;
     let available = is_newer(&manifest.version, current);
+    // A binary is only usable on the platform its signed tag names. A Windows asset on a Mac is
+    // not an update this build can apply, so it is not offered at all.
+    let bin_matches = manifest
+        .bin_target
+        .as_deref()
+        .is_none_or(|target| target.eq_ignore_ascii_case(&platform_tag()));
+    let (bin_url, bin_sha256) = if bin_matches {
+        (manifest.bin_url.clone(), manifest.bin_sha256.clone())
+    } else {
+        (None, None)
+    };
     Ok(UpdateCheck {
         current: current.to_string(),
         offered: manifest.version.clone(),
@@ -475,35 +694,175 @@ pub fn check(
         notes: manifest.notes.clone(),
         msi_url: manifest.msi_url.clone(),
         msi_sha256: manifest.msi_sha256.clone(),
+        bin_url,
+        bin_sha256,
     })
 }
 
-/// Numeric comparison, segment by segment. A pre-release suffix (`1.2.0-rc1`) sorts before the
-/// release it precedes, which is the only nuance the updater needs.
-pub fn is_newer(offered: &str, current: &str) -> bool {
-    fn parts(version: &str) -> (Vec<u64>, bool) {
-        let (core, pre) = match version.split_once('-') {
-            Some((core, _)) => (core, true),
-            None => (version, false),
-        };
-        (
-            core.split('.')
-                .map(|part| part.parse::<u64>().unwrap_or(0))
-                .collect(),
-            pre,
-        )
+/// The tag a release signs for this build: `<os>-<arch>` in Rust's own names.
+pub fn platform_tag() -> String {
+    format!("{}-{}", std::env::consts::OS, std::env::consts::ARCH)
+}
+
+/// Download and stage the verified binary for the deferred-replace helper. `None` means the
+/// signed manifest has no binary asset (an installed copy still uses its installer) or this build
+/// is already current; neither case downloads anything.
+pub async fn stage_binary(
+    data_dir: &Path,
+    check: &UpdateCheck,
+    target: &Path,
+    pid: u32,
+    args: Vec<String>,
+    cwd: Option<PathBuf>,
+) -> Result<Option<StagedUpdate>, UpdateError> {
+    if !check.available {
+        return Ok(None);
     }
-    let (offered_parts, offered_pre) = parts(offered.trim_start_matches('v'));
-    let (current_parts, current_pre) = parts(current.trim_start_matches('v'));
-    for index in 0..offered_parts.len().max(current_parts.len()) {
-        let a = offered_parts.get(index).copied().unwrap_or(0);
-        let b = current_parts.get(index).copied().unwrap_or(0);
-        if a != b {
-            return a > b;
+    let (Some(url), Some(sha256)) = (check.bin_url.as_deref(), check.bin_sha256.as_deref()) else {
+        return Ok(None);
+    };
+    let artifact = download_artifact(url, sha256, data_dir).await?;
+    let plan = apply::write_plan(
+        data_dir,
+        &apply::ApplyPlan {
+            pid,
+            source: artifact.clone(),
+            target: target.to_path_buf(),
+            sha256: sha256.to_string(),
+            args,
+            cwd,
+            version: check.offered.clone(),
+        },
+    )?;
+    Ok(Some(StagedUpdate {
+        plan,
+        artifact,
+        version: check.offered.clone(),
+    }))
+}
+
+#[derive(Debug, Clone)]
+pub struct StagedUpdate {
+    pub plan: PathBuf,
+    pub artifact: PathBuf,
+    pub version: String,
+}
+
+/// One quiet line in the data directory's own log. Nothing here reaches the window.
+pub fn log_line(data_dir: &Path, message: &str) {
+    let _ = std::fs::create_dir_all(data_dir);
+    if let Ok(mut file) = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(data_dir.join("update.log"))
+    {
+        let _ = writeln!(file, "{message}");
+    }
+}
+
+/// Semantic comparison. A tag is accepted only when its core is one to three numeric segments
+/// with an optional semver pre-release; anything else (a branch name, a four-part version, an
+/// empty pre-release) is never an update. Equal versions and downgrades are not updates either.
+pub fn is_newer(offered: &str, current: &str) -> bool {
+    match (parse_version(offered), parse_version(current)) {
+        (Some(offered), Some(current)) => offered.cmp(&current) == std::cmp::Ordering::Greater,
+        _ => false,
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct Version {
+    numbers: [u64; 3],
+    pre: Option<Vec<Identifier>>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum Identifier {
+    Numeric(u64),
+    Text(String),
+}
+
+impl Version {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        use std::cmp::Ordering;
+        match self.numbers.cmp(&other.numbers) {
+            Ordering::Equal => {}
+            ordering => return ordering,
+        }
+        match (&self.pre, &other.pre) {
+            (None, None) => Ordering::Equal,
+            (None, Some(_)) => Ordering::Greater,
+            (Some(_), None) => Ordering::Less,
+            (Some(left), Some(right)) => {
+                for (a, b) in left.iter().zip(right.iter()) {
+                    let ordering = match (a, b) {
+                        (Identifier::Numeric(a), Identifier::Numeric(b)) => a.cmp(b),
+                        (Identifier::Numeric(_), Identifier::Text(_)) => Ordering::Less,
+                        (Identifier::Text(_), Identifier::Numeric(_)) => Ordering::Greater,
+                        (Identifier::Text(a), Identifier::Text(b)) => a.cmp(b),
+                    };
+                    if ordering != Ordering::Equal {
+                        return ordering;
+                    }
+                }
+                left.len().cmp(&right.len())
+            }
         }
     }
-    // Same numbers: a release is newer than its own pre-release.
-    current_pre && !offered_pre
+}
+
+fn parse_version(text: &str) -> Option<Version> {
+    let text = text.trim();
+    let text = text.strip_prefix('v').unwrap_or(text);
+    if text.is_empty() {
+        return None;
+    }
+    let (core, pre) = match text.split_once('-') {
+        Some((core, pre)) => (core, Some(pre)),
+        None => (text, None),
+    };
+    // Build metadata is accepted and ignored, as semver says.
+    let core = core.split('+').next().unwrap_or(core);
+    let mut numbers = [0u64; 3];
+    let parts: Vec<&str> = core.split('.').collect();
+    if parts.is_empty() || parts.len() > 3 {
+        return None;
+    }
+    for (index, part) in parts.iter().enumerate() {
+        if part.is_empty() || !part.bytes().all(|byte| byte.is_ascii_digit()) {
+            return None;
+        }
+        numbers[index] = part.parse().ok()?;
+    }
+    let pre = match pre {
+        None => None,
+        Some(text) => {
+            let text = text.split('+').next().unwrap_or("");
+            if text.is_empty() {
+                return None;
+            }
+            let mut identifiers = Vec::new();
+            for identifier in text.split('.') {
+                if identifier.is_empty()
+                    || !identifier
+                        .bytes()
+                        .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-')
+                {
+                    return None;
+                }
+                if identifier.bytes().all(|byte| byte.is_ascii_digit()) {
+                    if identifier.len() > 1 && identifier.starts_with('0') {
+                        return None;
+                    }
+                    identifiers.push(Identifier::Numeric(identifier.parse().ok()?));
+                } else {
+                    identifiers.push(Identifier::Text(identifier.to_string()));
+                }
+            }
+            Some(identifiers)
+        }
+    };
+    Some(Version { numbers, pre })
 }
 
 fn decode_hex(text: &str) -> Option<Vec<u8>> {
@@ -529,18 +888,31 @@ fn decode_hex(text: &str) -> Option<Vec<u8>> {
 mod tests {
     use super::*;
     use ed25519_dalek::{Signer, SigningKey};
+    use std::sync::{Arc, Mutex};
+    use std::time::Duration;
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    use tokio::net::TcpListener;
 
-    fn signed_manifest(seed: u8, version: &str, sha: &str) -> (UpdateManifest, [u8; 32]) {
+    fn signed_manifest_at(
+        seed: u8,
+        version: &str,
+        url: &str,
+        sha: &str,
+    ) -> (UpdateManifest, [u8; 32]) {
         let key = SigningKey::from_bytes(&[seed; 32]);
         let mut manifest = UpdateManifest {
             version: version.to_string(),
-            url: format!("https://example.test/rigel-{version}.msi"),
+            url: url.to_string(),
             sha256: sha.to_string(),
             signature: String::new(),
             notes: Some("a test release".to_string()),
             published_at: None,
             msi_url: None,
             msi_sha256: None,
+            bin_url: None,
+            bin_sha256: None,
+            bin_signature: None,
+            bin_target: None,
         };
         let signature = key.sign(&manifest.signed_bytes());
         manifest.signature = signature
@@ -549,6 +921,121 @@ mod tests {
             .map(|byte| format!("{byte:02x}"))
             .collect();
         (manifest, key.verifying_key().to_bytes())
+    }
+
+    fn signed_manifest(seed: u8, version: &str, sha: &str) -> (UpdateManifest, [u8; 32]) {
+        signed_manifest_at(
+            seed,
+            version,
+            &format!("https://example.test/rigel-{version}.msi"),
+            sha,
+        )
+    }
+
+    fn update_data_dir(key: &[u8; 32], manifest_url: &str, enabled: bool) -> tempfile::TempDir {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join(PUBKEY_FILE), encode_hex(key)).unwrap();
+        save_settings(
+            dir.path(),
+            &UpdateSettings {
+                enabled,
+                manifest_url: Some(manifest_url.to_string()),
+                auto_install: true,
+            },
+        )
+        .unwrap();
+        dir
+    }
+
+    async fn bind_release_server() -> (TcpListener, u16) {
+        let listener = TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("a loopback release server");
+        let port = listener.local_addr().unwrap().port();
+        (listener, port)
+    }
+
+    /// A two-route release channel: the signed manifest and the installer named by it. `seen`
+    /// records the exact request paths, which is how the no-op cases prove they never downloaded.
+    fn serve_release(
+        listener: TcpListener,
+        manifest: String,
+        installer: Vec<u8>,
+        artifact_path: String,
+        manifest_status: u16,
+    ) -> Arc<Mutex<Vec<String>>> {
+        let seen = Arc::new(Mutex::new(Vec::new()));
+        let recorded = seen.clone();
+        tokio::spawn(async move {
+            loop {
+                let Ok((mut socket, _)) = listener.accept().await else {
+                    break;
+                };
+                let mut request = [0u8; 4096];
+                let read = socket.read(&mut request).await.unwrap_or(0);
+                let request = String::from_utf8_lossy(&request[..read]);
+                let path = request.split_whitespace().nth(1).unwrap_or("/").to_string();
+                recorded.lock().unwrap().push(path.clone());
+                let (status, body) = if path == "/latest.json" {
+                    if manifest_status == 200 {
+                        ("200 OK", manifest.as_bytes().to_vec())
+                    } else {
+                        ("404 Not Found", Vec::new())
+                    }
+                } else if path == artifact_path {
+                    ("200 OK", installer.clone())
+                } else {
+                    ("404 Not Found", Vec::new())
+                };
+                let header = format!(
+                    "HTTP/1.1 {status}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                    body.len()
+                );
+                let _ = socket.write_all(header.as_bytes()).await;
+                let _ = socket.write_all(&body).await;
+            }
+        });
+        seen
+    }
+
+    #[cfg(windows)]
+    fn fake_installer(dir: &Path, marker: &Path) -> PathBuf {
+        let source = dir.join("fake-installer.rs");
+        let exe = dir.join("Rigel_9.9.9_x64-setup.exe");
+        let marker = marker
+            .to_string_lossy()
+            .replace('\\', "\\\\")
+            .replace('"', "\\\"");
+        std::fs::write(
+            &source,
+            format!(
+                r#"fn main() {{
+    use std::io::Write;
+    let args = std::env::args().skip(1).collect::<Vec<_>>().join("|");
+    let mut log = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open("{marker}")
+        .unwrap();
+    writeln!(log, "{{args}}").unwrap();
+}}
+"#
+            ),
+        )
+        .unwrap();
+        let rustc = std::env::var_os("RUSTC").unwrap_or_else(|| "rustc".into());
+        let output = std::process::Command::new(rustc)
+            .args(["--edition", "2021", "-o"])
+            .arg(&exe)
+            .arg(&source)
+            .output()
+            .expect("rustc builds the fake installer");
+        assert!(
+            output.status.success(),
+            "rustc failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        exe
     }
 
     #[test]
@@ -613,6 +1100,8 @@ mod tests {
             notes: None,
             msi_url: Some("https://example.test/rigel.msi".into()),
             msi_sha256: Some("b".repeat(64)),
+            bin_url: None,
+            bin_sha256: None,
         };
         assert_eq!(
             artifact_for(&check, true),
@@ -648,7 +1137,7 @@ mod tests {
     fn installer_names_are_taken_from_the_asset_and_never_from_a_path() {
         assert_eq!(
             artifact_name(
-                "https://github.com/OkVurb/Rigel/releases/download/v1/Rigel_1_x64-setup.exe?download=1"
+                "https://github.com/chuckiphone/Rigel/releases/download/v1/Rigel_1_x64-setup.exe?download=1"
             ),
             "Rigel_1_x64-setup.exe"
         );
@@ -772,6 +1261,202 @@ mod tests {
         ));
     }
 
+    #[cfg(windows)]
+    #[test]
+    fn the_msi_relaunch_helper_waits_for_the_installer_and_starts_rigel_again() {
+        let installer = Path::new(r"C:\Users\rigel\AppData\Local\Rigel\updates\Rigel 0.4.0.msi");
+        let exe = Path::new(r"C:\Program Files\Rigel\rigel-app.exe");
+        let script = msi_relaunch_script(installer, exe);
+        assert!(
+            script.contains("ping -n 3"),
+            "the helper delays until the app exits"
+        );
+        assert!(
+            script.contains("start \"\" /wait msiexec.exe /i"),
+            "the MSI is awaited"
+        );
+        assert!(
+            script.contains("Rigel 0.4.0.msi"),
+            "the signed installer path is passed"
+        );
+        assert!(
+            script.contains("/qb /norestart"),
+            "the MSI stays quiet and does not reboot"
+        );
+        assert!(
+            script.contains("&& start \"\" \"C:\\Program Files\\Rigel\\rigel-app.exe\""),
+            "Rigel restarts only after a successful install"
+        );
+
+        let plan = installer_command(installer, exe).expect("an MSI plan");
+        assert_eq!(
+            plan.program,
+            std::env::var_os("COMSPEC")
+                .map(PathBuf::from)
+                .unwrap_or_else(|| PathBuf::from("cmd.exe"))
+        );
+        assert_eq!(plan.args.len(), 3);
+        assert_eq!(plan.args[0], "/D");
+        assert_eq!(plan.args[1], "/C");
+        assert_eq!(plan.args[2], script);
+    }
+
+    #[cfg(windows)]
+    #[tokio::test]
+    async fn a_newer_signed_release_downloads_verifies_and_invokes_the_installer() {
+        let work = tempfile::tempdir().unwrap();
+        let marker = work.path().join("installer-args.txt");
+        let fake = fake_installer(work.path(), &marker);
+        let installer = std::fs::read(&fake).unwrap();
+        let sha256 = format!("{:x}", Sha256::digest(&installer));
+        let (listener, port) = bind_release_server().await;
+        let artifact_name = "Rigel_9.9.9_x64-setup.exe";
+        let artifact_path = format!("/{artifact_name}");
+        let artifact_url = format!("http://127.0.0.1:{port}{artifact_path}");
+        let (manifest, key) = signed_manifest_at(21, "9.9.9", &artifact_url, &sha256);
+        let manifest_url = format!("http://127.0.0.1:{port}/latest.json");
+        let seen = serve_release(
+            listener,
+            serde_json::to_string(&manifest).unwrap(),
+            installer.clone(),
+            artifact_path.clone(),
+            200,
+        );
+        let data = update_data_dir(&key, &manifest_url, true);
+
+        let check = check_latest_with_policy(data.path(), "0.3.0", true)
+            .await
+            .expect("the signed newer release is fetched and verified");
+        assert!(check.available);
+        assert!(check.verified);
+        assert_eq!(check.offered, "9.9.9");
+        let (url, sha) = available_artifact(&check, false).expect("an installable artifact");
+        assert_eq!(url, artifact_url);
+        assert_eq!(sha, sha256);
+
+        let downloaded = download_artifact(url, sha, data.path())
+            .await
+            .expect("the artifact downloads and its SHA-256 matches");
+        assert_eq!(std::fs::read(&downloaded).unwrap(), installer);
+        assert_eq!(
+            verify_artifact(&downloaded, &manifest).unwrap(),
+            sha256,
+            "the same downloaded bytes verify against the signed manifest"
+        );
+
+        let app = data.path().join("rigel-app.exe");
+        let plan = installer_command(&downloaded, &app).expect("the NSIS install plan");
+        assert_eq!(plan.program, downloaded);
+        assert_eq!(plan.args, vec!["/S".to_string(), "/R".to_string()]);
+
+        install_artifact(&downloaded).expect("the installer starts");
+        let started = std::time::Instant::now();
+        while !marker.exists() && started.elapsed() < Duration::from_secs(5) {
+            tokio::time::sleep(Duration::from_millis(25)).await;
+        }
+        assert!(marker.exists(), "the downloaded installer actually ran");
+        assert_eq!(
+            std::fs::read_to_string(&marker).unwrap().trim(),
+            "/S|/R",
+            "NSIS receives the exact silent-install and relaunch flags"
+        );
+
+        let requests = seen.lock().unwrap().clone();
+        assert_eq!(
+            requests,
+            vec!["/latest.json".to_string(), artifact_path],
+            "only the signed manifest and the one installer were fetched"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_current_release_has_no_artifact_and_does_not_download() {
+        let installer = b"not downloaded by a current build".to_vec();
+        let sha256 = format!("{:x}", Sha256::digest(&installer));
+        let (listener, port) = bind_release_server().await;
+        let artifact_path = "/Rigel_0.3.0_x64-setup.exe".to_string();
+        let artifact_url = format!("http://127.0.0.1:{port}{artifact_path}");
+        let (manifest, key) = signed_manifest_at(22, "0.3.0", &artifact_url, &sha256);
+        let manifest_url = format!("http://127.0.0.1:{port}/latest.json");
+        let seen = serve_release(
+            listener,
+            serde_json::to_string(&manifest).unwrap(),
+            installer,
+            artifact_path,
+            200,
+        );
+        let data = update_data_dir(&key, &manifest_url, true);
+
+        let check = check_latest_with_policy(data.path(), "0.3.0", true)
+            .await
+            .expect("the current manifest verifies");
+        assert!(!check.available);
+        assert!(
+            available_artifact(&check, true).is_none(),
+            "a current build has no installer to run"
+        );
+        assert!(!data.path().join(UPDATE_DIR).exists());
+        assert_eq!(
+            seen.lock().unwrap().clone(),
+            vec!["/latest.json".to_string()],
+            "a current build fetches the manifest but never the installer"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_missing_release_makes_no_download_and_no_install() {
+        let (listener, port) = bind_release_server().await;
+        let manifest_url = format!("http://127.0.0.1:{port}/latest.json");
+        let key = [23u8; 32];
+        let seen = serve_release(
+            listener,
+            String::new(),
+            Vec::new(),
+            "/Rigel_9.9.9_x64-setup.exe".to_string(),
+            404,
+        );
+        let data = update_data_dir(&key, &manifest_url, true);
+
+        let error = check_latest_with_policy(data.path(), "0.3.0", true)
+            .await
+            .expect_err("a 404 is not a release");
+        assert!(matches!(error, UpdateError::NoRelease(_)));
+        assert!(!data.path().join(UPDATE_DIR).exists());
+        assert_eq!(
+            seen.lock().unwrap().clone(),
+            vec!["/latest.json".to_string()],
+            "the missing release is checked but never downloaded"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_disabled_update_switch_makes_no_request_and_no_download() {
+        let (listener, port) = bind_release_server().await;
+        let seen = serve_release(
+            listener,
+            String::new(),
+            Vec::new(),
+            "/Rigel_9.9.9_x64-setup.exe".to_string(),
+            200,
+        );
+        let data = update_data_dir(
+            &[24u8; 32],
+            &format!("http://127.0.0.1:{port}/latest.json"),
+            false,
+        );
+
+        let error = check_latest_with_policy(data.path(), "0.3.0", true)
+            .await
+            .expect_err("updates are disabled");
+        assert!(matches!(error, UpdateError::Disabled));
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        assert!(
+            seen.lock().unwrap().is_empty(),
+            "a disabled switch makes no HTTP request at all"
+        );
+        assert!(!data.path().join(UPDATE_DIR).exists());
+    }
+
     #[test]
     fn versions_compare_numerically_and_pre_releases_sort_lower() {
         assert!(is_newer("0.2.0", "0.1.0"));
@@ -779,7 +1464,187 @@ mod tests {
         assert!(!is_newer("0.1.0", "0.1.0"));
         assert!(is_newer("1.0.0", "1.0.0-rc1"));
         assert!(!is_newer("1.0.0-rc1", "1.0.0"));
+        assert!(is_newer("1.0.0-rc2", "1.0.0-rc1"));
+        assert!(!is_newer("1.0.0-alpha", "1.0.0-beta"));
+        assert!(!is_newer("1.0.0-rc1", "1.0.0-rc1"));
         assert!(is_newer("v2", "1.9.9"));
+        assert!(!is_newer("0.3.0", "0.3.0+build.7"));
+    }
+
+    #[test]
+    fn a_malformed_tag_or_version_is_never_an_update() {
+        for offered in [
+            "",
+            "latest",
+            "0.4.x",
+            "1.2.3.4",
+            "-1.0.0",
+            "0.4.0-",
+            "0.4.0-01",
+            "v0.4.0.1",
+            "  ",
+            "0.4.0+meta-",
+        ] {
+            assert!(
+                !is_newer(offered, "0.3.0"),
+                "{offered:?} must not be an update"
+            );
+        }
+        // A malformed current version cannot be safely compared either.
+        assert!(!is_newer("0.4.0", "not-a-version"));
+    }
+
+    #[test]
+    fn a_binary_for_another_platform_is_not_offered() {
+        let key = SigningKey::from_bytes(&[7u8; 32])
+            .verifying_key()
+            .to_bytes();
+        let dir = update_data_dir(&key, "https://example.test/latest.json", true);
+        let (mut manifest, _key) = signed_manifest(7, "0.4.0", &"a".repeat(64));
+        manifest.bin_url = Some("https://example.test/rigel-app.exe".into());
+        manifest.bin_sha256 = Some("b".repeat(64));
+        manifest.bin_target = Some("plan9-sparc".into());
+        let signing = SigningKey::from_bytes(&[7; 32]);
+        manifest.bin_signature = Some(
+            signing
+                .sign(&manifest.binary_signed_bytes().unwrap())
+                .to_bytes()
+                .iter()
+                .map(|byte| format!("{byte:02x}"))
+                .collect(),
+        );
+        let check = check(dir.path(), &manifest, "0.3.0").unwrap();
+        assert!(check.available, "the release itself is newer");
+        assert!(
+            check.bin_url.is_none(),
+            "a foreign binary is not staged on this platform"
+        );
+    }
+
+    #[test]
+    fn the_binary_asset_has_its_own_signature() {
+        let (mut manifest, key) = signed_manifest(7, "0.4.0", &"a".repeat(64));
+        manifest.bin_url = Some("https://example.test/rigel-app.exe".into());
+        manifest.bin_sha256 = Some("b".repeat(64));
+        manifest.bin_target = Some(platform_tag());
+        let signing = SigningKey::from_bytes(&[7; 32]);
+        manifest.bin_signature = Some(
+            signing
+                .sign(&manifest.binary_signed_bytes().unwrap())
+                .to_bytes()
+                .iter()
+                .map(|byte| format!("{byte:02x}"))
+                .collect(),
+        );
+        verify_manifest(&manifest, &key).expect("both signatures verify");
+
+        let mut moved = manifest.clone();
+        moved.bin_url = Some("https://evil.test/rigel-app.exe".into());
+        assert!(matches!(
+            verify_manifest(&moved, &key),
+            Err(UpdateError::BadBinarySignature)
+        ));
+
+        let mut incomplete = manifest.clone();
+        incomplete.bin_signature = None;
+        assert!(matches!(
+            verify_manifest(&incomplete, &key),
+            Err(UpdateError::IncompleteBinary)
+        ));
+    }
+
+    #[tokio::test]
+    async fn a_slow_feed_times_out_instead_of_holding_startup() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        tokio::spawn(async move {
+            if let Ok((socket, _)) = listener.accept().await {
+                tokio::time::sleep(Duration::from_secs(5)).await;
+                drop(socket);
+            }
+        });
+        let url = format!("http://127.0.0.1:{port}/latest.json");
+        let started = std::time::Instant::now();
+        let error = fetch_manifest_with(&url, true, Duration::from_millis(200))
+            .await
+            .expect_err("a slow feed is a no-update case");
+        assert!(matches!(error, UpdateError::Network(_)));
+        assert!(
+            started.elapsed() < Duration::from_secs(2),
+            "the check gives up promptly"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_missing_asset_leaves_no_downloaded_file() {
+        use tokio::io::AsyncWriteExt as _;
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        tokio::spawn(async move {
+            if let Ok((mut socket, _)) = listener.accept().await {
+                let mut request = [0u8; 1024];
+                let _ = socket.read(&mut request).await;
+                let _ = socket
+                    .write_all(
+                        b"HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+                    )
+                    .await;
+            }
+        });
+        let dir = tempfile::tempdir().unwrap();
+        let url = format!("http://127.0.0.1:{port}/missing.exe");
+        let error = download_artifact(&url, &"a".repeat(64), dir.path())
+            .await
+            .expect_err("a missing asset is not an update");
+        assert!(matches!(error, UpdateError::Network(_)));
+        assert!(
+            !dir.path().join(UPDATE_DIR).exists()
+                || dir
+                    .path()
+                    .join(UPDATE_DIR)
+                    .read_dir()
+                    .map(|mut entries| entries.next().is_none())
+                    .unwrap_or(true),
+            "nothing is left beside the data dir"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_truncated_download_is_refused_and_removed() {
+        use tokio::io::AsyncWriteExt as _;
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        tokio::spawn(async move {
+            if let Ok((mut socket, _)) = listener.accept().await {
+                let mut request = [0u8; 1024];
+                let _ = socket.read(&mut request).await;
+                // Promise a full artifact, then close after a short body.
+                let _ = socket
+                    .write_all(
+                        b"HTTP/1.1 200 OK\r\nContent-Length: 4096\r\nConnection: close\r\n\r\nshort",
+                    )
+                    .await;
+            }
+        });
+        let dir = tempfile::tempdir().unwrap();
+        let url = format!("http://127.0.0.1:{port}/truncated.exe");
+        let error = download_artifact(&url, &"a".repeat(64), dir.path())
+            .await
+            .expect_err("a truncated body is not an update");
+        assert!(
+            matches!(
+                error,
+                UpdateError::Truncated {
+                    expected: 4096,
+                    found: 5
+                }
+            ),
+            "the short body is named: {error:?}"
+        );
+        assert!(
+            !dir.path().join(UPDATE_DIR).join("truncated.exe").exists(),
+            "the partial file is removed"
+        );
     }
 
     #[test]

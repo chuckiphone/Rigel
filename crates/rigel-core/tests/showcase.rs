@@ -13,7 +13,7 @@ fn every_showcased_skill_is_a_repository_skill_with_frontmatter() {
     let page = std::fs::read_to_string(root.join("web/features/shelf.html"))
         .expect("the shelf showcase page");
 
-    let marker = "github.com/OkVurb/Rigel/blob/main/";
+    let marker = "github.com/chuckiphone/Rigel/blob/main/";
     let mut showcased = 0usize;
     for piece in page.split(marker).skip(1) {
         let path = piece.split('"').next().unwrap_or_default();

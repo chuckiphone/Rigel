@@ -55,7 +55,11 @@ fn every_alias_names_a_pair_its_door_can_send() {
 #[tokio::test]
 async fn the_local_doors_need_no_key_and_default_to_loopback() {
     let store = MemoryCredentialStore::new();
-    for id in [credentials::LOCAL, credentials::LLAMAFILE] {
+    for id in [
+        credentials::LOCAL,
+        credentials::LLAMAFILE,
+        credentials::LLAMACPP,
+    ] {
         let spec = providers::find(id).unwrap_or_else(|| panic!("{id} is not a provider row"));
         assert!(providers::keyless(id), "{id} must be keyless");
         assert_eq!(
@@ -77,7 +81,11 @@ async fn the_local_doors_need_no_key_and_default_to_loopback() {
 
 #[test]
 fn the_picker_can_name_the_local_doors_without_a_credential() {
-    for id in [credentials::LOCAL, credentials::LLAMAFILE] {
+    for id in [
+        credentials::LOCAL,
+        credentials::LLAMAFILE,
+        credentials::LLAMACPP,
+    ] {
         assert!(
             credentials::PROVIDERS.contains(&id),
             "{id} must be visible to keys status"

@@ -17,6 +17,7 @@ use serde_json::{Value, json};
 use tokio_util::sync::CancellationToken;
 
 use super::limiter::RateLimiter;
+use super::local;
 use super::model::{ChatRequest, Delta, DeltaSink, Model, ModelError, RawUsage, SseDecoder};
 use super::retry::{self, RetryClass};
 
@@ -37,6 +38,9 @@ pub struct OpenRouterModel {
     limiter: Arc<RateLimiter>,
     /// A custom door's configured header pairs (roadmap 28). Empty for every built-in row.
     headers: Vec<(String, String)>,
+    /// A provider's chat-template switches, sent as `chat_template_kwargs`. llama.cpp reads them
+    /// (`enable_thinking`); no hosted row defines the field, so it is `None` there.
+    template_kwargs: Option<Value>,
     /// Provider credentials a router accepts for closed models. These are sent only when the
     /// requested model belongs to `conditional_prefix`; a direct call never carries them.
     conditional_headers: Vec<(String, String)>,
@@ -137,6 +141,7 @@ impl OpenRouterModel {
             request_usage: true,
             limiter: RateLimiter::shared(),
             headers: Vec::new(),
+            template_kwargs: None,
             conditional_headers: Vec::new(),
             conditional_prefix: None,
             routing: None,
@@ -164,6 +169,25 @@ impl OpenRouterModel {
 
     pub fn with_attempts(mut self, attempts: u32) -> Self {
         self.max_attempts = attempts.max(1);
+        self
+    }
+
+    /// A different total budget for one door. A local server processes its prompt on this CPU,
+    /// where a long turn is minutes rather than seconds.
+    pub fn with_request_timeout(mut self, timeout: Duration) -> Self {
+        if let Ok(client) = reqwest::Client::builder()
+            .timeout(timeout)
+            .connect_timeout(Duration::from_secs(20))
+            .build()
+        {
+            self.client = client;
+        }
+        self
+    }
+
+    /// A provider's chat-template switches, sent as `chat_template_kwargs`.
+    pub fn with_template_kwargs(mut self, kwargs: Value) -> Self {
+        self.template_kwargs = Some(kwargs);
         self
     }
 
@@ -244,6 +268,9 @@ impl OpenRouterModel {
         {
             body["provider"] = policy.wire();
         }
+        if let Some(kwargs) = &self.template_kwargs {
+            body["chat_template_kwargs"] = kwargs.clone();
+        }
         if !request.tools.is_empty() {
             body["tools"] = Value::Array(request.tools.iter().map(|spec| spec.openai()).collect());
             body["tool_choice"] = json!("auto");
@@ -266,6 +293,10 @@ impl OpenRouterModel {
         let mut stream = response.bytes_stream();
         let mut decoder = SseDecoder::default();
         let mut emitted = false;
+        // A reply that spent its whole budget on the reasoning scratchpad has no answer in it.
+        // Tracked apart from `emitted`, which reasoning alone satisfies.
+        let mut answered = false;
+        let mut finish: Option<String> = None;
         let mut served_model: Option<String> = None;
 
         loop {
@@ -279,7 +310,7 @@ impl OpenRouterModel {
             let bytes = chunk.map_err(|error| ModelError::Http(error.to_string()))?;
             for payload in decoder.feed(&bytes) {
                 if payload.trim() == "[DONE]" {
-                    return Ok(());
+                    return conclude(finish, answered, on_delta);
                 }
                 let value: Value = serde_json::from_str(&payload)
                     .map_err(|error| ModelError::Parse(format!("{error}: {payload}")))?;
@@ -309,6 +340,11 @@ impl OpenRouterModel {
                     if usage.served_model.is_none() {
                         usage.served_model = served_model.clone();
                     }
+                    // A local door bills nothing. Its roster publishes no price, so the fallback
+                    // table would otherwise invent one for a model running on this machine.
+                    if local::is_local(&self.provider) {
+                        usage.cost_usd = Some(0.0);
+                    }
                     emitted = true;
                     on_delta(Delta::Usage(usage));
                 }
@@ -328,6 +364,7 @@ impl OpenRouterModel {
                     && !text.is_empty()
                 {
                     emitted = true;
+                    answered = true;
                     on_delta(Delta::Text(text.to_string()));
                 }
                 let reasoning = delta
@@ -356,6 +393,7 @@ impl OpenRouterModel {
                             .and_then(Value::as_str)
                             .unwrap_or("");
                         emitted = true;
+                        answered = true;
                         on_delta(Delta::ToolCall {
                             index,
                             id: id.map(str::to_string),
@@ -366,7 +404,9 @@ impl OpenRouterModel {
                 }
 
                 if let Some(reason) = choice.get("finish_reason").and_then(Value::as_str) {
-                    on_delta(Delta::Finish(reason.to_string()));
+                    // Held until the stream is over: `length` with no answer is an error, and a
+                    // Finish row already written would tell the coordinator the turn succeeded.
+                    finish = Some(reason.to_string());
                 }
             }
         }
@@ -378,8 +418,31 @@ impl OpenRouterModel {
                 "the stream ended before any content arrived".to_string(),
             ));
         }
-        Ok(())
+        conclude(finish, answered, on_delta)
     }
+}
+
+/// The end of a stream: an error for a starved answer, otherwise the provider's finish row.
+///
+/// llama.cpp with a reasoning template answers `finish_reason: "length"` and no `content` when
+/// the output budget ran out mid-thought. Reporting that as a successful empty turn hides the
+/// one fact the caller needs: the budget, not the model, ended the answer.
+fn conclude(
+    finish: Option<String>,
+    answered: bool,
+    on_delta: &mut DeltaSink<'_>,
+) -> Result<(), ModelError> {
+    if !answered && finish.as_deref() == Some("length") {
+        return Err(ModelError::Other(
+            "the model reached its output-token limit before writing an answer; raise \
+             `max_tokens`, or turn off its reasoning scratchpad"
+                .to_string(),
+        ));
+    }
+    if let Some(reason) = finish {
+        on_delta(Delta::Finish(reason));
+    }
+    Ok(())
 }
 
 #[async_trait]
@@ -820,5 +883,156 @@ mod tests {
             "{body}"
         );
         assert!(!body.contains(":batch"), "{body}");
+    }
+
+    /// One request, one streamed body, with the request captured.
+    async fn streamed(events: &'static str) -> (String, Arc<Mutex<Vec<String>>>) {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let seen = Arc::new(Mutex::new(Vec::new()));
+        let log = seen.clone();
+        tokio::spawn(async move {
+            let Ok((mut socket, _)) = listener.accept().await else {
+                return;
+            };
+            let mut buffer = vec![0u8; 16384];
+            let read = socket.read(&mut buffer).await.unwrap_or(0);
+            log.lock()
+                .unwrap()
+                .push(String::from_utf8_lossy(&buffer[..read]).to_string());
+            let header = format!(
+                "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nContent-Length: {}\r\n\
+                 Connection: close\r\n\r\n",
+                events.len()
+            );
+            let _ = socket.write_all(header.as_bytes()).await;
+            let _ = socket.write_all(events.as_bytes()).await;
+            let _ = socket.shutdown().await;
+        });
+        (format!("http://{address}"), seen)
+    }
+
+    #[test]
+    fn a_chat_template_switch_travels_in_the_body() {
+        let model =
+            OpenRouterModel::new("").with_template_kwargs(json!({ "enable_thinking": false }));
+        let body = model.body(&ChatRequest {
+            model: "qwen".to_string(),
+            messages: vec![],
+            tools: vec![],
+            max_tokens: None,
+            temperature: 0.0,
+            effort: None,
+        });
+        assert_eq!(
+            body.get("chat_template_kwargs"),
+            Some(&json!({ "enable_thinking": false }))
+        );
+        // A hosted door sends exactly the request it sent before.
+        let plain = OpenRouterModel::new("test-key").body(&ChatRequest {
+            model: "openai/gpt-4.1-mini".to_string(),
+            messages: vec![],
+            tools: vec![],
+            max_tokens: None,
+            temperature: 0.0,
+            effort: None,
+        });
+        assert!(plain.get("chat_template_kwargs").is_none());
+    }
+
+    #[tokio::test]
+    async fn reasoning_that_ran_out_of_budget_is_an_error_not_an_empty_answer() {
+        let (base, _) = streamed(concat!(
+            "data: {\"choices\":[{\"delta\":{\"reasoning_content\":\"thinking…\"}}]}\n\n",
+            "data: {\"choices\":[{\"delta\":{},\"finish_reason\":\"length\"}]}\n\n",
+            "data: [DONE]\n\n",
+        ))
+        .await;
+        let model = OpenRouterModel::with_base_url("", base);
+        let request = ChatRequest {
+            model: "qwen".to_string(),
+            messages: vec![ChatMessage::user("hi")],
+            tools: vec![],
+            max_tokens: Some(24),
+            temperature: 0.0,
+            effort: None,
+        };
+        let cancel = CancellationToken::new();
+        let mut finish = None;
+        let mut sink = |delta: Delta| {
+            if let Delta::Finish(reason) = delta {
+                finish = Some(reason);
+            }
+        };
+        let error = model
+            .chat(request, &cancel, &mut sink)
+            .await
+            .expect_err("a starved answer is a failure");
+        assert!(error.to_string().contains("max_tokens"), "{error}");
+        assert_eq!(
+            finish, None,
+            "a failed turn must not also report a successful finish"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_local_turn_costs_nothing_even_though_it_publishes_no_price() {
+        let (base, _) = streamed(concat!(
+            "data: {\"choices\":[{\"delta\":{\"content\":\"local answer\"}}]}\n\n",
+            "data: {\"choices\":[],\"usage\":{\"prompt_tokens\":120,\"completion_tokens\":40}}\n\n",
+            "data: [DONE]\n\n",
+        ))
+        .await;
+        let model = OpenRouterModel::with_base_url("", base).with_provider("llamacpp");
+        let request = ChatRequest {
+            model: "qwen".to_string(),
+            messages: vec![ChatMessage::user("hi")],
+            tools: vec![],
+            max_tokens: None,
+            temperature: 0.0,
+            effort: None,
+        };
+        let cancel = CancellationToken::new();
+        let mut raw = None;
+        let mut sink = |delta: Delta| {
+            if let Delta::Usage(usage) = delta {
+                raw = Some(usage);
+            }
+        };
+        model.chat(request, &cancel, &mut sink).await.unwrap();
+        let raw = raw.expect("a usage chunk");
+        assert_eq!(raw.cost_usd, Some(0.0), "a model on this machine is free");
+        let usage = super::super::model::usage_from_raw(raw, "qwen");
+        assert_eq!(usage.cost_micros, 0);
+    }
+
+    #[tokio::test]
+    async fn a_length_finish_after_an_answer_is_still_a_success() {
+        let (base, _) = streamed(concat!(
+            "data: {\"choices\":[{\"delta\":{\"content\":\"a short answer\"}}]}\n\n",
+            "data: {\"choices\":[{\"delta\":{},\"finish_reason\":\"length\"}]}\n\n",
+            "data: [DONE]\n\n",
+        ))
+        .await;
+        let model = OpenRouterModel::with_base_url("", base);
+        let request = ChatRequest {
+            model: "qwen".to_string(),
+            messages: vec![ChatMessage::user("hi")],
+            tools: vec![],
+            max_tokens: Some(8),
+            temperature: 0.0,
+            effort: None,
+        };
+        let cancel = CancellationToken::new();
+        let mut text = String::new();
+        let mut finish = None;
+        let mut sink = |delta: Delta| match delta {
+            Delta::Text(chunk) => text.push_str(&chunk),
+            Delta::Finish(reason) => finish = Some(reason),
+            _ => {}
+        };
+        model.chat(request, &cancel, &mut sink).await.unwrap();
+        assert_eq!(text, "a short answer");
+        assert_eq!(finish.as_deref(), Some("length"));
     }
 }

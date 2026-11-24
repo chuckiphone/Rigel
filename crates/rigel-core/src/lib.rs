@@ -9,9 +9,11 @@ pub mod agentmail;
 pub mod attention;
 pub mod attribute;
 pub mod audit;
+pub mod backend;
 pub mod budget;
 pub mod claims;
 pub mod cloud;
+pub mod codegraph;
 pub mod comments;
 pub mod credentials;
 pub mod diagnostics;
@@ -66,6 +68,7 @@ pub use agentmail::{
 pub use attention::{Attention, AttentionGroup, AttentionItem};
 pub use attribute::{Attributed, ConflictWatcher, Observed, POLL_INTERVAL, Watcher};
 pub use audit::{ApprovalInput, ApprovalRecord, ChainError, CommandProvenance, VerifyReport};
+pub use backend::{BackendConfig, BackendStatus};
 pub use budget::{
     BudgetError, BudgetOutcome, BudgetService, BudgetSnapshot, DEFAULT_DAILY_CAP_MICROS,
     DEFAULT_WRITABLE_AGENTS, DailyStatus, InterruptSink, ReconcileReport, SafetySettings,

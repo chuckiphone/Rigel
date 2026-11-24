@@ -10,7 +10,9 @@ export async function buildApp({ config, pool, mailer, logger = true, fetchImpl 
   const app = Fastify({
     logger,
     bodyLimit: 6 * 1024 * 1024,
-    trustProxy: true,
+    // Caddy is exactly one hop in front of the API. Trusting every proxy would let a caller
+    // forge the leftmost X-Forwarded-For entry and rotate past the per-IP auth rate limits.
+    trustProxy: config.production ? 1 : false,
     disableRequestLogging: config.production,
   });
 
@@ -46,14 +48,26 @@ export async function buildApp({ config, pool, mailer, logger = true, fetchImpl 
     } catch {
       return reply.code(401).send({ error: 'invalid_token' });
     }
+    // A JWT is valid until it expires, but a session can be revoked sooner. Logout-all and a
+    // password change both revoke rows, so the session is checked on every authenticated
+    // request instead of trusting the token's remaining minutes.
+    if (
+      typeof payload.sid !== 'string' ||
+      !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(payload.sid)
+    ) {
+      return reply.code(401).send({ error: 'invalid_token' });
+    }
     const { rows } = await app.db.query(
-      `SELECT id, email, email_verified, reset_required, role, daily_llm_micros,
-              created_at, last_login_at
-         FROM users WHERE id = $1`,
-      [payload.sub],
+      `SELECT u.id, u.email, u.email_verified, u.reset_required, u.role,
+              u.daily_llm_micros, u.created_at, u.last_login_at
+         FROM users u
+         JOIN auth_sessions s ON s.id = $2 AND s.user_id = u.id
+        WHERE u.id = $1
+          AND s.revoked_at IS NULL
+          AND s.expires_at > now()`,
+      [payload.sub, payload.sid],
     );
     if (!rows[0]) return reply.code(401).send({ error: 'invalid_token' });
-    if (!payload.sid) return reply.code(401).send({ error: 'invalid_token' });
     request.user = rows[0];
     request.sessionId = payload.sid;
     return undefined;

@@ -29,7 +29,9 @@ use rigel_core::agent::approval::{
 pub use rigel_core::agent::catalog::ModelOption;
 use rigel_core::agent::routing::RouteExplanation;
 use rigel_core::agent::{Cancels, Coordinator, DEFAULT_MAX_STEPS, fixed_context_chars};
-use rigel_core::agent::{capabilities, catalog, custom, health, openrouter, providers, vertex};
+use rigel_core::agent::{
+    capabilities, catalog, custom, health, llamaserver, openrouter, providers, vertex,
+};
 use rigel_core::{
     Agent, AgentEvent, AppliedReview, ApprovalScope, Attention, AttributedHunk, Bookmark,
     BudgetService, ClaimConflict, ClaimService, CommandApprover, CommandDecision, CommandRequest,
@@ -359,6 +361,8 @@ pub struct ProviderRow {
     pub id: String,
     pub name: String,
     pub hint: String,
+    /// A local door holds no credential, so `key_present == false` is a fact, not a gap.
+    pub keyless: bool,
     /// The variable a headless run reads the key from.
     pub env: Option<String>,
     /// The credential is a short-lived token rather than a key, and the copy says so.
@@ -415,6 +419,63 @@ fn model_capabilities(
     Ok(capabilities::for_models(models))
 }
 
+/// The API placement Settings shows. It is separate from the Firebase "Cloud" page: this is the
+/// Rigel API the `rigel` model door and the relay bridge call, not Firestore sync.
+#[derive(Debug, Clone, Serialize)]
+pub struct ApiBackendStatus {
+    pub mode: String,
+    pub api_url: String,
+    pub effective_url: String,
+    pub hosted_url: String,
+    pub override_env: Option<String>,
+    pub relay_token_present: bool,
+}
+
+fn api_backend_status() -> ApiBackendStatus {
+    let status = rigel_core::backend::status_at(&index_dir());
+    ApiBackendStatus {
+        mode: status.mode,
+        api_url: status.api_url,
+        effective_url: status.effective_url,
+        hosted_url: status.hosted_url,
+        override_env: status.override_env,
+        relay_token_present: credentials::present(credentials::RELAY),
+    }
+}
+
+#[tauri::command]
+fn backend_status() -> ApiBackendStatus {
+    api_backend_status()
+}
+
+/// Save the hosted/self-hosted choice. The core validates the URL before the file is replaced, so
+/// a bad address leaves the previous choice and the next turn still has a working door.
+#[tauri::command]
+fn backend_set(mode: String, api_url: String) -> Result<ApiBackendStatus, String> {
+    let config = rigel_core::backend::BackendConfig::from_parts(&mode, &api_url)?;
+    rigel_core::backend::save_at(&index_dir(), &config)?;
+    clear_model_cache();
+    Ok(api_backend_status())
+}
+
+/// The relay credential, read from the field once and written to the OS keychain. The command
+/// returns only whether one exists; it never reads the value back into the window.
+#[tauri::command]
+fn backend_set_token(token: String) -> Result<ApiBackendStatus, String> {
+    let token = token.trim();
+    if token.is_empty() || token.len() > 512 || token.chars().any(char::is_whitespace) {
+        return Err("Paste the relay credential as one line, without spaces.".to_string());
+    }
+    credentials::set(credentials::RELAY, token).map_err(message)?;
+    Ok(api_backend_status())
+}
+
+#[tauri::command]
+fn backend_clear_token() -> Result<ApiBackendStatus, String> {
+    credentials::delete(credentials::RELAY).map_err(message)?;
+    Ok(api_backend_status())
+}
+
 #[tauri::command]
 fn providers_list() -> Result<Vec<ProviderRow>, String> {
     let store = credentials::KeychainCredentialStore;
@@ -424,6 +485,7 @@ fn providers_list() -> Result<Vec<ProviderRow>, String> {
             id: spec.id.to_string(),
             name: spec.name.to_string(),
             hint: spec.hint.to_string(),
+            keyless: providers::keyless(spec.id),
             env: credentials::provider_environment_variable(spec.id).map(str::to_string),
             access_token: spec.access_token,
             default_model: spec.default_model.map(str::to_string),
@@ -812,6 +874,7 @@ fn project_open(path: String) -> Result<ProjectInfo, String> {
             .unwrap_or_else(|| root.to_string_lossy().into_owned());
 
         remember_project(&root);
+        set_graph_target(&root);
         Ok(ProjectInfo {
             root: root.to_string_lossy().into_owned(),
             name,
@@ -3664,6 +3727,27 @@ fn omniroute_start() -> Result<rigel_core::ServerStatus, String> {
     tauri::async_runtime::block_on(rigel_core::agent::omniroute::ensure_server())
 }
 
+/// The local llama.cpp server behind the `llamacpp` door: its state, the launch mode a start
+/// would use, and the one sentence that says what to do when it is down.
+#[tauri::command]
+fn local_model_status() -> Result<llamaserver::Status, String> {
+    Ok(tauri::async_runtime::block_on(llamaserver::status()))
+}
+
+/// Start it, or attach to a healthy server that is already there. The core waits for `/health`,
+/// so a returned `ready` means the next turn can reach the model.
+#[tauri::command]
+fn local_model_start() -> Result<llamaserver::Status, String> {
+    tauri::async_runtime::block_on(llamaserver::start())
+}
+
+/// Stop the process Rigel started, after checking that the recorded PID is still the server.
+#[tauri::command]
+fn local_model_stop() -> Result<llamaserver::Status, String> {
+    llamaserver::stop()?;
+    Ok(tauri::async_runtime::block_on(llamaserver::status()))
+}
+
 /// The picker's last answer, held for five minutes. The read is network-bound and the two pickers
 /// (Session and Settings) would otherwise each pay for it on mount.
 type ModelCache = std::sync::Mutex<Option<(std::time::Instant, String, Vec<ModelOption>)>>;
@@ -3932,7 +4016,7 @@ fn settings_get() -> Result<Settings, String> {
 
 /// Write settings, creating the app data directory if this is a first run.
 #[tauri::command]
-fn settings_set(mut settings: Settings) -> Result<Settings, String> {
+fn settings_set(app: tauri::AppHandle, mut settings: Settings) -> Result<Settings, String> {
     if providers::find(&settings.provider).is_none() {
         return Err(providers::unknown_provider(&settings.provider));
     }
@@ -3973,6 +4057,11 @@ fn settings_set(mut settings: Settings) -> Result<Settings, String> {
     fs::write(&path, text).map_err(message)?;
     // The next turn reads this from the core, not from the file, so a save takes effect at once.
     vertex::set_project_override(Some(&settings.vertex_project));
+    // Turning the switch on starts the freshness loop without a restart. It is idempotent: the
+    // loop already running from launch is not spawned a second time.
+    if settings.skills_auto_update {
+        warm_skills(app);
+    }
     Ok(settings)
 }
 
@@ -3983,7 +4072,7 @@ fn settings_set(mut settings: Settings) -> Result<Settings, String> {
 /// shared pool reads differently from a 401 on a key). Saving goes through `settings_set`, which
 /// is the same path a manual pick uses, so the composer and the next turn cannot disagree.
 #[tauri::command]
-fn free_mode() -> Result<rigel_core::agent::FreeChoice, String> {
+fn free_mode(app: tauri::AppHandle) -> Result<rigel_core::agent::FreeChoice, String> {
     let current = load_settings().provider.trim().to_lowercase();
     let choice = tauri::async_runtime::block_on(async {
         tokio::time::timeout(
@@ -3997,7 +4086,7 @@ fn free_mode() -> Result<rigel_core::agent::FreeChoice, String> {
     settings.provider = choice.provider.clone();
     settings.model = choice.model.clone();
     settings.free_mode = true;
-    settings_set(settings)?;
+    settings_set(app, settings)?;
     // The picker must show the same fresh free/paid labels the selection pass just used. Clear the
     // old minute cache; its next open performs a live read with the persisted winning provider first.
     clear_model_cache();
@@ -4022,6 +4111,180 @@ fn update_status_now() -> Result<UpdateStatus, String> {
         auto_install: settings.auto_install,
         manifest_url: rigel_core::update::manifest_url(&settings).to_string(),
         key_present: rigel_core::update::public_key(&dir).is_ok(),
+    })
+}
+
+/// The project's code graph: files, symbols and the edges between them. Read-only, bounded and
+/// local; the window renders exactly what the scanner saw.
+#[tauri::command]
+fn code_graph(
+    project: String,
+    focus: Option<String>,
+    depth: Option<usize>,
+    limit: Option<usize>,
+) -> Result<rigel_core::codegraph::CodeGraph, String> {
+    let root = PathBuf::from(&project);
+    if project.trim().is_empty() || !root.is_dir() {
+        return Err("Open a project before opening its graph.".to_string());
+    }
+    let mut graph = rigel_core::codegraph::snapshot(
+        &root,
+        focus.as_deref(),
+        depth.unwrap_or(2),
+        limit.unwrap_or(700),
+    )
+    .map_err(message)?;
+    // The background indexer keeps the concept layer; the on-demand scan is still the authority
+    // for files and symbols. Merge only concepts that still point at a live file.
+    if focus.as_deref().unwrap_or("").trim().is_empty()
+        && let Some(cached) = rigel_core::codegraph::watch::read_graph(&root)
+    {
+        rigel_core::codegraph::watch::merge_concepts(&mut graph, &cached);
+    }
+    Ok(graph)
+}
+
+/// The project the background indexer follows. One watcher serves every project the window
+/// opens; switching projects retargets it instead of starting a second scanner.
+static GRAPH_TARGET: std::sync::OnceLock<Mutex<Option<PathBuf>>> = std::sync::OnceLock::new();
+static GRAPH_STATUS: std::sync::OnceLock<Mutex<Option<rigel_core::codegraph::watch::WatchStatus>>> =
+    std::sync::OnceLock::new();
+
+fn graph_target() -> &'static Mutex<Option<PathBuf>> {
+    GRAPH_TARGET.get_or_init(|| Mutex::new(None))
+}
+
+fn set_graph_target(root: &Path) {
+    if let Ok(mut guard) = graph_target().lock() {
+        *guard = Some(root.to_path_buf());
+    }
+}
+
+fn graph_status_slot() -> &'static Mutex<Option<rigel_core::codegraph::watch::WatchStatus>> {
+    GRAPH_STATUS.get_or_init(|| Mutex::new(None))
+}
+
+/// Watch the open project and keep `.rigel/codegraph.json` current. The scan itself is local.
+/// When the tree changes and ten minutes have passed, one live free OpenRouter row names the
+/// architecture concepts; a failure records the reason and leaves the deterministic graph intact.
+fn spawn_code_graph_watch() {
+    std::thread::Builder::new()
+        .name("rigel-graph".to_string())
+        .spawn(|| {
+            use rigel_core::codegraph::watch;
+            let mut fingerprint: Option<u64> = None;
+            // The first completed scan enriches immediately; later passes are at most every
+            // ten minutes, and only when the tree actually changed.
+            let mut last_enrich = std::time::Instant::now() - Duration::from_secs(700);
+            loop {
+                let target = graph_target().lock().ok().and_then(|guard| guard.clone());
+                let Some(root) = target else {
+                    std::thread::sleep(Duration::from_secs(20));
+                    continue;
+                };
+                let current = match watch::fingerprint(&root) {
+                    Ok(current) => Some(current),
+                    Err(error) => {
+                        record_graph_status(&root, None, Some(error));
+                        None
+                    }
+                };
+                if let Some(current) = current
+                    && fingerprint != Some(current)
+                {
+                    match watch::index(&root) {
+                        Ok(mut graph) => {
+                            let previous_agent =
+                                watch::read_status(&root).and_then(|status| status.agent);
+                            let mut agent = previous_agent;
+                            if last_enrich.elapsed() >= Duration::from_secs(600) {
+                                last_enrich = std::time::Instant::now();
+                                let store = credentials::KeychainCredentialStore;
+                                match tauri::async_runtime::block_on(watch::concepts(
+                                    &root, &graph, &store,
+                                )) {
+                                    Ok((nodes, edges, model)) => {
+                                        let count = nodes.len();
+                                        watch::apply_concepts(&mut graph, nodes, edges);
+                                        if let Err(error) = watch::write_graph(&root, &graph) {
+                                            agent = Some(format!("index write failed: {error}"));
+                                        } else {
+                                            agent = Some(format!("{model} · {count} concepts"));
+                                        }
+                                    }
+                                    Err(error) => {
+                                        agent = Some(format!("free agent skipped: {error}"));
+                                    }
+                                }
+                            }
+                            record_graph_status(&root, Some((&graph, agent)), None);
+                            fingerprint = Some(current);
+                        }
+                        Err(error) => record_graph_status(&root, None, Some(error)),
+                    }
+                }
+                std::thread::sleep(Duration::from_secs(20));
+            }
+        })
+        .ok();
+}
+
+fn record_graph_status(
+    root: &Path,
+    graph: Option<(&rigel_core::codegraph::CodeGraph, Option<String>)>,
+    error: Option<String>,
+) {
+    let previous = rigel_core::codegraph::watch::read_status(root);
+    let status = if let Some((graph, agent)) = graph {
+        rigel_core::codegraph::watch::WatchStatus {
+            project: graph.root.clone(),
+            updated_unix: rigel_core::codegraph::watch::now_unix(),
+            files: graph.files,
+            nodes: graph.nodes.len(),
+            edges: graph.edges.len(),
+            revision: previous.as_ref().map(|status| status.revision).unwrap_or(0) + 1,
+            concepts: graph
+                .nodes
+                .iter()
+                .filter(|node| node.kind == "concept")
+                .count(),
+            agent,
+            error: None,
+        }
+    } else {
+        let mut status = previous.unwrap_or_default();
+        status.project = root.to_string_lossy().into_owned();
+        status.error = error;
+        status
+    };
+    rigel_core::codegraph::watch::write_status(root, &status);
+    if let Ok(mut guard) = graph_status_slot().lock() {
+        *guard = Some(status);
+    }
+}
+
+#[tauri::command]
+fn code_graph_watch_status(project: String) -> Option<rigel_core::codegraph::watch::WatchStatus> {
+    let root = PathBuf::from(project);
+    if let Ok(guard) = graph_status_slot().lock()
+        && let Some(status) = guard.as_ref()
+        && Path::new(&status.project) == root.as_path()
+    {
+        return Some(status.clone());
+    }
+    rigel_core::codegraph::watch::read_status(&root)
+}
+
+/// The live zero-priced chat rows, ranked, without probing them. The picker and Free mode use
+/// the same roster; the background warmer refreshes it every three minutes so this list is never
+/// a stale snapshot from launch.
+#[tauri::command]
+fn free_agents() -> Result<Vec<ModelOption>, String> {
+    tauri::async_runtime::block_on(async {
+        let settings = load_settings();
+        let provider = settings.provider.trim().to_lowercase();
+        let rows = catalog::roster(&provider, &credentials::KeychainCredentialStore).await?;
+        Ok(rigel_core::agent::freemode::candidates(&provider, rows))
     })
 }
 
@@ -4078,10 +4341,11 @@ async fn update_install(app: tauri::AppHandle) -> Result<String, String> {
     let check = rigel_core::update::check_latest(&dir, env!("CARGO_PKG_VERSION"))
         .await
         .map_err(message)?;
-    if !check.available {
+    let Some((url, sha256)) =
+        rigel_core::update::available_artifact(&check, installed_per_machine())
+    else {
         return Err("this build is already current".to_string());
-    }
-    let (url, sha256) = rigel_core::update::artifact_for(&check, installed_per_machine());
+    };
     let path = rigel_core::update::download_artifact(url, sha256, &dir)
         .await
         .map_err(message)?;
@@ -4096,6 +4360,123 @@ async fn update_install(app: tauri::AppHandle) -> Result<String, String> {
         "Installing {} — Rigel will close while the installer runs.",
         check.offered
     ))
+}
+
+/// The deferred-replace helper branch. This process only waits for the app to exit, swaps the
+/// executable and starts the new build; it never opens a window or a Tauri runtime.
+pub fn update_helper_mode<I>(args: I) -> Option<i32>
+where
+    I: IntoIterator,
+    I::Item: AsRef<std::ffi::OsStr>,
+{
+    let plan = rigel_core::update::apply::helper_request(args)?;
+    let code = match rigel_core::update::apply::run_helper(&plan) {
+        Ok(()) => 0,
+        Err(error) => {
+            eprintln!("rigel: update helper: {error}");
+            1
+        }
+    };
+    Some(code)
+}
+
+/// One signed check at launch, off the window thread. A current build, a missing release, a
+/// timeout and a rate-limited GitHub all end the same way: nothing visible, and at most one line
+/// in `update.log`. A newer signed release stages its binary and restarts into it.
+fn spawn_launch_update(app: tauri::AppHandle) {
+    if std::env::var_os(rigel_core::update::UPDATED_ENV).is_some() {
+        // The build that just started is the update; do not check again on this launch.
+        return;
+    }
+    if cfg!(debug_assertions) && std::env::var_os("RIGEL_UPDATE_LAUNCH").is_none() {
+        // A development build must never replace the executable `cargo run` is using.
+        return;
+    }
+    std::thread::spawn(move || {
+        let dir = index_dir();
+        let settings = rigel_core::update::load_settings(&dir);
+        if !settings.enabled || !settings.auto_install {
+            return;
+        }
+        let current = env!("CARGO_PKG_VERSION");
+        let check =
+            match tauri::async_runtime::block_on(rigel_core::update::check_latest(&dir, current)) {
+                Ok(check) => check,
+                Err(error) => {
+                    // Offline, 404 and rate-limited all land here. One quiet line, no window change.
+                    rigel_core::update::log_line(&dir, &format!("no update: {error}"));
+                    return;
+                }
+            };
+        if !check.available {
+            rigel_core::update::log_line(&dir, &format!("up to date {current}"));
+            return;
+        }
+
+        let exe = std::env::current_exe().unwrap_or_default();
+        let args: Vec<String> = std::env::args().skip(1).collect();
+        if check.bin_url.is_some() && rigel_core::update::apply::can_replace(&exe) {
+            let cwd = std::env::current_dir().ok();
+            let staged = tauri::async_runtime::block_on(rigel_core::update::stage_binary(
+                &dir,
+                &check,
+                &exe,
+                std::process::id(),
+                args,
+                cwd,
+            ));
+            match staged {
+                Ok(Some(staged)) => match rigel_core::update::apply::spawn_helper(&staged.plan) {
+                    Ok(()) => {
+                        rigel_core::update::log_line(
+                            &dir,
+                            &format!("staged {} {}", staged.version, staged.plan.display()),
+                        );
+                        std::thread::sleep(Duration::from_millis(400));
+                        quit(&app);
+                    }
+                    Err(error) => {
+                        rigel_core::update::log_line(&dir, &format!("update failed: {error}"))
+                    }
+                },
+                Ok(None) => rigel_core::update::log_line(
+                    &dir,
+                    &format!("no update: {} has no binary asset", check.offered),
+                ),
+                Err(error) => {
+                    rigel_core::update::log_line(&dir, &format!("update failed: {error}"))
+                }
+            }
+            return;
+        }
+
+        // A per-machine install cannot write its own directory; its signed installer does the
+        // replacement and relaunch instead.
+        let Some((url, sha256)) =
+            rigel_core::update::available_artifact(&check, installed_per_machine())
+        else {
+            rigel_core::update::log_line(&dir, &format!("up to date {current}"));
+            return;
+        };
+        match tauri::async_runtime::block_on(rigel_core::update::download_artifact(
+            url, sha256, &dir,
+        )) {
+            Ok(path) => match rigel_core::update::install_artifact(&path) {
+                Ok(()) => {
+                    rigel_core::update::log_line(
+                        &dir,
+                        &format!("staged installer {}", check.offered),
+                    );
+                    std::thread::sleep(Duration::from_millis(400));
+                    quit(&app);
+                }
+                Err(error) => {
+                    rigel_core::update::log_line(&dir, &format!("update failed: {error}"))
+                }
+            },
+            Err(error) => rigel_core::update::log_line(&dir, &format!("update failed: {error}")),
+        }
+    });
 }
 
 /// A per-machine MSI lives under Program Files; a per-user NSIS install does not. The updater
@@ -4468,32 +4849,67 @@ fn warm_chat(project: Option<String>) {
         .ok();
 }
 
-/// Re-sync every skill source that is not fresh, in the background, when the shelf's auto-update
-/// switch is on (it defaults to on). Same contract as `warm_router`: a thread, a dropped error,
-/// and the shelf as the place the result appears — a source that fails is marked `broken` with
-/// its reason rather than interrupting the launch. A source inside the stale window is not
-/// touched, so this is one tree call per source per day, not a request per launch.
-fn warm_skills() {
+/// How often the open window asks the index which sources are due. Fresh sources cost a SQLite
+/// read, not a request; a stale one is re-synced on that pass and a broken one is retried on the
+/// core's bounded backoff.
+const SKILLS_CHECK_INTERVAL: Duration = Duration::from_secs(5 * 60);
+
+/// Keep skill source health current for as long as Rigel is running. The first pass is forced, so
+/// a shelf that was fresh when the window last closed is still compared with its remote on this
+/// launch; after that, a five-minute pass re-syncs whatever the core says is due. A successful
+/// pass emits `rigel://skills`, so the status line and Settings update without a manual refresh
+/// or a reopen. Same contract as `warm_router`: a thread, a dropped error, and the shelf as the
+/// place the result appears.
+///
+/// The switch is checked on every tick rather than only at launch, so turning it off stops the
+/// network work immediately and turning it back on resumes it. The thread deliberately survives a
+/// disabled stretch: that is what makes re-enabling immediate. A static flag keeps the two
+/// `servers_start` calls (no project, then the restored project) from starting two checkers.
+fn warm_skills(app: tauri::AppHandle) {
     if !load_settings().skills_auto_update {
         return;
     }
-    std::thread::Builder::new()
+    static STARTED: AtomicBool = AtomicBool::new(false);
+    if STARTED.swap(true, Ordering::SeqCst) {
+        return;
+    }
+    let spawned = std::thread::Builder::new()
         .name("rigel-skills".to_string())
-        .spawn(|| {
+        .spawn(move || {
             let Ok(runtime) = tokio::runtime::Builder::new_current_thread()
                 .enable_all()
                 .build()
             else {
+                STARTED.store(false, Ordering::SeqCst);
                 return;
             };
-            let _ = runtime.block_on(async move {
-                let index = SkillIndex::open(&index_dir()).await?;
+            runtime.block_on(async move {
+                let Ok(index) = SkillIndex::open(&index_dir()).await else {
+                    STARTED.store(false, Ordering::SeqCst);
+                    return;
+                };
                 // Forced, GitHub repositories included: a shelf that was fresh on the last
                 // launch is still checked against its remote on this one.
-                index.refresh_all().await
+                if index.refresh_all().await.is_ok() {
+                    let _ = app.emit("rigel://skills", ());
+                }
+                loop {
+                    tokio::time::sleep(SKILLS_CHECK_INTERVAL).await;
+                    if !load_settings().skills_auto_update {
+                        continue;
+                    }
+                    // The core leaves fresh sources alone and spaces out retries of a dead one.
+                    // Only a pass that actually wrote rows reloads the shelf's list; the status
+                    // read has its own poll, so a failed retry still updates its row.
+                    if matches!(index.refresh_stale().await, Ok(report) if report.refreshed > 0) {
+                        let _ = app.emit("rigel://skills", ());
+                    }
+                }
             });
-        })
-        .ok();
+        });
+    if spawned.is_err() {
+        STARTED.store(false, Ordering::SeqCst);
+    }
 }
 
 /// Warm the picker's roster off the interaction path. The read is three vendor calls over the
@@ -4503,8 +4919,13 @@ fn warm_models() {
     std::thread::Builder::new()
         .name("rigel-models".to_string())
         .spawn(|| {
-            // Forced: this pass exists to replace whatever the cache held, not to trust it.
-            let _ = models_refresh();
+            // Forced every three minutes: free rows churn, and a picker that shows a row the
+            // door has already dropped sends a 400 the user cannot explain. The first pass is
+            // immediate; a failed pass leaves the previous cache in place and tries again.
+            loop {
+                let _ = models_refresh();
+                std::thread::sleep(Duration::from_secs(180));
+            }
         })
         .ok();
 }
@@ -4514,10 +4935,10 @@ fn warm_models() {
 /// once; none of the starts blocks the launch, and a service that cannot start is a status the
 /// relevant tab explains rather than an error at boot.
 #[tauri::command]
-fn servers_start(project: Option<String>) {
+fn servers_start(app: tauri::AppHandle, project: Option<String>) {
     warm_router();
     warm_chat(project);
-    warm_skills();
+    warm_skills(app);
     warm_models();
 }
 
@@ -4646,6 +5067,7 @@ pub fn run() {
             if let Err(problem) = install_tray(app.handle()) {
                 eprintln!("rigel: tray icon not installed: {problem}");
             }
+            spawn_launch_update(app.handle().clone());
             // The window driver attaches to a single webview, and the tray is a second one; it
             // would be the target it lands on. A shipped build keeps both windows.
             if std::env::var_os("RIGEL_E2E_PROJECT").is_some()
@@ -4670,6 +5092,7 @@ pub fn run() {
             // launch and again after a crash, so a reboot no longer leaves Muse with a refusal.
             control::start(index_dir(), current_project_root);
             watch_room_agents();
+            spawn_code_graph_watch();
             warm_router();
             APP_OPEN.store(true, Ordering::SeqCst);
             persist_app_state(true);
@@ -4810,6 +5233,10 @@ pub fn run() {
             spend_report,
             task_cap_set,
             harness_probe,
+            backend_status,
+            backend_set,
+            backend_set_token,
+            backend_clear_token,
             providers_list,
             routing_policy,
             custom_provider_get,
@@ -4820,11 +5247,16 @@ pub fn run() {
             servers_start,
             omniroute_status,
             omniroute_start,
+            local_model_status,
+            local_model_start,
+            local_model_stop,
             models_list,
             models_refresh,
             provider_health,
             model_capabilities,
             free_mode,
+            free_agents,
+            code_graph_watch_status,
             chat_status,
             chat_start,
             chat_channels,
@@ -4849,6 +5281,7 @@ pub fn run() {
             settings_set,
             update_status,
             update_set,
+            code_graph,
             update_check,
             update_install,
             cloud_status,

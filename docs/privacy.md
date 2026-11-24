@@ -25,7 +25,8 @@ is in [SECURITY.md](../SECURITY.md). A per-call receipt with purposes and retent
   SkillHub on demand.
 - **Updates.** With the update switch on, Rigel requests the latest GitHub release manifest once at
   launch and on demand. Auto-install downloads a verified installer only when an update is offered;
-  the installer is started only after its SHA-256 matches the signed manifest.
+  the installer is started only after its SHA-256 matches the signed manifest, and it restarts Rigel
+  after a successful install. No update, an offline machine and updates off are silent no-ops.
 - **Cloud.** Cloud is opt-in. After you configure a Firebase project, Rigel uses Identity Toolkit
   and Firestore for sign-in and sync. A session's prompts and assistant text are published only on
   **Publish to phone**, or after each turn if automatic publishing is on. Tool calls, command

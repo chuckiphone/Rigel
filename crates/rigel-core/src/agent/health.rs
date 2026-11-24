@@ -13,7 +13,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::credentials::{self, CredentialStore};
 
-use super::providers;
+use super::{local, providers};
 
 /// What the door said when asked once.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -157,7 +157,9 @@ pub async fn probe_all(store: &dyn CredentialStore) -> Vec<DoorHealth> {
     let mut unresolved = Vec::new();
     let mut rows = Vec::new();
     for spec in providers::all() {
-        if !providers::present(store, spec) {
+        // A local door holds no credential, so "a key is present" is not the question: the
+        // same rule the picker uses, so a running local model has a health row too.
+        if !providers::present(store, spec) && !local::is_local(spec.id) {
             continue;
         }
         // The remote agent has no roster to probe: the credential proves the relay, and the

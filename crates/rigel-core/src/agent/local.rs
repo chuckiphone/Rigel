@@ -1,18 +1,23 @@
 //! Local model doors (roadmap 27).
 //!
-//! Ollama and llamafile both speak the OpenAI-compatible contract on the loopback interface and
-//! both are keyless. They are rows in [`super::providers`] like every other door, so the picker,
-//! the catalogue and a turn reach them without a second code path — only the credential differs:
-//! there is none, and [`super::openrouter`] omits the header rather than sending an empty one.
+//! Ollama, llamafile and llama.cpp's `llama-server` all speak the OpenAI-compatible contract on
+//! the loopback interface and all are keyless. They are rows in [`super::providers`] like every
+//! other door, so the picker, the catalogue and a turn reach them without a second code path —
+//! only the credential differs: there is none, and [`super::openrouter`] omits the header rather
+//! than sending an empty one.
 //!
 //! The defaults are each project's documented port. `RIGEL_OLLAMA_BASE_URL` and
 //! `RIGEL_LLAMAFILE_BASE_URL` move a door, which is what a remote ollama box or a non-default
-//! llamafile port needs.
+//! llamafile port needs. The llama.cpp door follows the saved server profile instead, because
+//! Rigel may be the process that started it: [`super::llamaserver`] owns that port.
 
 /// The Ollama door's provider id, which is also its keychain name (it holds nothing).
 pub const OLLAMA: &str = "local";
 /// The llamafile door's provider id.
 pub const LLAMAFILE: &str = "llamafile";
+/// The llama.cpp `llama-server` door's provider id. Its port comes from
+/// [`super::llamaserver`] so a saved profile and the door cannot disagree.
+pub const LLAMACPP: &str = "llamacpp";
 /// Ollama's documented default.
 pub const OLLAMA_BASE_URL: &str = "http://127.0.0.1:11434/v1";
 /// llamafile's documented default.
@@ -20,7 +25,10 @@ pub const LLAMAFILE_BASE_URL: &str = "http://127.0.0.1:8080/v1";
 
 /// Whether this provider id is one of the local doors.
 pub fn is_local(id: &str) -> bool {
-    matches!(id.trim().to_ascii_lowercase().as_str(), OLLAMA | LLAMAFILE)
+    matches!(
+        id.trim().to_ascii_lowercase().as_str(),
+        OLLAMA | LLAMAFILE | LLAMACPP
+    )
 }
 
 /// Whether a base URL points at this machine. The check is on the host alone, so a path or a
@@ -46,10 +54,20 @@ mod tests {
     use tokio::net::TcpListener;
 
     #[test]
-    fn both_local_doors_default_to_the_loopback_address() {
-        for base in [OLLAMA_BASE_URL, LLAMAFILE_BASE_URL] {
+    fn every_local_door_defaults_to_the_loopback_address() {
+        for base in [
+            OLLAMA_BASE_URL,
+            LLAMAFILE_BASE_URL,
+            super::super::llamaserver::Profile::default()
+                .base_url()
+                .as_str(),
+        ] {
             assert!(is_loopback(base), "{base} is not this machine");
         }
+        for id in [OLLAMA, LLAMAFILE, LLAMACPP] {
+            assert!(is_local(id), "{id} is a local door");
+        }
+        assert!(!is_local("openrouter"));
         assert!(!is_loopback("https://api.openrouter.ai/api/v1"));
         assert!(!is_loopback("http://127.0.0.1.example.com/v1"));
     }

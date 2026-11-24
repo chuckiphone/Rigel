@@ -16,8 +16,10 @@ import { useCallback, useEffect, useRef, useState } from "react";
 
 import {
   api,
+  isTauri,
   when,
   type CloudPullReport,
+  type ApiBackendStatus,
   type CloudPublishAllReport,
   type CloudPushReport,
   type AgentChatHarness,
@@ -28,6 +30,7 @@ import {
   type MailStatus,
   type MailThread,
   type MailThreadSummary,
+  type LocalModelStatus,
   type OmnirouteStatus,
   type ProviderRow,
   type RefreshReport,
@@ -286,6 +289,7 @@ const PAGES = [
   { id: "shelf", group: "Workspace", label: "Skill shelf", blurb: "Sources, freshness and indexing a repository" },
   { id: "plugins", group: "Workspace", label: "Plugins", blurb: "The searchable catalogue, installed tools and their capabilities" },
   { id: "rules", group: "Workspace", label: "Project rules", blurb: "AGENTS.md, CLAUDE.md and memory export" },
+  { id: "backend", group: "Connections", label: "Rigel API", blurb: "The hosted relay or your own deployment, and its credential" },
   { id: "cloud", group: "Connections", label: "Cloud", blurb: "Your Firebase project, the account and the shelf mirror" },
   { id: "mail", group: "Connections", label: "Email", blurb: "The AgentMail inbox the agent reads and sends from" },
   { id: "concord", group: "Connections", label: "Concord", blurb: "Muse's inbox, delivery receipts and replies" },
@@ -334,6 +338,7 @@ const PAGE_ICONS: Record<PageId, string> = {
   shelf: "M10 3 3.5 6.5 10 10l6.5-3.5L10 3Z M3.5 10 10 13.5l6.5-3.5 M3.5 13.5 10 17l6.5-3.5",
   plugins:
     "M7.5 3.5h2v2a1.5 1.5 0 1 0 3 0v-2h2a1 1 0 0 1 1 1v2.5h-2a1.5 1.5 0 1 0 0 3h2v2.5a1 1 0 0 1-1 1h-2.5v-2a1.5 1.5 0 1 0-3 0v2H6.5a1 1 0 0 1-1-1V11.5h2a1.5 1.5 0 1 0 0-3h-2V4.5a1 1 0 0 1 1-1Z",
+  backend: "M4 5.5h12v9H4z M7 9.5h6 M7 12h4 M4 8h12",
   cloud: "M6.5 15.5h7a3.5 3.5 0 0 0 .4-7 4.2 4.2 0 0 0-8-1.2A3.2 3.2 0 0 0 6.5 15.5Z",
   mail: "M3.5 5.5h13v9h-13z M3.5 6.5 10 11l6.5-4.5",
   concord: "M4 4.5h8.5v6H8l-2.5 2v-2H4z M9 12.5h2.5l2.5 2v-2h2v-5",
@@ -360,6 +365,7 @@ const SETTINGS_KEYWORDS: Record<PageId, string> = {
   shelf: "skills sources refresh index repository stale roblox",
   plugins: "marketplace catalogue install enable disable capabilities manifest tools skills pinned",
   sponsors: "gravity ads sponsored advertising publisher key home card opt in",
+  backend: "rigel api relay hosted self-host self hosted deployment server url token credential",
   cloud: "firebase firestore account sign in login sessions publishing push pull shelf mirror",
   mail: "email agentmail inbox key send",
   concord: "concord inbox messages receipts replies muse agent work",
@@ -662,6 +668,8 @@ export default function SettingsView({
   const [vertexProject, setVertexProject] = useState("");
   const [server, setServer] = useState<OmnirouteStatus | null>(null);
   const [serverBusy, setServerBusy] = useState(false);
+  const [localModel, setLocalModel] = useState<LocalModelStatus | null>(null);
+  const [localBusy, setLocalBusy] = useState(false);
   const [harnesses, setHarnesses] = useState<HarnessInfo[] | null>(null);
   // The room's own readiness rows. These include CLIs the adapter probe does not know about,
   // and their evidence is the exact login or key error the CLI printed.
@@ -682,6 +690,13 @@ export default function SettingsView({
   const [updateStatus, setUpdateStatus] = useState<UpdateStatus | null>(null);
   const [updateCheck, setUpdateCheck] = useState<UpdateCheck | null>(null);
   const [updateBusy, setUpdateBusy] = useState(false);
+  // The Rigel API page: which API the `rigel` model door and relay bridge call, plus whether a
+  // relay credential exists. The credential itself never arrives in this shape.
+  const [apiBackend, setApiBackend] = useState<ApiBackendStatus | null>(null);
+  const [apiBackendMode, setApiBackendMode] = useState<"hosted" | "self_hosted">("hosted");
+  const [apiBackendUrl, setApiBackendUrl] = useState("");
+  const [apiBackendToken, setApiBackendToken] = useState("");
+  const [apiBackendBusy, setApiBackendBusy] = useState(false);
   // The Cloud page: the project, the account, and what the last mirror did. Tokens never arrive
   // in this shape — only who is signed in and when the token next needs refreshing.
   const [cloud, setCloud] = useState<CloudStatus | null>(null);
@@ -771,6 +786,10 @@ export default function SettingsView({
       .then((next) => live && setServer(next))
       .catch(() => live && setServer(null));
     api
+      .localModelStatus()
+      .then((next) => live && setLocalModel(next))
+      .catch(() => live && setLocalModel(null));
+    api
       .harnessProbe(false)
       .then((next) => live && setHarnesses(next))
       .catch(() => live && setHarnesses(null));
@@ -782,6 +801,15 @@ export default function SettingsView({
       .updateStatus()
       .then((next) => live && setUpdateStatus(next))
       .catch(() => live && setUpdateStatus(null));
+    api
+      .backendStatus()
+      .then((next) => {
+        if (!live) return;
+        setApiBackend(next);
+        setApiBackendMode(next.mode);
+        setApiBackendUrl(next.api_url);
+      })
+      .catch(() => live && setApiBackend(null));
     api
       .cloudStatus()
       .then((next) => live && setCloud(next))
@@ -823,12 +851,28 @@ export default function SettingsView({
     }
   }, [source]);
 
-  // The shelf's own status, re-read when that page is opened rather than at launch: the launch
-  // pass already ran in Rust (and wrote the rows this reads), so a stale line here is the newest
-  // one. Every other page costs no query at all.
+  // The shelf's status is read when the page opens, then kept current while it stays open. The
+  // Rust checker emits after a successful pass; the poll is the fallback for a retry that changed
+  // a row to broken without writing any skill rows. Every other page costs no query at all.
   useEffect(() => {
     if (page !== "shelf") return;
     void loadSources();
+    const timer = window.setInterval(() => void loadSources(), 60_000);
+    let live = true;
+    let release: (() => void) | undefined;
+    if (isTauri()) {
+      void (async () => {
+        const { listen } = await import("@tauri-apps/api/event");
+        const unlisten = await listen("rigel://skills", () => void loadSources());
+        if (live) release = unlisten;
+        else unlisten();
+      })();
+    }
+    return () => {
+      live = false;
+      window.clearInterval(timer);
+      release?.();
+    };
   }, [loadSources, page]);
 
   // The cloud account is read at mount for the nav line and again when the page opens: the
@@ -1151,6 +1195,34 @@ export default function SettingsView({
       await refreshServer();
     } finally {
       setServerBusy(false);
+    }
+  };
+
+  const startLocalModel = async () => {
+    setLocalBusy(true);
+    setError(null);
+    try {
+      const status = await api.localModelStart();
+      setLocalModel(status);
+      onNotice(status.detail);
+    } catch (problem) {
+      setError(problem instanceof Error ? problem.message : String(problem));
+      await api.localModelStatus().then(setLocalModel).catch(() => setLocalModel(null));
+    } finally {
+      setLocalBusy(false);
+    }
+  };
+
+  const stopLocalModel = async () => {
+    setLocalBusy(true);
+    setError(null);
+    try {
+      setLocalModel(await api.localModelStop());
+      onNotice("llama-server stopped.");
+    } catch (problem) {
+      setError(problem instanceof Error ? problem.message : String(problem));
+    } finally {
+      setLocalBusy(false);
     }
   };
 
@@ -1567,6 +1639,15 @@ export default function SettingsView({
           text: settings?.gravity_ads ? "on" : "off",
           dot: settings?.gravity_ads ? "idle" : null,
         };
+      case "backend":
+        return {
+          text: apiBackend
+            ? apiBackend.mode === "hosted"
+              ? "hosted"
+              : apiBackend.effective_url.replace(/^https?:\/\//, "")
+            : "…",
+          dot: apiBackend ? (apiBackend.relay_token_present ? "idle" : "failed") : null,
+        };
       case "cloud":
         return {
           text: cloud
@@ -1730,8 +1811,14 @@ export default function SettingsView({
                     {provider === row.id ? "▸ " : ""}
                     {row.name}
                   </strong>
-                  <span className={`pill ${stored ? "ok" : "cancelled"}`}>
-                    {stored ? (row.access_token ? "token stored" : "key stored") : "no key"}
+                  <span className={`pill ${stored || row.keyless ? "ok" : "cancelled"}`}>
+                    {stored
+                      ? row.access_token
+                        ? "token stored"
+                        : "key stored"
+                      : row.keyless
+                        ? "no key needed"
+                        : "no key"}
                   </span>
                 </div>
                 <p className="fine">{row.hint}</p>
@@ -1754,6 +1841,72 @@ export default function SettingsView({
       </section>
 
       <CustomProvider onNotice={onNotice} />
+
+      {provider === "llamacpp" ? (
+        <section className="settings-section">
+          <div className="settings-head">
+            <h3>llama.cpp server</h3>
+            <span
+              className={`pill ${localModel?.state === "ready" ? "completed" : localModel?.state === "loading" ? "cancelled" : "failed"}`}
+            >
+              {localModel?.state ?? "checking"}
+            </span>
+          </div>
+          <p className="fine">
+            {localModel?.detail ?? "Could not read the local server's state."}
+          </p>
+          {localModel?.base_url ? (
+            <p className="fine mono">
+              {localModel.base_url}
+              {localModel.model_gb
+                ? ` · ${localModel.model_gb} GiB model · ${localModel.free_ram_gb} GiB free`
+                : ""}
+              {` · ${localModel.mode} mode`}
+            </p>
+          ) : null}
+          <div className="settings-actions">
+            <button
+              className="primary"
+              onClick={() => void startLocalModel()}
+              disabled={localBusy || localModel?.state === "ready"}
+            >
+              {localBusy
+                ? "Waiting…"
+                : localModel?.state === "ready"
+                  ? "Running"
+                  : "Start server"}
+            </button>
+            <button
+              className="chip"
+              onClick={() => void stopLocalModel()}
+              disabled={localBusy || localModel?.pid === null}
+            >
+              Stop
+            </button>
+            <button
+              className="chip"
+              onClick={() =>
+                void api
+                  .localModelStatus()
+                  .then(setLocalModel)
+                  .catch(() => setLocalModel(null))
+              }
+              disabled={localBusy}
+            >
+              Check again
+            </button>
+          </div>
+          <p className="fine">
+            Starts <code>llama-server</code> with the measured profile — {""}
+            <code>-ngl 99 --n-cpu-moe 36 -c 4096 -fa on -t 8</code>, one thread per physical core
+            — and waits for <code>/health</code>. The weights are pinned with{" "}
+            <code>-lm mmap+mlock</code> only when they fit in free RAM; otherwise the slower mmap
+            mode is used and shown above. Set <code>RIGEL_LLAMACPP_SERVER</code>,{" "}
+            <code>RIGEL_LLAMACPP_MODEL</code> and <code>RIGEL_LLAMACPP_THINKING</code> to override
+            the profile.
+          </p>
+        </section>
+      ) : null}
 
       {provider === "omniroute" ? (
         <section className="settings-section">
@@ -2170,7 +2323,11 @@ export default function SettingsView({
         <div className="settings-head">
           <h3>Freshness</h3>
           <span className={`pill ${staleSources ? "failed" : "ok"}`}>
-            {staleSources === null ? "checking" : staleSources ? `${staleSources} stale` : "fresh"}
+            {staleSources === null
+              ? "checking"
+              : staleSources
+                ? `${staleSources} need attention`
+                : "fresh"}
           </span>
         </div>
         <label className="toggle">
@@ -2182,18 +2339,20 @@ export default function SettingsView({
               void patch(
                 { skills_auto_update: event.target.checked },
                 event.target.checked
-                  ? "Stale sources will be re-synced at launch."
+                  ? "Skill sources will be checked while Rigel is open."
                   : "Sources now change only when you press Refresh.",
               )
             }
           />
-          Refresh stale sources at launch
+          Keep skill sources fresh
         </label>
         <p className="fine">
-          A source whose data is older than the stale window (a day) is re-synced in the
-          background when Rigel starts, so a shelf nobody has touched updates itself. The same
-          pass is one command: <code>rigel skills refresh</code>. Off means the shelf changes only
-          through the button below or <code>rigel skills index</code>.
+          Rigel checks the sources at launch and then every few minutes while it stays open. A
+          source older than the stale window (a day) is re-synced in the background; a broken one
+          is retried on a short backoff, longest six hours. The status above follows those checks
+          without reopening this page. <code>rigel skills refresh</code> is one pass, and{" "}
+          <code>rigel skills watch</code> keeps checking with no window open. Off means the shelf
+          changes only through the button below or <code>rigel skills index</code>.
         </p>
         <div className="settings-actions">
           <button className="chip" onClick={() => void refreshSources()} disabled={refreshing}>
@@ -2239,7 +2398,7 @@ export default function SettingsView({
                 </div>
                 <p className="fine">
                   {row.base_url ? <code>{row.base_url}</code> : "built in"} · last sync{" "}
-                  {when(row.last_sync_at)}
+                  {when(row.last_sync_at)} · checked {when(row.last_attempt_at)}
                 </p>
                 {row.error ? <p className="fine needs-key">{row.error}</p> : null}
               </div>
@@ -2458,7 +2617,7 @@ export default function SettingsView({
       </div>
       <p className="fine">
         One signed check at launch, then only when you press Check now. The manifest comes from{" "}
-        <code>github.com/OkVurb/Rigel/releases/latest</code>; the installer's SHA-256 and publisher
+        <code>github.com/chuckiphone/Rigel/releases/latest</code>; the installer's SHA-256 and publisher
         signature are verified before anything runs. No telemetry and no request while the switch
         is off.
       </p>
@@ -2940,6 +3099,243 @@ export default function SettingsView({
             Send
           </button>
         </div>
+      </section>
+    </>
+  );
+
+  /** Save the hosted/self-hosted choice. The core validates the URL before writing it. */
+  const insecureApiUrl =
+    apiBackendMode === "self_hosted" &&
+    /^http:\/\//i.test(apiBackendUrl.trim()) &&
+    !/^http:\/\/(localhost|127\.0\.0\.1|\[::1\])(?::|\/|$)/i.test(apiBackendUrl.trim());
+
+  const saveApiBackend = async () => {
+    setApiBackendBusy(true);
+    setError(null);
+    try {
+      const next = await api.backendSet(apiBackendMode, apiBackendUrl);
+      setApiBackend(next);
+      setApiBackendMode(next.mode);
+      setApiBackendUrl(next.api_url);
+      onNotice(
+        next.mode === "hosted"
+          ? `Rigel API set to the hosted relay at ${next.effective_url}.`
+          : `Rigel API set to ${next.effective_url}.`,
+      );
+    } catch (failure) {
+      setError(failure instanceof Error ? failure.message : String(failure));
+    } finally {
+      setApiBackendBusy(false);
+    }
+  };
+
+  const saveApiBackendToken = async () => {
+    const token = apiBackendToken.trim();
+    if (!token) return;
+    setApiBackendBusy(true);
+    setError(null);
+    try {
+      setApiBackend(await api.backendSetToken(token));
+      setApiBackendToken("");
+      onNotice("Rigel relay credential stored in the OS keychain.");
+    } catch (failure) {
+      setError(failure instanceof Error ? failure.message : String(failure));
+    } finally {
+      setApiBackendBusy(false);
+    }
+  };
+
+  const clearApiBackendToken = async () => {
+    setApiBackendBusy(true);
+    setError(null);
+    try {
+      setApiBackend(await api.backendClearToken());
+      onNotice("Rigel relay credential removed from the OS keychain.");
+    } catch (failure) {
+      setError(failure instanceof Error ? failure.message : String(failure));
+    } finally {
+      setApiBackendBusy(false);
+    }
+  };
+
+  const backendPage = (
+    <>
+      <section className="settings-section">
+        <div className="settings-head">
+          <h3>Rigel API</h3>
+          <span className={`pill ${apiBackend?.relay_token_present ? "ok" : "cancelled"}`}>
+            {apiBackend?.relay_token_present ? "credential stored" : "no credential"}
+          </span>
+        </div>
+        <p className="fine">
+          The <code>rigel</code> model door and the room relay both call one Rigel API. Use the
+          hosted API, or run the same server yourself and point Rigel at it. This choice is
+          separate from <strong>Cloud</strong>: Firebase sync is the shelf and session mirror,
+          while this is the API that carries relay turns and room events.
+        </p>
+        <div className="settings-actions" role="group" aria-label="Rigel API placement">
+          <button
+            type="button"
+            className={`chip${apiBackendMode === "hosted" ? " on" : ""}`}
+            aria-pressed={apiBackendMode === "hosted"}
+            disabled={apiBackendBusy}
+            onClick={() => setApiBackendMode("hosted")}
+          >
+            Hosted Rigel API
+          </button>
+          <button
+            type="button"
+            className={`chip${apiBackendMode === "self_hosted" ? " on" : ""}`}
+            aria-pressed={apiBackendMode === "self_hosted"}
+            disabled={apiBackendBusy}
+            onClick={() => setApiBackendMode("self_hosted")}
+          >
+            Self-hosted
+          </button>
+        </div>
+        {apiBackendMode === "hosted" ? (
+          <p className="fine">
+            Requests go to <code>{apiBackend?.hosted_url ?? "https://api.askrigel.com"}</code>.
+            There is nothing to run on this machine.
+          </p>
+        ) : (
+          <div className="settings-field-grid">
+            <label className="settings-field">
+              <span>API base URL</span>
+              <div className="settings-field-row">
+                <input
+                  type="url"
+                  value={apiBackendUrl}
+                  aria-label="Self-hosted Rigel API URL"
+                  placeholder="https://api.example.com"
+                  spellCheck={false}
+                  autoComplete="off"
+                  disabled={apiBackendBusy}
+                  onChange={(event) => setApiBackendUrl(event.target.value)}
+                />
+              </div>
+              <span className="fine">
+                The origin Caddy serves, with no trailing slash. A path prefix is allowed.
+              </span>
+            </label>
+          </div>
+        )}
+        {insecureApiUrl ? (
+          <p className="notice" role="status">
+            This URL uses plain HTTP. The relay token is a bearer credential; anyone on the path
+            can replay it. Use HTTPS for a deployment reachable off this machine.
+          </p>
+        ) : null}
+        <div className="settings-actions">
+          <button
+            className="primary"
+            onClick={() => void saveApiBackend()}
+            disabled={
+              apiBackendBusy ||
+              (apiBackendMode === "self_hosted" && !apiBackendUrl.trim())
+            }
+          >
+            {apiBackendBusy ? "Saving…" : "Save API"}
+          </button>
+        </div>
+        {apiBackend?.override_env ? (
+          <p className="notice" role="status">
+            <code>{apiBackend.override_env}</code> is set in the environment and currently wins
+            over the saved choice. Requests use <code>{apiBackend.effective_url}</code> until that
+            variable is removed; the choice below is kept for the next launch without it.
+          </p>
+        ) : null}
+        <p className="fine mono">
+          backend.json · in the app data folder · effective {apiBackend?.effective_url ?? "…"}
+        </p>
+      </section>
+
+      <section className="settings-section">
+        <div className="settings-head">
+          <h3>Relay credential</h3>
+          <span className={`pill ${apiBackend?.relay_token_present ? "ok" : "cancelled"}`}>
+            {apiBackend?.relay_token_present ? "stored" : "missing"}
+          </span>
+        </div>
+        <p className="fine">
+          The API authenticates the <code>rigel</code> role with a bearer token. Paste the token
+          issued for this installation: the hosted service issues it, and a self-hosted stack
+          generates <code>RIGEL_RELAY_TOKEN</code> in <code>deploy/.env.production</code>. It is
+          written to the OS keychain, never to <code>backend.json</code>, and this window never
+          reads it back.
+        </p>
+        <div className="settings-field-grid">
+          <label className="settings-field">
+            <span>Bearer token</span>
+            <div className="settings-field-row">
+              <input
+                type="password"
+                value={apiBackendToken}
+                aria-label="Rigel relay bearer token"
+                placeholder={
+                  apiBackend?.relay_token_present
+                    ? "stored — paste a replacement"
+                    : "one line from your deployment or account"
+                }
+                spellCheck={false}
+                autoComplete="off"
+                disabled={apiBackendBusy}
+                onChange={(event) => setApiBackendToken(event.target.value)}
+              />
+            </div>
+          </label>
+        </div>
+        <div className="settings-actions">
+          <button
+            className="primary"
+            onClick={() => void saveApiBackendToken()}
+            disabled={apiBackendBusy || !apiBackendToken.trim()}
+          >
+            {apiBackend?.relay_token_present ? "Replace token" : "Save token"}
+          </button>
+          {apiBackend?.relay_token_present ? (
+            <button
+              className="chip danger"
+              onClick={() => void clearApiBackendToken()}
+              disabled={apiBackendBusy}
+            >
+              Forget token
+            </button>
+          ) : null}
+        </div>
+        <p className="fine mono">rigel/relay · in the OS keychain</p>
+      </section>
+
+      <section className="settings-section">
+        <div className="settings-head">
+          <h3>Self-hosting</h3>
+          <span className="pill">deploy/README.md</span>
+        </div>
+        <p className="fine">
+          The stack is Postgres, the Node API and Caddy. <code>deploy/init-env.mjs</code> writes
+          the secrets, including distinct Rigel and Muse relay tokens; the API and CMS share a
+          Postgres container but use separate databases.
+        </p>
+        <ol className="room-setup-steps">
+          <li>
+            Run <code>node deploy/init-env.mjs</code> once. Never commit the generated{" "}
+            <code>deploy/.env.production</code>.
+          </li>
+          <li>
+            Run <code>./deploy/deploy.sh --host &lt;server&gt;</code> to build and start the stack
+            over TLS.
+          </li>
+          <li>
+            Save the API URL above, then paste this installation&apos;s{" "}
+            <code>RIGEL_RELAY_TOKEN</code> as the credential.
+          </li>
+        </ol>
+        <p className="fine">
+          Self-hosting moves the relay and account API, not inference: native turns still go to
+          whichever model provider you configured. The server currently implements auth,
+          published sessions and the relay; cloud files, the LLM gateway and contact routes are
+          still migration work. The web reader keeps using Firebase.
+        </p>
       </section>
     </>
   );
@@ -3682,6 +4078,8 @@ export default function SettingsView({
         return shelfPage;
       case "plugins":
         return <PluginsPage onNotice={onNotice} />;
+      case "backend":
+        return backendPage;
       case "cloud":
         return cloudPage;
       case "mail":
@@ -4015,6 +4413,26 @@ export default function SettingsView({
               request leaves the machine.
             </p>
           </div>
+        ) : null}
+        {page === "backend" ? (
+          <>
+            <div>
+              <h3>What leaves the machine</h3>
+              <p className="fine">
+                Relay turns and room events go to the API saved on the left. A hosted deployment
+                sees those payloads; a self-hosted one sees only what its own operator retains.
+                Model prompts still go to the model provider you picked, not to this API.
+              </p>
+            </div>
+            <div>
+              <h3>One credential</h3>
+              <p className="fine">
+                The token is a bearer secret: it grants the <code>rigel</code> role on the API.
+                Saving replaces the keychain entry, and the value is never returned to this
+                window. Rotate it on the server and replace it here if it is exposed.
+              </p>
+            </div>
+          </>
         ) : null}
         {page === "cloud" ? (
           <div>

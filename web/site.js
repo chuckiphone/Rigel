@@ -73,7 +73,7 @@
   const link = document.getElementById("download");
   if (!link) return;
 
-  const REPO = "OkVurb/Rigel";
+  const REPO = "chuckiphone/Rigel";
   const LATEST = `https://api.github.com/repos/${REPO}/releases/latest`;
   const label = document.getElementById("download-label");
   const meta = document.getElementById("release-meta");

@@ -57,6 +57,9 @@ pub const RIGEL: &str = "rigel";
 /// table and `rigel keys status` must agree about every door the app can use.
 pub const LOCAL: &str = "local";
 pub const LLAMAFILE: &str = "llamafile";
+/// The llama.cpp `llama-server` door: keyless like the other local doors, with one model served
+/// from a GGUF on this machine.
+pub const LLAMACPP: &str = "llamacpp";
 /// A user's own OpenAI-compatible door. Its keychain entry is the whole record — base URL,
 /// header pairs and the probed model ids — so its header values never enter settings.
 pub const CUSTOM: &str = "custom";
@@ -66,7 +69,7 @@ pub const CUSTOM: &str = "custom";
 pub const PROVIDERS: &[&str] = &[
     OMNIROUTE, OPENROUTER, GEMINI, VERTEX, OPENAI, XAI, GROQ, DEEPSEEK, MISTRAL, TOGETHER,
     FIREWORKS, META, ANTHROPIC, CURSOR, CLINE, MINIMAX, AGENTMAIL, GRAVITY, EXA, LOCAL, LLAMAFILE,
-    CUSTOM,
+    LLAMACPP, CUSTOM,
 ];
 
 const SERVICE: &str = "rigel";
@@ -281,6 +284,7 @@ pub fn provider_environment_variable(provider: &str) -> Option<&'static str> {
         // "this door was configured", which is why a moved local door still appears in health.
         LOCAL => Some("RIGEL_OLLAMA_BASE_URL"),
         LLAMAFILE => Some("RIGEL_LLAMAFILE_BASE_URL"),
+        LLAMACPP => Some("RIGEL_LLAMACPP_BASE_URL"),
         // Not a key: the complete custom-door record, for a headless run.
         CUSTOM => Some("RIGEL_CUSTOM_DOOR"),
         _ => None,

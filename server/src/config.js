@@ -24,9 +24,14 @@ export function loadConfig(env = process.env) {
     refreshDays: integer(env.REFRESH_TOKEN_DAYS, 30),
     appUrl: (env.APP_URL || 'http://localhost:5173').replace(/\/+$/, ''),
     apiUrl: (env.API_URL || 'http://localhost:8080').replace(/\/+$/, ''),
+    // A production API must not accept a page served by an arbitrary local dev server. The
+    // production deployment names its origins explicitly; the localhost defaults exist only for
+    // a development run with no env file at all.
     allowedOrigins: list(
       env.ALLOWED_ORIGINS,
-      'https://askrigel.com,https://www.askrigel.com,http://localhost:5173,http://localhost:4173',
+      production
+        ? 'https://askrigel.com,https://www.askrigel.com'
+        : 'https://askrigel.com,https://www.askrigel.com,http://localhost:5173,http://localhost:4173',
     ),
     resendApiKey: env.RESEND_API_KEY || '',
     mailFrom: env.MAIL_FROM || 'Rigel <hello@askrigel.com>',

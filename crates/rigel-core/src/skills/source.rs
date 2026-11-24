@@ -115,13 +115,17 @@ impl SourceState {
 }
 
 /// What the shelf's status line shows. `last_sync_at` is kept even when the source is broken:
-/// "last reached GitHub 3h ago" is more useful than "broken".
+/// "last reached GitHub 3h ago" is more useful than "broken". `last_attempt_at` is when the
+/// checker last tried, so Settings can show that it is still working; `failures` is the
+/// consecutive-failure count that spaces out retries of a dead endpoint.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SourceStatus {
     pub id: String,
     pub base_url: Option<String>,
     pub state: SourceState,
     pub last_sync_at: Option<i64>,
+    pub last_attempt_at: Option<i64>,
+    pub failures: u32,
     pub error: Option<String>,
 }
 
@@ -138,16 +142,24 @@ pub async fn load_status(
     id: &str,
     base_url: Option<&str>,
 ) -> Result<SourceStatus, sqlx::Error> {
-    let row: Option<(Option<i64>, Option<String>, Option<String>)> =
-        sqlx::query_as("SELECT last_sync_at, status, error FROM sources WHERE id = ?")
-            .bind(id)
-            .fetch_optional(pool)
-            .await?;
+    type SourceRow = (
+        Option<i64>,
+        Option<String>,
+        Option<String>,
+        Option<i64>,
+        i64,
+    );
+    let row: Option<SourceRow> = sqlx::query_as(
+        "SELECT last_sync_at, status, error, last_attempt_at, failures FROM sources WHERE id = ?",
+    )
+    .bind(id)
+    .fetch_optional(pool)
+    .await?;
 
     let now = crate::migrate::now_ms();
-    let (last_sync_at, state, error) = match row {
-        None => (None, SourceState::Stale, None),
-        Some((last_sync_at, status, error)) => {
+    let (last_sync_at, state, error, last_attempt_at, failures) = match row {
+        None => (None, SourceState::Stale, None, None, 0),
+        Some((last_sync_at, status, error, last_attempt_at, failures)) => {
             let state = match status.as_deref() {
                 Some("broken") => SourceState::Broken,
                 Some("ok")
@@ -157,7 +169,7 @@ pub async fn load_status(
                 }
                 _ => SourceState::Stale,
             };
-            (last_sync_at, state, error)
+            (last_sync_at, state, error, last_attempt_at, failures)
         }
     };
 
@@ -166,6 +178,8 @@ pub async fn load_status(
         base_url: base_url.map(ToOwned::to_owned),
         state,
         last_sync_at,
+        last_attempt_at,
+        failures: failures.max(0) as u32,
         error,
     })
 }

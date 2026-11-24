@@ -115,11 +115,8 @@ export function usageCost({ input, output, inputMicros, outputMicros }) {
 }
 
 export function clientIp(request) {
-  const forwarded = request.headers?.['x-forwarded-for'];
-  const rows = String(Array.isArray(forwarded) ? forwarded.join(',') : forwarded ?? '').split(',');
-  for (let index = rows.length - 1; index >= 0; index -= 1) {
-    const row = rows[index].trim();
-    if (/^[0-9a-fA-F:.]+$/.test(row)) return row;
-  }
+  // `request.ip` is already the trusted-proxy answer: Fastify applies the `trustProxy` hop
+  // count. Reading X-Forwarded-For here as well would let a caller choose the address used for
+  // rate-limit and session hashes when the API is reached without that proxy.
   return String(request.ip || request.socket?.remoteAddress || 'unknown').replace(/^::ffff:/, '');
 }

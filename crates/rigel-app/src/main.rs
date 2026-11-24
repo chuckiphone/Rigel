@@ -31,6 +31,11 @@ fn hide_orphan_console() {
 fn main() {
     #[cfg(all(windows, debug_assertions))]
     hide_orphan_console();
+    // The deferred-replace helper is a headless second copy of this binary: wait for the app to
+    // exit, swap the executable, start the new build. It must run before Tauri starts.
+    if let Some(code) = rigel_app::update_helper_mode(std::env::args_os().skip(1)) {
+        std::process::exit(code);
+    }
     // `rigel-app mcp ...` is the stdio server Claude calls back into; anything else opens the
     // window. A packaged app has no CLI on `PATH`, so the window binary hosts it itself.
     if let Some(code) = rigel_app::mcp_mode(std::env::args().skip(1)) {

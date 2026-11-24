@@ -27,7 +27,7 @@ use std::sync::Arc;
 use crate::credentials::{self, CredentialStore};
 
 use super::model::Model;
-use super::{anthropic, custom, gemini, local, omniroute, openrouter, rigel, vertex};
+use super::{anthropic, custom, gemini, llamaserver, local, omniroute, openrouter, rigel, vertex};
 
 /// Where a provider's `/chat/completions` lives.
 pub enum Endpoint {
@@ -39,6 +39,9 @@ pub enum Endpoint {
     Vertex,
     /// A user's own OpenAI-compatible origin, read from the keychain record (roadmap 28).
     Custom,
+    /// The local llama.cpp server: its port comes from the saved [`llamaserver::Profile`], because
+    /// Rigel may be the process that chose it.
+    LlamaCpp,
     /// A fixed base URL, with `env` as the variable that overrides it.
     Fixed {
         base: &'static str,
@@ -123,6 +126,22 @@ pub const PROVIDERS: &[ProviderSpec] = &[
         gateway: true,
         namespace: &[],
         hint: "This machine · no key · llamafile on 8080",
+        key_url: None,
+        headers: &[],
+    },
+    ProviderSpec {
+        id: local::LLAMACPP,
+        name: "llama.cpp (local)",
+        endpoint: Endpoint::LlamaCpp,
+        // The roster names the one model the server was started with; guessing a GGUF id would
+        // send a turn to a file this machine does not serve.
+        default_model: None,
+        usage_request: false,
+        lists_models: true,
+        access_token: false,
+        gateway: true,
+        namespace: &[],
+        hint: "This machine · no key · llama-server · start it in Settings or with `rigel local start`",
         key_url: None,
         headers: &[],
     },
@@ -473,10 +492,16 @@ pub fn sendable(spec: &ProviderSpec, model: &str) -> Option<String> {
 }
 
 pub fn base_url(spec: &ProviderSpec) -> Result<String, String> {
+    // The remote agent follows the same saved choice as the relay bridge: hosted by default,
+    // or the operator's own deployment. An environment override is applied inside `api_base`.
+    if spec.id == credentials::RIGEL {
+        return Ok(crate::backend::api_base());
+    }
     match spec.endpoint {
         Endpoint::Router => Ok(omniroute::base_url()),
         Endpoint::AiStudio => Ok(gemini::base_url()),
         Endpoint::Vertex => vertex::base_url(),
+        Endpoint::LlamaCpp => Ok(llamaserver::base_url()),
         Endpoint::Custom => custom::load()?
             .map(|door| door.base_url.trim_end_matches('/').to_string())
             .ok_or_else(|| {
@@ -725,6 +750,20 @@ pub async fn build_with_policy(
         model
     } else {
         model.without_usage_request()
+    };
+    // The llama.cpp door is a reasoning model on this machine's CPU. Its template is asked to
+    // skip the scratchpad by default — a 24-token title request would otherwise spend the whole
+    // budget thinking and answer with empty `content` — and prompt processing at 20–30 tok/s
+    // needs a far longer request budget than the shared 180 seconds.
+    let model = if spec.id == local::LLAMACPP {
+        let model = model.with_request_timeout(std::time::Duration::from_secs(900));
+        if llamaserver::thinking_enabled() {
+            model
+        } else {
+            model.with_template_kwargs(serde_json::json!({ "enable_thinking": false }))
+        }
+    } else {
+        model
     };
     let model = match policy {
         Some(policy) if !policy.is_default() => model.with_policy(policy),

@@ -54,6 +54,12 @@ pub fn tree_hash(root: &Path) -> Result<String, TreeError> {
         .collect())
 }
 
+/// Every file the project owns: tracked and untracked, minus ignore rules and `.rigel/`. The
+/// code graph reads through this so it sees the same tree a checkpoint does.
+pub fn project_files(root: &Path) -> Result<Vec<String>, TreeError> {
+    tracked_files(root)
+}
+
 fn tracked_files(root: &Path) -> Result<Vec<String>, TreeError> {
     if let Some(mut files) = git_files(root)? {
         files.sort();

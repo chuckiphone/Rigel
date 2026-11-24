@@ -4,6 +4,14 @@
 tree of 6 Nov 2026 and absorbs the deferred round-9 items from [roadmap-0.2.md](roadmap-0.2.md)
 rather than leaving a second list.
 
+**Update self-replace (2026-11-24).** Item 78's signed updater gained the deferred path it was
+missing: the release now publishes a separately signed raw executable with a `windows-x86_64`
+tag, the app stages it and starts a headless helper that waits for its own PID to exit, swaps the
+executable through a restorable backup and relaunches with the original arguments and working
+directory. A current, offline, 404 or truncated feed stays silent; every failure is one line in
+`update.log` or `updates/apply.log`. `crates/rigel-core/tests/updater_apply_e2e.rs` proves both
+branches with a loopback feed and a real binary swap. See [updates.md](updates.md).
+
 **Tally (2026-11-22):** 92 Done · 7 Blocked · 101 Open. The 0.3.0 preview tree ships every Done
 item. The previous pass closed 53, 60, 64, 67, 69, 70, 75, 78, 80, 106, 107, 130, 140 and 182;
 this pass closed 43, 44, 45, 46, 47, 48, 49, 52, 55, 56, 57, 58, 61, 62, 63, 65, 66, 68, 74 and 84. The
@@ -17,7 +25,7 @@ roadmap items; `check-tokens.mjs` covers 44 files; `check-versions.mjs` agrees o
 `node deploy/check.mjs` reports 11 checks with 4 notes. This is local evidence only: no VPS
 deployment or database migration was run.
 
-**Hosted proof (2026-11-18).** The `main` run [44213703351](https://github.com/OkVurb/Rigel/actions/runs/44213703351)
+**Hosted proof (2026-11-18).** The `main` run [44213703351](https://github.com/chuckiphone/Rigel/actions/runs/44213703351)
 passed rust, ui, functions, docs, supply-chain, hygiene and the six-spec window lane. The signing,
 VM and published-asset items (6-11 and 200) stay blocked.
 
@@ -312,10 +320,17 @@ done signal, and the eight-state table is the evidence a review will use.
     **Done (2026-11-06):** `agent/local.rs` adds the keyless Ollama (`local`) and llamafile rows to
     `agent/providers.rs`; `providers::credential` returns an empty credential, `OpenRouterModel::request`
     omits `Authorization` for it, `catalog::ModelOption.local` drives the picker tag, and the roster
-    is the capability probe (`capabilities::for_models` reads the same rows). Socket test:
+    is the capability probe (`capabilities::for_models` reads the same rows).     Socket test:
     `agent::local::tests::a_local_turn_sends_no_authorization_and_stays_on_loopback`; provider +
     loopback test: `tests/roadmap_27_29.rs::the_local_doors_need_no_key_and_default_to_loopback`;
     picker tag: `ui/tests/roadmap-local-alias.spec.ts`.
+    **Follow-up (2026-11-23):** the third keyless door, `agent/llamaserver.rs`, serves a local
+    Qwen3.6-35B-A3B GGUF through `llama-server` and owns the process: `rigel local start` waits
+    for `/health`, chooses `-lm mmap+mlock` only when the weights fit in free RAM, attaches to a
+    healthy server instead of starting a second one, and stops the recorded PID after checking
+    its image. `agent/openrouter.rs` sends `chat_template_kwargs.enable_thinking` for the door
+    and turns a `length` finish with no answer into an error naming `max_tokens`; Settings →
+    Providers and `ui/src/settings.tsx` expose the same start, stop and mode.
 
 28. **W2 · P2 · M · Custom OpenAI-compatible door.** `ui/src/settings/custom-provider.tsx` collects
     a base URL, header pairs and a model list behind a probe. — done when the URL is validated, the

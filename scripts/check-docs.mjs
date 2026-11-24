@@ -408,6 +408,7 @@ function markdownFiles(directory) {
 // SDK or collector endpoint. The marketing site's own analytics are outside this desktop receipt.
 const OUTBOUND_DESTINATIONS = [
   "Selected model provider",
+  "Rigel API",
   "Firebase Identity Toolkit",
   "Cloud Firestore",
   "Firebase App Check endpoint",

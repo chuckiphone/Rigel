@@ -7,7 +7,7 @@ body:
     attributes:
       value: |
         The plan and the reasons behind it live in
-        [handoff.md](https://github.com/OkVurb/Rigel/blob/main/docs/handoff.md). Read the
+        [handoff.md](https://github.com/chuckiphone/Rigel/blob/main/docs/handoff.md). Read the
         "Non-negotiables" table first: a proposal that contradicts one is a much harder sell than
         one that fits.
 

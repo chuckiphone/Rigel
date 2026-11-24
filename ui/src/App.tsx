@@ -26,6 +26,7 @@ import {
   type UpdateStatus,
 } from "./api";
 import AttentionView, { type AttentionJump } from "./attention";
+import BootSequence from "./boot";
 import ChatView from "./agentchat";
 import { RigelMark } from "./mark";
 import { useMenu } from "./menu";
@@ -38,6 +39,7 @@ import PluginShelf from "./pluginShelf";
 import Palette, { type PaletteAction } from "./palette";
 import SessionView from "./session";
 import SettingsView, { type SettingsPage } from "./settings";
+import CodeGraphView from "./graph";
 import { applyDisplay, sourceLabel } from "./display";
 import { applyContrast, applyTheme, themePreference } from "./theme";
 import Titlebar from "./titlebar";
@@ -66,6 +68,7 @@ const ICONS = {
   session: "M3 4.5h14M3 9.5h14M3 14.5h9",
   chat: "M6 3.5h8a2.5 2.5 0 0 1 2.5 2.5v5a2.5 2.5 0 0 1-2.5 2.5H9.5L6 16.5v-3H6a2.5 2.5 0 0 1-2.5-2.5V6A2.5 2.5 0 0 1 6 3.5ZM6.5 8.5h.01M10 8.5h.01M13.5 8.5h.01",
   diff: "M6 3v14M14 3v14M3 7h6M11 13h6",
+  graph: "M5 16a2 2 0 1 0 0-4 2 2 0 0 0 0 4ZM15 8a2 2 0 1 0 0-4 2 2 0 0 0 0 4ZM15 16a2 2 0 1 0 0-4 2 2 0 0 0 0 4ZM7 12l6-3M7 14l6 1",
   account: "M10 10.5a3 3 0 1 0 0-6 3 3 0 0 0 0 6ZM4.5 17c.6-2.5 2.8-4 5.5-4s4.9 1.5 5.5 4",
   settings:
     "M10 12.5a2.5 2.5 0 1 0 0-5 2.5 2.5 0 0 0 0 5ZM10 2.5v2M10 15.5v2M2.5 10h2M15.5 10h2",
@@ -76,6 +79,7 @@ type View =
   | "shelf"
   | "attention"
   | "session"
+  | "graph"
   | "chat"
   | "diff"
   | "account"
@@ -89,6 +93,7 @@ const VIEWS: { id: View; label: string; d: string; phase: string }[] = [
   { id: "shelf", label: "Shelf", d: ICONS.shelf, phase: "P2" },
   { id: "attention", label: "Attention", d: ICONS.attention, phase: "P7" },
   { id: "session", label: "Session", d: ICONS.session, phase: "P3" },
+  { id: "graph", label: "Graph", d: ICONS.graph, phase: "P4" },
   { id: "chat", label: "Chat", d: ICONS.chat, phase: "P6" },
   { id: "diff", label: "Diff", d: ICONS.diff, phase: "P5" },
   // Settings and Account are a bottom utility pair: Settings sits directly above the account
@@ -103,6 +108,9 @@ const RAIL_VIEWS = VIEWS.filter((item) => item.id !== "settings" && item.id !== 
 /** Rows fetched per page. The index has ~10k skills; the list pages as it scrolls. */
 const PAGE = 250;
 const LAST_PROJECT = "rigel.lastProject";
+/** Status is a SQLite read; the backend pushes after a successful refresh, and this poll is the
+ * fallback for a failed retry that changes a row's state without writing skill rows. */
+const STATUS_POLL_MS = 60_000;
 
 /* ---------------------------- pane widths (D159) ---------------------------- */
 
@@ -550,12 +558,28 @@ export default function App() {
 
   useEffect(() => {
     let live = true;
-    source
-      .status()
-      .then((next) => live && setStatuses(next))
-      .catch(() => live && setStatuses([]));
+    let release: (() => void) | undefined;
+    const read = () =>
+      source
+        .status()
+        .then((next) => live && setStatuses(next))
+        .catch(() => live && setStatuses([]));
+    void read();
+    const timer = window.setInterval(read, STATUS_POLL_MS);
+    // The Rust checker emits after a pass that wrote rows. Reloading pulls the new skills as well
+    // as the status; the poll above covers every state change that wrote no rows.
+    if (isTauri()) {
+      void (async () => {
+        const { listen } = await import("@tauri-apps/api/event");
+        const unlisten = await listen("rigel://skills", () => setReload((value) => value + 1));
+        if (live) release = unlisten;
+        else unlisten();
+      })();
+    }
     return () => {
       live = false;
+      window.clearInterval(timer);
+      release?.();
     };
   }, [source, reload]);
 
@@ -1161,6 +1185,7 @@ ${task}`,
       }
       onContextMenu={openGlobalMenu}
     >
+      <BootSequence />
       {native ? <Titlebar project={project?.name ?? null} /> : null}
 
       {/* D158: the first Tab stop skips the rail and the list, whether or not the mouse moved. */}
@@ -1448,6 +1473,8 @@ ${task}`,
           onNotice={setNotice}
           onChooseProject={() => void chooseFolder()}
         />
+      ) : view === "graph" ? (
+        <CodeGraphView project={project} />
       ) : view === "account" ? (
         <AccountView
           project={sessionProject}

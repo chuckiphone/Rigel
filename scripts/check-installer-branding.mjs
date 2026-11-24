@@ -90,6 +90,9 @@ const windows = bundle.windows ?? {};
 const wix = windows.wix ?? {};
 const nsis = windows.nsis ?? {};
 const targets = new Set(bundle.targets ?? []);
+const windowsIcon = (bundle.icon ?? []).find(
+  (path) => typeof path === "string" && path.toLowerCase().endsWith(".ico"),
+);
 
 check(bundle.active === true, "bundling is active");
 check(targets.has("msi") && targets.has("nsis"), "both MSI and NSIS targets are enabled");
@@ -109,10 +112,9 @@ checkArt("NSIS header", nsis.headerImage, 150, 57);
 checkArt("NSIS sidebar", nsis.sidebarImage, 164, 314);
 checkIcon("NSIS installer icon", nsis.installerIcon);
 checkIcon("NSIS uninstaller icon", nsis.uninstallerIcon);
-checkIcon("bundle icon", (bundle.icon ?? [])[0]);
+checkIcon("bundle icon", windowsIcon);
 check(
-  nsis.installerIcon === (bundle.icon ?? [])[0] &&
-    nsis.uninstallerIcon === (bundle.icon ?? [])[0],
+  nsis.installerIcon === windowsIcon && nsis.uninstallerIcon === windowsIcon,
   "setup, uninstaller and bundle share Rigel's icon",
 );
 

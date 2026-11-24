@@ -341,6 +341,44 @@ export interface UpdateCheck {
   msi_sha256: string | null;
 }
 
+/** One node in the read-only project graph: a file or a top-level symbol. */
+export interface GraphNode {
+  id: string;
+  label: string;
+  kind: "file" | "symbol" | "concept";
+  path: string;
+  line: number | null;
+  language: string;
+}
+
+export interface GraphEdge {
+  from: string;
+  to: string;
+  kind: "imports" | "defines" | "references";
+}
+
+/** The background indexer's last pass, used by the graph header. */
+export interface GraphWatchStatus {
+  project: string;
+  updatedUnix: number;
+  files: number;
+  nodes: number;
+  edges: number;
+  revision: number;
+  concepts: number;
+  agent: string | null;
+  error: string | null;
+}
+
+/** The bounded graph the core scanned; `truncated` means a cap was hit. */
+export interface CodeGraph {
+  root: string;
+  nodes: GraphNode[];
+  edges: GraphEdge[];
+  files: number;
+  truncated: boolean;
+}
+
 /** The Firebase project and account, as `rigel cloud status` reports them. No token is here. */
 export interface CloudStatus {
   configured: boolean;
@@ -734,6 +772,24 @@ export interface OmnirouteStatus {
   running: boolean;
   origin: string;
   base_url: string;
+}
+
+/** The local llama.cpp server behind the `llamacpp` door (`local_model_status`). */
+export interface LocalModelStatus {
+  /** `ready`, `loading` or `down`. */
+  state: string;
+  /** One sentence naming what happened and what to do about it. */
+  detail: string;
+  base_url: string;
+  server: string | null;
+  model: string | null;
+  /** `pinned` when the weights fit in RAM, `mmap` when they are mapped instead. */
+  mode: string;
+  port: number;
+  pid: number | null;
+  configured: boolean;
+  free_ram_gb: number | null;
+  model_gb: number | null;
 }
 
 export interface Agent {
@@ -1496,6 +1552,8 @@ export interface ProviderRow {
   /** Where a key is created, when the vendor publishes a page for it. */
   key_url: string | null;
   key_present: boolean;
+  /** A local door: no credential exists, so "no key" would be the wrong sentence. */
+  keyless: boolean;
 }
 
 /** Health of the vendor chat server (agentchattr) the Chat tab fronts. */
@@ -1534,6 +1592,20 @@ export interface AgentChatAgent {
   label: string;
   color: string;
   role: string | null;
+}
+
+/**
+ * The API placement the `rigel` model door and the relay bridge use. This is separate from
+ * Firebase Cloud sync: it is the Rigel API itself, hosted or self-hosted.
+ */
+export interface ApiBackendStatus {
+  mode: "hosted" | "self_hosted";
+  api_url: string;
+  effective_url: string;
+  hosted_url: string;
+  /** Set when `RIGEL_API_URL` (or the legacy variable) is overriding the saved choice. */
+  override_env: string | null;
+  relay_token_present: boolean;
 }
 
 /** One harness process Rigel started for the room, so the roster can offer a Stop. */
@@ -1610,6 +1682,7 @@ const PREVIEW_PROVIDERS: ProviderRow[] = [
     default_model: "gpt-5.6-sol-medium",
     key_url: null,
     key_present: false,
+    keyless: false,
   },
   {
     id: "openrouter",
@@ -1620,6 +1693,18 @@ const PREVIEW_PROVIDERS: ProviderRow[] = [
     default_model: "openai/gpt-4.1-mini",
     key_url: "https://openrouter.ai/keys",
     key_present: false,
+    keyless: false,
+  },
+  {
+    id: "llamacpp",
+    name: "llama.cpp (local)",
+    hint: "This machine · no key · llama-server on 8080",
+    env: "RIGEL_LLAMACPP_BASE_URL",
+    access_token: false,
+    default_model: null,
+    key_url: null,
+    key_present: false,
+    keyless: true,
   },
   {
     id: "vertex",
@@ -1630,6 +1715,7 @@ const PREVIEW_PROVIDERS: ProviderRow[] = [
     default_model: "google/gemini-4-argon",
     key_url: "https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/start/openai",
     key_present: false,
+    keyless: false,
   },
   {
     id: "anthropic",
@@ -1640,6 +1726,7 @@ const PREVIEW_PROVIDERS: ProviderRow[] = [
     default_model: "claude-opus-5-5",
     key_url: "https://platform.claude.com/settings/keys",
     key_present: false,
+    keyless: false,
   },
 ];
 
@@ -1875,6 +1962,10 @@ export interface SourceStatus {
   base_url: string | null;
   state: "ok" | "stale" | "broken";
   last_sync_at: number | null;
+  /** When the background checker last attempted this source, successful or not. */
+  last_attempt_at: number | null;
+  /** Consecutive failures; the core uses it to space out retries. */
+  failures: number;
   error: string | null;
 }
 
@@ -3055,6 +3146,39 @@ export const api = {
     return call<OmnirouteStatus>("omniroute_start");
   },
 
+  async localModelStatus(): Promise<LocalModelStatus> {
+    if (!isTauri()) {
+      return {
+        state: "down",
+        detail: "The browser preview has no local llama.cpp server.",
+        base_url: "http://127.0.0.1:8080/v1",
+        server: null,
+        model: null,
+        mode: "mmap",
+        port: 8080,
+        pid: null,
+        configured: false,
+        free_ram_gb: null,
+        model_gb: null,
+      };
+    }
+    return call<LocalModelStatus>("local_model_status");
+  },
+
+  async localModelStart(): Promise<LocalModelStatus> {
+    if (!isTauri()) {
+      throw new Error("Start the local model from the desktop app, not the browser preview.");
+    }
+    return call<LocalModelStatus>("local_model_start");
+  },
+
+  async localModelStop(): Promise<LocalModelStatus> {
+    if (!isTauri()) {
+      throw new Error("Stop the local model from the desktop app, not the browser preview.");
+    }
+    return call<LocalModelStatus>("local_model_stop");
+  },
+
   /**
    * Boot every local service a turn may need — the router, and the chat server once the
    * project's checkout is known. Fire-and-forget: each service reports itself in its tab.
@@ -3177,7 +3301,7 @@ export const api = {
         current: "0.1.1",
         enabled: false,
         auto_install: false,
-        manifest_url: "https://github.com/OkVurb/Rigel/releases/latest/download/latest.json",
+        manifest_url: "https://github.com/chuckiphone/Rigel/releases/latest/download/latest.json",
         key_present: false,
       };
     }
@@ -3195,7 +3319,7 @@ export const api = {
         enabled,
         auto_install: autoInstall,
         manifest_url:
-          manifestUrl ?? "https://github.com/OkVurb/Rigel/releases/latest/download/latest.json",
+          manifestUrl ?? "https://github.com/chuckiphone/Rigel/releases/latest/download/latest.json",
         key_present: false,
       };
     }
@@ -3206,6 +3330,29 @@ export const api = {
     });
   },
 
+  /** The project's files, symbols and edges, read locally and bounded by the core. */
+  async codeGraph(
+    project: string,
+    focus: string | null = null,
+    depth = 2,
+    limit = 700,
+  ): Promise<CodeGraph> {
+    if (!isTauri()) throw new Error("The code graph is read from the desktop app.");
+    return call<CodeGraph>("code_graph", { project, focus, depth, limit });
+  },
+
+  /** The background indexer's last pass; `null` before the first scan. */
+  async codeGraphWatchStatus(project: string): Promise<GraphWatchStatus | null> {
+    if (!isTauri()) return null;
+    return call<GraphWatchStatus | null>("code_graph_watch_status", { project });
+  },
+
+  /** The live zero-priced chat rows, ranked, with no probe requests. */
+  async freeAgents(): Promise<ModelOption[]> {
+    if (!isTauri()) return [];
+    return call<ModelOption[]>("free_agents");
+  },
+
   async updateCheck(): Promise<UpdateCheck> {
     if (!isTauri()) throw new Error("Update checks run in the desktop app.");
     return call<UpdateCheck>("update_check");
@@ -3214,6 +3361,38 @@ export const api = {
   async updateInstall(): Promise<string> {
     if (!isTauri()) throw new Error("Updates install from the desktop app.");
     return call<string>("update_install");
+  },
+
+  /** The hosted/self-hosted Rigel API choice, read from `backend.json`. */
+  async backendStatus(): Promise<ApiBackendStatus> {
+    if (!isTauri()) {
+      return {
+        mode: "hosted",
+        api_url: "",
+        effective_url: "https://api.askrigel.com",
+        hosted_url: "https://api.askrigel.com",
+        override_env: null,
+        relay_token_present: false,
+      };
+    }
+    return call<ApiBackendStatus>("backend_status");
+  },
+
+  /** Validate and save the placement. The URL field is ignored in hosted mode. */
+  async backendSet(mode: "hosted" | "self_hosted", apiUrl: string): Promise<ApiBackendStatus> {
+    if (!isTauri()) throw new Error("Configure the Rigel API in the desktop app.");
+    return call<ApiBackendStatus>("backend_set", { mode, apiUrl });
+  },
+
+  /** Store the relay bearer credential in the OS keychain; it is never returned. */
+  async backendSetToken(token: string): Promise<ApiBackendStatus> {
+    if (!isTauri()) throw new Error("The relay credential is saved in the desktop app.");
+    return call<ApiBackendStatus>("backend_set_token", { token });
+  },
+
+  async backendClearToken(): Promise<ApiBackendStatus> {
+    if (!isTauri()) throw new Error("The relay credential is saved in the desktop app.");
+    return call<ApiBackendStatus>("backend_clear_token");
   },
 
   /** The Firebase project and account. No network call; `cloud.json` and the keychain answer. */

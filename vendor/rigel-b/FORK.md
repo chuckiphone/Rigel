@@ -39,11 +39,12 @@ The upstream repository is Apache-2.0. The Rigel application bundles a copy of t
 From the Rigel repository root:
 
 ```bash
-cargo build --release --manifest-path vendor/rigel-b/Cargo.toml \
-  --target-dir vendor/rigel-b/target -p rigel-b --features render
-cp vendor/rigel-b/target/release/rigel-b.exe \
-  crates/rigel-app/binaries/rigel-b-x86_64-pc-windows-msvc.exe
+node scripts/build-rigel-b.mjs
 ```
 
-Tauri's `externalBin` entry points at `binaries/rigel-b`; the app resolves the copied
-`rigel-b.exe` beside its own executable.
+The script defaults to the host target from `rustc -vV`, builds the release binary, and writes
+`crates/rigel-app/binaries/rigel-b-<target-triple>[.exe]`, which is the name Tauri's
+`externalBin` entry resolves on that platform. CI passes `--target <triple>` on a runner that
+matches the target, because Tauri does not cross-compile installers; a macOS universal build
+needs a separate `lipo` step. Use `node scripts/build-rigel-b.mjs --dry-run` to print the
+command and destination without building.

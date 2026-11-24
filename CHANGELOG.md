@@ -2,6 +2,38 @@
 
 Every release, newest first. The heading is the version its `v*` tag publishes.
 
+## 0.4.0-alpha.1 — 2026-11-24
+
+- feat(graph): add a read-only code graph of files, top-level symbols, resolved imports and name
+  references, with focus, depth and a selected-node neighbour list ([codegraph](docs/codegraph.md))
+- feat(graph): keep the graph current with a background indexer that fingerprints the project,
+  writes `.rigel/codegraph.json` and preserves concepts whose files still exist
+- feat(graph): let a live zero-priced OpenRouter row name up to eight architecture concepts at
+  most every ten minutes, linked only to files the graph contains; a failure leaves the local
+  graph intact and is reported in the Graph header
+- feat(models): refresh the live model roster every three minutes while the window is open, so the
+  free-agent list and the picker never sit on a launch-time snapshot; `free_agents` returns the
+  ranked zero-priced chat rows without probing them
+- chore: move canonical repository URLs to `github.com/chuckiphone/Rigel`
+
+- feat(update): check the signed release feed once at launch and apply a newer release through a
+  detached helper that waits for the app to exit, swaps the executable and relaunches it with the
+  original arguments, working directory and a one-launch guard; a current, offline, 404 or
+  rate-limited feed stays silent ([updates](docs/updates.md))
+- feat(update): sign the raw executable separately with a platform tag and verify its SHA-256
+  before the swap, while installed copies that cannot write their own directory keep the signed
+  installer path
+- fix(update): refuse malformed and four-part tags, compare pre-releases semantically, and remove a
+  truncated or mismatched download instead of leaving it beside the data directory
+- feat(agent): add a keyless `llamacpp` door for a GGUF served by llama.cpp's `llama-server`, with
+  a managed start, `/health` wait and PID-checked stop from Settings → Providers and
+  `rigel local status|start|stop|setup` ([local models](docs/local-models.md))
+- feat(agent): pick `-lm mmap+mlock` only when the weights fit in free RAM and show the slower
+  mmap mode in the status instead of falling back silently
+- fix(agent): send `chat_template_kwargs.enable_thinking: false` to the llama.cpp door so a small
+  request answers instead of spending its budget on the reasoning scratchpad, and report a
+  `length` finish with no answer as an error that names `max_tokens`
+
 ## 0.3.0 — 2026-11-22
 
 The 0.3 release. It keeps the 0.2.0 feature set and ships the work completed for the 0.3 tree,

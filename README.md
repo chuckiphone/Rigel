@@ -9,7 +9,7 @@
 A local-first window for Codex, Claude Code, Gemini CLI, Cursor, Cline, Muse Code and Rigel's own
 coordinator, working the same project without silently overwriting each other.
 
-[![CI](https://github.com/OkVurb/Rigel/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/OkVurb/Rigel/actions/workflows/ci.yml)
+[![CI](https://github.com/chuckiphone/Rigel/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/chuckiphone/Rigel/actions/workflows/ci.yml)
 [![Windows](https://img.shields.io/badge/Windows-10%201809%2B-0078D6?logo=windows&logoColor=white)](docs/PLATFORMS.md)
 [![Licence](https://img.shields.io/badge/licence-MIT%20OR%20Apache--2.0-blue)](#licence)
 
@@ -52,6 +52,7 @@ closes to the tray, so a running session is not interrupted by losing the window
 | **Runtime control** | Plan mode with one approval per plan, steering at a step boundary, pause across a restart, crash recovery with tombstones, deterministic replay, compaction at 80% of the window reading the stored per-turn summary, and per-step cost and timing. |
 | **Subagents** | Four read-only children with a parent DAG; write mode gives a child a worktree, per-file claims and a reviewed merge. |
 | **Home** | The Rigel Paper: each local day set as a broadsheet from the session database, with a lead story, dispatches, a plate, the day's numbers and a rack of earlier days. |
+| **Code graph** | A read-only map of the project's files, top-level symbols, imports and references, with focus and depth. A background indexer keeps `.rigel/codegraph.json` current as files change, and at most every ten minutes a live free OpenRouter row adds architecture concepts that point at real files ([codegraph](docs/codegraph.md)). |
 | **Headless API** | `rigel serve` exposes the same coordinator over loopback HTTP with bearer auth, an OpenAPI 3.1 spec and SSE; `rigel handoff` packages an unfinished session as a rules-preserving prompt. |
 | **Site and CMS** | A static site plus a Payload CMS; the VPS stack (Caddy, Fastify API, Postgres) is documented in [deploy/README.md](deploy/README.md). |
 
@@ -62,9 +63,11 @@ The long version of each, including where it stops, is in [docs/what-works.md](d
 - **One route, made legible.** A saved pair, a picker pair, a role preset and a bare-id repair all
   pass through one resolver; the inspector and `rigel route explain` print the same decision, and a
   door that is down becomes a visible health row rather than a silent switch.
-- **Doors for every key, and two without one.** Local Ollama and llamafile rows need no key, a
-  custom OpenAI-compatible door is validated and written only to the keychain, and OpenRouter
-  provider order, fallbacks and quantisations come from `.rigel/routing.json`.
+- **Doors for every key, and three without one.** Local Ollama, llamafile and llama.cpp rows need
+  no key; the llama.cpp door starts, probes and stops its own `llama-server` from Settings or
+  `rigel local` ([local models](docs/local-models.md)). A custom OpenAI-compatible door is
+  validated and written only to the keychain, and OpenRouter provider order, fallbacks and
+  quantisations come from `.rigel/routing.json`.
 - **A turn you can stop and keep.** Pause at a step boundary and resume after a restart with the
   same messages and budget, steer the next step, continue with a fresh bound, and recover a crashed
   turn with resume, read-only or a discard tombstone.
@@ -96,15 +99,17 @@ including upgrade notes, dependencies and known gaps.
 
 ## Install
 
-The newest published installer is [0.1.7](https://github.com/OkVurb/Rigel/releases/tag/v0.1.7);
-0.3.0 is source-only until a signed build and provenance receipt are cut. Building from source is
-the supported 0.3.0 path today. The Windows installer needs no Node, Python or Rust once it has run.
+The newest published build is [0.4.0-alpha.1](https://github.com/chuckiphone/Rigel/releases/tag/v0.4.0-alpha.1),
+a pre-release with the Graph surface and the refreshed free-model roster. Its Windows installer is
+attached to that release; because it is a pre-release it does not move the updater's stable
+`releases/latest` feed. 0.3.0 remains source-only. The Windows installer needs no Node, Python or
+Rust once it has run.
 
 To build the desktop app from source, build the renderer first: the Tauri shell embeds `ui/dist` at
 compile time. You need Rust 1.88+, Node 22.12+ and npm.
 
 ```bash
-git clone https://github.com/OkVurb/Rigel
+git clone https://github.com/chuckiphone/Rigel
 cd Rigel
 cd ui && npm install && npm run build && cd ..
 cargo build --workspace
@@ -136,7 +141,7 @@ CLI, Cursor, Cline or Muse Code.
 
 | Layer | Current dependency |
 |---|---|
-| Desktop shell | Tauri 2 with the tray icon and dialog plugin; MSI and NSIS packaging for Windows 10 1809+ |
+| Desktop shell | Tauri 2 with the tray icon and dialog plugin; MSI and NSIS packaging for Windows 10 1809+, with macOS `.app`/DMG and Linux deb/rpm/AppImage targets configured for CI |
 | Renderer | React 19.3, TypeScript 6.0 and Vite 8.3; no component or CSS framework |
 | Core | Rust 1.88 (edition 2024), Tokio 1, Reqwest 0.12 with rustls, SQLx 0.8 on SQLite |
 | Local security | `keyring` 3 (Windows native store), `ed25519-dalek` 2, `sha2`, `tokio-tungstenite` 0.24 |
@@ -145,7 +150,7 @@ CLI, Cursor, Cline or Muse Code.
 | Tests | Playwright 1.64 and axe-core 4.14 for the renderer; WebdriverIO 10.1 for the native Tauri window; `cargo test` for the workspace |
 | Chat sidecar | agentchattr and Python, bundled by the Windows packaging step |
 | Web and deploy | Static HTML/CSS/JS site; Fastify API, Payload CMS, Postgres and Caddy in `deploy/` |
-| Optional services | Firebase for cloud and phone, OpenRouter or local Ollama/llamafile doors, Exa for web search, AgentMail, Gravity sponsors |
+| Optional services | Firebase for cloud and phone, OpenRouter or local Ollama/llamafile/llama.cpp doors, Exa for web search, AgentMail, Gravity sponsors |
 
 The README stills and GIFs are generated from the renderer with `node scripts/capture-shots.mjs`
 (Playwright plus ffmpeg). Point `RIGEL_PREVIEW_URL` at a running preview; the script writes the same
@@ -202,7 +207,7 @@ Every still is 1440×900 at 2×, and both GIFs are regenerated from the same scr
 
 ## Cloud is optional
 
-Rigel is offline unless you point it at a Firebase project you own. Push mirrors shelf metadata,
+Cloud sync is offline unless you point it at a Firebase project you own. Push mirrors shelf metadata,
 never a skill body. Publish writes one session's prompts and the assistant's own words, never tool
 calls, command output or your project path. A removed row travels as a tombstone, so a pull does not
 resurrect it.
@@ -210,6 +215,11 @@ resurrect it.
 Account credentials stay in the OS keychain; the renderer never sees the refresh token. App Check is
 an optional custom provider that verifies a per-install token in constant time and rate-limits minting.
 [docs/cloud.md](docs/cloud.md) has the setup and the document shape.
+
+The relay is a separate choice: the `rigel` model door and the room bridge use the hosted API at
+`api.askrigel.com` by default, or a deployment you run from `deploy/`. Settings → **Rigel API**
+records it in `backend.json`, and the relay credential stays in the OS keychain.
+[docs/backend.md](docs/backend.md) covers both placements.
 
 ## The site, the CMS and the VPS stack
 
@@ -257,10 +267,12 @@ The gaps are part of the record:
 - [ARCHITECTURE.md](ARCHITECTURE.md): the pieces, the two databases, the write path and a turn
 - [docs/release-notes/0.3.0.md](docs/release-notes/0.3.0.md): the detailed 0.3.0 changelog, dependencies and upgrade notes
 - [docs/what-works.md](docs/what-works.md): every surface, its state and its evidence
+- [docs/updates.md](docs/updates.md): the signed launch check, the deferred self-replace, the switches and the exact log lines
+- [docs/codegraph.md](docs/codegraph.md): the Graph surface, the background indexer, the free-agent concept pass, its bounds and what leaves the machine
 - [CONTRIBUTING.md](CONTRIBUTING.md): build, checks, layout and the rules for a schema change
 - [SECURITY.md](SECURITY.md): the threat model, every network call and what is not defended
 - [docs/privacy.md](docs/privacy.md): what stays local and what leaves
-- [docs/PLATFORMS.md](docs/PLATFORMS.md): Windows support, signing and what macOS/Linux mean here
+- [docs/PLATFORMS.md](docs/PLATFORMS.md): the bundle target matrix, Windows support and signing, and what macOS/Linux mean here
 - [docs/cloud.md](docs/cloud.md): the Firebase project, the account and the document shape
 - [docs/roblox.md](docs/roblox.md): Roblox Studio MCP, 3D assets, animations and sound effects
 - [docs/design.md](docs/design.md): surface jobs, the token contract and the responsive breakpoints

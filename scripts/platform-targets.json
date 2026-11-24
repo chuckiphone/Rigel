@@ -1,0 +1,50 @@
+{
+  "comment": "One row per bundle target. scripts/check-platform-targets.mjs is the gate; scripts/print-bundle-matrix.mjs feeds this list to the CI bundle job.",
+  "targets": [
+    {
+      "id": "windows-x64",
+      "platform": "windows",
+      "runner": "windows-latest",
+      "target": "x86_64-pc-windows-msvc",
+      "bundles": ["msi", "nsis"],
+      "sidecar": "rigel-b-x86_64-pc-windows-msvc.exe",
+      "icons": ["icons/icon.ico"],
+      "config": "tauri.conf.json"
+    },
+    {
+      "id": "macos-arm64",
+      "platform": "macos",
+      "runner": "macos-15",
+      "target": "aarch64-apple-darwin",
+      "bundles": ["app", "dmg"],
+      "sidecar": "rigel-b-aarch64-apple-darwin",
+      "icons": ["icons/icon.icns"],
+      "config": "tauri.macos.conf.json"
+    },
+    {
+      "id": "macos-x64",
+      "platform": "macos",
+      "runner": "macos-15-intel",
+      "target": "x86_64-apple-darwin",
+      "bundles": ["app", "dmg"],
+      "sidecar": "rigel-b-x86_64-apple-darwin",
+      "icons": ["icons/icon.icns"],
+      "config": "tauri.macos.conf.json"
+    },
+    {
+      "id": "linux-x64",
+      "platform": "linux",
+      "runner": "ubuntu-22.04",
+      "target": "x86_64-unknown-linux-gnu",
+      "bundles": ["deb", "rpm", "appimage"],
+      "sidecar": "rigel-b-x86_64-unknown-linux-gnu",
+      "icons": [
+        "icons/32x32.png",
+        "icons/128x128.png",
+        "icons/128x128@2x.png",
+        "icons/icon.png"
+      ],
+      "config": "tauri.linux.conf.json"
+    }
+  ]
+}

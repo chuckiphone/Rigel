@@ -8,6 +8,7 @@
 //! | [`gemini`] | Google's OpenAI-compatible endpoint and its request profile |
 //! | [`vertex`] | Gemini on Vertex: project, location and an OAuth access token |
 //! | [`providers`] | the table of adapters, and which model id each one may be sent |
+//! | [`llamaserver`] | the local llama.cpp process behind the `llamacpp` door: start, probe, stop |
 //! | [`catalog`] | the model rosters every provider with a credential offers |
 //! | [`agentchat`] | the vendor chat server behind the Chat tab, its health and token |
 //! | [`scripted`] | a deterministic model for tests and the offline QA run |
@@ -44,6 +45,7 @@ pub mod freemode;
 pub mod gemini;
 pub mod health;
 pub mod limiter;
+pub mod llamaserver;
 pub mod local;
 pub mod merge_queue;
 pub mod model;

@@ -9,7 +9,6 @@ use serde_json::{Value, json};
 use rigel_core::agent::agentchat;
 use rigel_core::credentials;
 
-const DEFAULT_BASE_URL: &str = "https://api.askrigel.com";
 const POLL_INTERVAL: Duration = Duration::from_secs(2);
 const ERROR_BACKOFF: Duration = Duration::from_secs(10);
 const MESSAGE_LIMIT: u64 = 100;
@@ -54,12 +53,10 @@ struct InboxPage {
     messages: Vec<Envelope>,
 }
 
+/// The bridge and the `rigel` model door share one saved choice. `RIGEL_API_URL` (or the older
+/// `RIGEL_RELAY_BASE_URL`) still overrides it; that precedence lives in the core module.
 fn base_url() -> String {
-    std::env::var("RIGEL_RELAY_BASE_URL")
-        .ok()
-        .map(|value| value.trim().trim_end_matches('/').to_string())
-        .filter(|value| !value.is_empty())
-        .unwrap_or_else(|| DEFAULT_BASE_URL.to_string())
+    rigel_core::backend::api_base()
 }
 
 fn cursor_path(data_dir: &Path) -> PathBuf {

@@ -1,7 +1,7 @@
 # Threat model (roadmap 79)
 
-Scope: the Rigel desktop app and its native agent. Reviewed 2026-11-06 against the code in this
-tree. The local-first data inventory is in [privacy.md](privacy.md); the vulnerability route is in
+Scope: the Rigel desktop app and its native agent. Reviewed 2026-11-06 and extended
+2026-11-22 for the hosted/self-hosted API boundary against the code in this tree. The local-first data inventory is in [privacy.md](privacy.md); the vulnerability route is in
 [SECURITY.md](../SECURITY.md).
 
 ## Assets
@@ -71,6 +71,33 @@ operation, not something the desktop app can perform offline. The project owner 
 disable the account in the Firebase console, and provider-side session revocation remains the
 project's control.
 
+## 6. A web page or another local account reaching the local API
+
+**Mitigation.** `rigel serve` binds loopback by default and refuses `0.0.0.0`; it accepts one
+named interface only when the operator asks for it. Every route needs a 244-bit bearer token
+compared in constant time, any request carrying an `Origin` header is refused, and no CORS
+headers are sent. On Unix the token file is written `0600`, so another account cannot read it.
+With `--full-access` the API can reach the whole computer; that is an explicit flag, and the
+same bearer and Origin gates still apply.
+
+**Non-goal: isolation from another process running as the same user.** Such a process can read
+the token file and the project database. The API separates the coordinator from browsers and
+other machines, not from the account that owns them.
+
+## 7. A stolen API token, or a session that should have ended
+
+**Mitigation.** Hosted accounts authenticate with a short-lived JWT, but every request also
+checks the `auth_sessions` row: a revoked, expired or logged-out session is refused even while
+its JWT has minutes left. Logout-all and a password change revoke every other session. Account
+deletion requires the current password in addition to the typed confirmation. Published session
+and turn reads are scoped by `user_id` in SQL, and the tests cover a second account receiving a
+`404` rather than another user's row. The relay has two role-specific machine credentials and
+cannot read the other role's inbox.
+
+**Non-goal: hiding an account's existence at signup.** Signup answers `409 email_taken`, so an
+attacker can test whether an address has an account. The answer is deliberate: the alternative
+silently discards a real registration. Password reset does not reveal account existence.
+
 ## Residual risks
 
 - The database is not encrypted, and backups are the user's responsibility.
@@ -78,3 +105,5 @@ project's control.
   not judge intent.
 - Third-party providers, Firebase, AgentMail and MCP servers apply their own retention and
   security policies.
+- The hosted/self-hosted relay is single-tenant: its two relay credentials are deployment-wide,
+  not per user. A self-hoster who needs unrelated teams isolated should run separate deployments.

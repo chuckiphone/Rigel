@@ -24,6 +24,23 @@ if (!cargoVersion.test(cargo)) {
 }
 writeFileSync(cargoPath, cargo.replace(cargoVersion, `$1${version}$2`), "utf8");
 
+// Workspace crates pin each other by an exact-ish semver requirement in addition to `path`.
+// A pre-release version no longer satisfies `^0.3.0`, so the tag must move those requirements
+// too or a release build fails before it compiles a line.
+for (const manifest of [
+  "crates/rigel-adapters/Cargo.toml",
+  "crates/rigel-app/Cargo.toml",
+  "crates/rigel-cli/Cargo.toml",
+  "crates/rigel-mcp/Cargo.toml",
+]) {
+  const text = readFileSync(manifest, "utf8");
+  const updated = text.replace(
+    /(rigel-(?:core|adapters|mcp) = \{ version = ")[^"]+(")/g,
+    `$1${version}$2`,
+  );
+  if (updated !== text) writeFileSync(manifest, updated, "utf8");
+}
+
 const tauriPath = "crates/rigel-app/tauri.conf.json";
 const tauri = readFileSync(tauriPath, "utf8");
 if (!/"version":\s*"[^"]+"/.test(tauri)) {

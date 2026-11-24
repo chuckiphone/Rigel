@@ -1,5 +1,8 @@
 name: release
 
+# This workflow publishes the signed Windows release. The unsigned macOS and Linux bundles are
+# configured to build and validate in the ci.yml bundle matrix; publishing them waits on signing and notarisation.
+
 on:
   push:
     tags:
@@ -17,7 +20,7 @@ jobs:
   # a pass does not end it while a sibling run for the same commit is still going.
   gate:
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    timeout-minutes: 180
     steps:
       - name: Wait for CI on the tagged commit
         env:
@@ -25,7 +28,7 @@ jobs:
           SHA: ${{ github.sha }}
         run: |
           set -euo pipefail
-          deadline=$(( $(date +%s) + 45 * 60 ))
+          deadline=$(( $(date +%s) + 150 * 60 ))
           while :; do
             # Every run of the ci workflow for this exact commit, from any ref. A tag push starts
             # its own run beside the branch one, and both have to clear.
@@ -56,7 +59,7 @@ jobs:
               exit 0
             fi
             if [ "$(date +%s)" -ge "$deadline" ]; then
-              echo "::error::CI did not clear $SHA within 45 minutes ($unfinished run(s) still unfinished)."
+              echo "::error::CI did not clear $SHA within 150 minutes ($unfinished run(s) still unfinished)."
               exit 1
             fi
             echo "Waiting for CI on $SHA ($unfinished run(s) still unfinished)..."
@@ -75,6 +78,9 @@ jobs:
           cache: npm
           cache-dependency-path: ui/package-lock.json
 
+      - name: Verify update release wiring
+        run: node scripts/check-update-pipeline.mjs
+
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
@@ -91,6 +97,14 @@ jobs:
 
       - name: Build the pinned Chat sidecar
         run: python scripts/sidecar/build-agentchat.py
+
+      # Release Windows also builds its sidecar from source; it must not inherit a stale binary
+      # left in crates/rigel-app/binaries.
+      - name: Build the Rigel b sidecar
+        run: node scripts/build-rigel-b.mjs --target x86_64-pc-windows-msvc
+
+      - name: Require the Windows sidecar
+        run: node scripts/check-platform-targets.mjs --require-sidecar windows-x64
 
       # The tag is the version the binary reports. Cargo.toml and tauri.conf.json are patched in
       # the runner only; the repository keeps its development version.
@@ -127,11 +141,23 @@ jobs:
             throw "The installer bundles were not produced."
           }
 
+          # The raw executable backs the deferred self-replace path. It is published beside the
+          # installers and signed separately, with the platform it was built for.
+          $raw = "target/release/rigel-app.exe"
+          if (-not (Test-Path $raw)) {
+            throw "The release executable was not produced."
+          }
+          $bin = "Rigel_${version}_x64.exe"
+          Copy-Item $raw $bin
+
           $env:RIGEL_UPDATE_VERSION = $version
           $env:RIGEL_UPDATE_URL = "https://github.com/${{ github.repository }}/releases/download/$tag/$($nsis.Name)"
           $env:RIGEL_UPDATE_SHA256 = (Get-FileHash $nsis.FullName -Algorithm SHA256).Hash.ToLower()
           $env:RIGEL_UPDATE_MSI_URL = "https://github.com/${{ github.repository }}/releases/download/$tag/$($msi.Name)"
           $env:RIGEL_UPDATE_MSI_SHA256 = (Get-FileHash $msi.FullName -Algorithm SHA256).Hash.ToLower()
+          $env:RIGEL_UPDATE_BIN_URL = "https://github.com/${{ github.repository }}/releases/download/$tag/$bin"
+          $env:RIGEL_UPDATE_BIN_SHA256 = (Get-FileHash $bin -Algorithm SHA256).Hash.ToLower()
+          $env:RIGEL_UPDATE_BIN_TARGET = "windows-x86_64"
           $env:RIGEL_UPDATE_NOTES = "Rigel $version"
 
           node scripts/sign-update-manifest.mjs latest.json
@@ -143,12 +169,17 @@ jobs:
           cargo run -q -p rigel-cli -- --data-dir $verify update enable
           cargo run -q -p rigel-cli -- --data-dir $verify update check --manifest latest.json
           cargo run -q -p rigel-cli -- --data-dir $verify update verify $nsis.FullName --manifest latest.json
+          cargo run -q -p rigel-cli -- --data-dir $verify update verify $msi.FullName --manifest latest.json
+          cargo run -q -p rigel-cli -- --data-dir $verify update verify $bin --manifest latest.json
 
           if (gh release view $tag 2>$null) {
-            gh release upload $tag latest.json $nsis.FullName $msi.FullName sbom.cdx.json --clobber
+            gh release upload $tag latest.json $nsis.FullName $msi.FullName $bin sbom.cdx.json --clobber
             if (Test-Path $notes) { gh release edit $tag --notes-file $notes }
           } else {
             $notesArgs = if (Test-Path $notes) { @("--notes-file", $notes) } else { @("--generate-notes") }
-            gh release create $tag latest.json $nsis.FullName $msi.FullName sbom.cdx.json `
-              --title "Rigel $version" @notesArgs --latest
+            # A pre-release must never become `releases/latest`: the updater's default feed reads
+            # that URL, and stable installs must not be moved onto an alpha by publishing one.
+            $channel = if ($version -match "-") { "--prerelease" } else { "--latest" }
+            gh release create $tag latest.json $nsis.FullName $msi.FullName $bin sbom.cdx.json `
+              --title "Rigel $version" @notesArgs $channel
           }

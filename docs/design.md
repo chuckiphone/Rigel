@@ -12,7 +12,8 @@ surface that borrows its rhythm from a marketing page.
 ## Colour
 
 Colour is defined once in `ui/src/tokens.css`. Dark is the default; `data-theme="light"` and
-`prefers-contrast: more` / `data-contrast="high"` override only text, hairlines and shadows.
+`prefers-contrast: more` / `data-contrast="high"` override only text, hairlines and shadows. The
+boot intro's `--boot-*` tokens are deliberately theme-independent: it is always the night sky.
 
 | Token | Job | Dark | Light |
 |---|---|---|---|
@@ -59,8 +60,11 @@ shadow; a popover is the only surface with `--shadow-popover`. Radii are 4px (co
 ## Motion
 
 One easing (`cubic-bezier(0.2, 0, 0, 1)`), 120ms for state changes and 180ms for a panel.
-Under `prefers-reduced-motion: reduce` every spatial transition collapses to a crossfade of
-at most 0.001s; the test records the measured value. No motion is decorative.
+The boot intro is the one narrative motion: dust spirals into a core, compresses, and bursts into
+the orange star. It is skippable and lasts under four seconds. Every other motion is state
+feedback. Under `prefers-reduced-motion: reduce` the intro paints the still star and clears, and
+every spatial transition collapses to a crossfade of at most 0.001s; the test records the measured
+value.
 
 ## Surface jobs
 
@@ -71,6 +75,7 @@ different jobs do not share a section rhythm.
 
 | Surface | Job | Macrostructure | Rhythm | Primary action |
 |---|---|---|---|---|
+| Boot / intro | establish identity | full-bleed cinematic sequence | nebula → core → burst → star, one screen | skip |
 | Composer / session | watch work and keep control | split workspace, transcript-led | stacked turn rows, composer pinned at the bottom | send |
 | Approval card | decide safely | single document, command first | command → blast radius → scope → snapshot, one screen | approve once |
 | Model picker | choose a door | searchable list with provider groups | search field, grouped rows, capability line | use model |

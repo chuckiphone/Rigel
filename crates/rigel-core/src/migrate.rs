@@ -151,7 +151,8 @@ pub const PROJECT_MIGRATIONS: &[Migration] = &[
 /// `%APPDATA%\Rigel\index.db`
 ///
 /// 0001 is §6.3 verbatim. 0002 is Phase 2's own additions (fetch cache, blob manifest,
-/// fingerprints) and says why in its header.
+/// fingerprints), 0003 is tool detection, and 0004 is the attempt clock and backoff count for
+/// the source freshener. Each says why in its header.
 pub const INDEX_MIGRATIONS: &[Migration] = &[
     Migration {
         version: 1,
@@ -167,6 +168,11 @@ pub const INDEX_MIGRATIONS: &[Migration] = &[
         version: 3,
         name: "0003_tools",
         sql: include_str!("../../../migrations/index/0003_tools.sql"),
+    },
+    Migration {
+        version: 4,
+        name: "0004_source_checks",
+        sql: include_str!("../../../migrations/index/0004_source_checks.sql"),
     },
 ];
 

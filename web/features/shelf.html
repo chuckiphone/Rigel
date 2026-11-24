@@ -28,7 +28,7 @@
           <a href="/#screens">Screenshots</a>
           <a href="/features/" aria-current="page">Features</a>
           <a href="/faq.html">FAQ</a>
-          <a href="https://github.com/OkVurb/Rigel" rel="noopener">GitHub</a>
+          <a href="https://github.com/chuckiphone/Rigel" rel="noopener">GitHub</a>
         </nav>
         <a class="btn small" href="/app/">Open web app</a>
       </div>
@@ -159,7 +159,7 @@
           <p>
             The six rules are one layer, not a safety proof. The repository also carries an
             <a
-              href="https://github.com/OkVurb/Rigel/blob/main/skills/owasp-agentic-skills-top-10/SKILL.md"
+              href="https://github.com/chuckiphone/Rigel/blob/main/skills/owasp-agentic-skills-top-10/SKILL.md"
               rel="noopener"
               >OWASP review skill</a
             >
@@ -205,10 +205,13 @@ skillspector scan ./my-skill --no-llm --format sarif --output skillspector.sarif
         <section class="doc-section" id="freshness">
           <h2>Freshness</h2>
           <p>
-            At launch, a source older than the stale window is re-synced off the UI thread, unless the
-            auto-refresh switch is off. Settings → Skill shelf lists each source, refreshes on demand
-            and indexes a repository. <code>rigel skills refresh</code> is the same pass, and the two
-            faces share one implementation.
+            Rigel checks the sources at launch and then every few minutes while the window stays
+            open, unless the freshness switch is off. A source older than the stale window is
+            re-synced off the UI thread; a fresh source costs no request, and a broken one is
+            retried on a bounded backoff from five minutes up to six hours. The status line and
+            Settings follow those checks without a reopen. <code>rigel skills refresh</code> is one
+            pass, and <code>rigel skills watch</code> keeps the same loop checking with no window
+            open.
           </p>
           <p>
             An empty shelf offers “Index repository” when no source has ever synced, instead of
@@ -268,7 +271,11 @@ skillspector scan ./my-skill --no-llm --format sarif --output skillspector.sarif
               </tr>
               <tr>
                 <td><code>rigel skills refresh</code></td>
-                <td>The same refresh pass the window runs.</td>
+                <td>One refresh pass: whatever is stale or due for a retry.</td>
+              </tr>
+              <tr>
+                <td><code>rigel skills watch</code></td>
+                <td>A forced pass, then the same checks on an interval until stopped.</td>
               </tr>
               <tr>
                 <td><code>rigel trust explain</code></td>
@@ -318,7 +325,7 @@ rigel doctor</code></pre>
           <a href="/features/budget.html">Budget</a>
           <a href="/features/terminal.html">Terminal</a>
           <a href="/features/cloud.html">Cloud</a>
-          <a href="https://github.com/OkVurb/Rigel" rel="noopener">GitHub</a>
+          <a href="https://github.com/chuckiphone/Rigel" rel="noopener">GitHub</a>
         </nav>
         <p class="legal">
           MIT OR Apache-2.0. Source states, the six rules and the evidence model are documented in

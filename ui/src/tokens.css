@@ -68,6 +68,33 @@
   --cursor-ring: rgba(11, 12, 14, 0.7);
   --ui: "Inter", system-ui, -apple-system, "Segoe UI", sans-serif;
   --mono: "JetBrains Mono", "Cascadia Mono", ui-monospace, monospace;
+  /* The boot intro is always the night sky, whichever window theme follows it. The alpha stops
+     are tokens because canvas gradients cannot consume a CSS colour with a per-stop opacity. */
+  --boot-void: #05070b;
+  --boot-dust-hot: rgba(244, 176, 82, 0.34);
+  --boot-dust-mid: rgba(233, 162, 59, 0.15);
+  --boot-dust-edge: rgba(233, 162, 59, 0);
+  --boot-rust-hot: rgba(190, 82, 39, 0.3);
+  --boot-rust-mid: rgba(160, 63, 32, 0.12);
+  --boot-rust-edge: rgba(160, 63, 32, 0);
+  --boot-blue-hot: rgba(110, 123, 222, 0.3);
+  --boot-blue-mid: rgba(92, 105, 192, 0.12);
+  --boot-blue-edge: rgba(92, 105, 192, 0);
+  --boot-lane: rgba(0, 0, 0, 0.55);
+  --boot-lane-edge: rgba(0, 0, 0, 0);
+  --boot-glow: rgba(240, 171, 74, 0.55);
+  --boot-glow-mid: rgba(233, 162, 59, 0.2);
+  --boot-glow-edge: rgba(233, 162, 59, 0);
+  --boot-core: #fff5dc;
+  --boot-star: #e9a23b;
+  --boot-star-core: #fff4d8;
+  --boot-spark: #ffce85;
+  --boot-flash: rgba(255, 248, 230, 0.85);
+  --boot-ring: rgba(255, 203, 126, 0.45);
+  --boot-ray: rgba(255, 200, 117, 0.35);
+  --boot-ray-edge: rgba(255, 200, 117, 0);
+  --boot-skip: rgba(230, 232, 235, 0.64);
+  --boot-vignette: rgba(0, 0, 0, 0.7);
 }
 
 /* Light theme (D126). Surfaces follow the brief's #FAFAF9 / #FFFFFF / #F2F2F0, and the amber

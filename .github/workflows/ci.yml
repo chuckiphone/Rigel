@@ -25,6 +25,9 @@ jobs:
       - name: Installer branding and pointer
         run: node scripts/check-installer-branding.mjs --dist
 
+      - name: Platform target matrix
+        run: node scripts/check-platform-targets.mjs
+
       - uses: actions/setup-node@v4
         with:
           node-version: 22
@@ -115,6 +118,15 @@ jobs:
       # Offline and dependency-free: reads README.md, docs/ and the issue forms only.
       - name: Docs links, anchors and issue forms
         run: node scripts/check-docs.mjs
+
+      - name: Bundle icon assets
+        run: node scripts/check-bundle-assets.mjs
+
+      - name: Platform target matrix
+        run: node scripts/check-platform-targets.mjs
+
+      - name: Update release wiring
+        run: node scripts/check-update-pipeline.mjs
 
   # Item 9: advisories, licences, committed secrets and a bill of materials. The lane's own
   # script is tested here too, so a policy file that stops matching the workflow is caught.
@@ -234,3 +246,69 @@ jobs:
           name: window-failure
           path: tmp/e2e/**/*.log
           if-no-files-found: warn
+
+  # Every declared platform target is built from the shared matrix in
+  # scripts/platform-targets.json. A row is the only place a target, triple, sidecar name,
+  # bundle list, icon set and runner are declared; the validation gate checks the Tauri configs
+  # and this workflow in both directions.
+  bundle-matrix:
+    runs-on: ubuntu-latest
+    outputs:
+      include: ${{ steps.matrix.outputs.include }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Read the bundle matrix
+        id: matrix
+        run: node scripts/print-bundle-matrix.mjs >> "$GITHUB_OUTPUT"
+
+  bundle:
+    needs: bundle-matrix
+    name: bundle-${{ matrix.id }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix:
+        include: ${{ fromJSON(needs.bundle-matrix.outputs.include) }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: ui/package-lock.json
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Linux bundle dependencies
+        if: matrix.platform == 'linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential curl wget file libssl-dev libxdo-dev pkg-config \
+            libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev patchelf libfuse2 rpm
+
+      - name: Add the Rust target
+        run: rustup target add ${{ matrix.target }}
+
+      - name: Install Tauri CLI
+        run: cargo install tauri-cli --version "^2" --locked
+
+      - name: UI dependencies
+        working-directory: ui
+        run: npm ci
+
+      - name: Build the Rigel b sidecar
+        run: node scripts/build-rigel-b.mjs --target ${{ matrix.target }}
+
+      - name: Require the target sidecar
+        run: node scripts/check-platform-targets.mjs --require-sidecar ${{ matrix.id }}
+
+      - name: Build the bundle
+        working-directory: crates/rigel-app
+        run: cargo tauri build --target ${{ matrix.target }} --bundles ${{ matrix.bundles }}
+
+      - name: Require the bundle artifacts
+        run: node scripts/check-platform-targets.mjs --artifacts ${{ matrix.id }}

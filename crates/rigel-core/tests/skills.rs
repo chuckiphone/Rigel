@@ -332,6 +332,47 @@ async fn an_unreachable_source_goes_broken_and_keeps_its_last_sync() {
     assert_eq!(broken[0].state, SourceState::Broken);
     assert_eq!(broken[0].error.as_deref(), Some("connect timeout"));
     assert_eq!(broken[0].last_sync_at, healthy[0].last_sync_at);
+    assert_eq!(broken[0].failures, 1);
+    assert!(broken[0].last_attempt_at.is_some());
+}
+
+#[tokio::test]
+async fn a_broken_source_waits_for_its_backoff_before_the_next_check() {
+    let tmp = TempDir::new().unwrap();
+    let index = SkillIndex::open(tmp.path()).await.unwrap();
+
+    // `local` has no network rule, so a due check is reported without a request. That makes the
+    // due/not-due decision observable: the detail changes before and after the backoff.
+    index
+        .set_source("local", "built in", SourceState::Broken, Some("no route"))
+        .await
+        .unwrap();
+
+    let deferred = index.refresh_stale().await.unwrap();
+    assert_eq!(deferred.refreshed, 0);
+    assert_eq!(deferred.sources[0].state, SourceState::Broken);
+    assert!(
+        deferred.sources[0].detail.contains("backoff"),
+        "a source that just failed should wait: {}",
+        deferred.sources[0].detail
+    );
+
+    // Move the attempt clock past the first five-minute retry. The next pass checks it again.
+    sqlx::query("UPDATE sources SET last_attempt_at = ? WHERE id = 'local'")
+        .bind(rigel_core::now_ms() - 6 * 60 * 1000)
+        .execute(index.store().pool())
+        .await
+        .unwrap();
+    let retried = index.refresh_stale().await.unwrap();
+    assert!(
+        retried.sources[0].detail.contains("no refresh rule"),
+        "the backoff should have elapsed: {}",
+        retried.sources[0].detail
+    );
+
+    // The launch pass is forced and does not wait for any backoff.
+    let forced = index.refresh_all().await.unwrap();
+    assert!(forced.sources[0].detail.contains("no refresh rule"));
 }
 
 #[tokio::test]
@@ -750,6 +791,16 @@ async fn a_version_1_index_upgrades_to_0002_in_place() {
         .collect();
     assert!(columns.contains(&"simhash".to_string()));
     assert!(columns.contains(&"capabilities_json".to_string()));
+
+    let source_columns: Vec<String> = sqlx::query("PRAGMA table_info(sources)")
+        .fetch_all(index.store().pool())
+        .await
+        .unwrap()
+        .iter()
+        .map(|row| row.get::<String, _>("name"))
+        .collect();
+    assert!(source_columns.contains(&"last_attempt_at".to_string()));
+    assert!(source_columns.contains(&"failures".to_string()));
 
     let tables: Vec<String> = sqlx::query("SELECT name FROM sqlite_master WHERE type = 'table'")
         .fetch_all(index.store().pool())

@@ -19,7 +19,9 @@ use super::model::{ChatRequest, Delta, DeltaSink, Model, ModelError};
 
 /// The only id this door serves, and the one the picker shows.
 pub const DEFAULT_MODEL: &str = "rigel";
-pub const DEFAULT_BASE_URL: &str = "https://api.askrigel.com";
+/// The hosted API. The saved backend choice can point the door elsewhere; this is only the
+/// compiled-in default and the value Settings shows for the hosted placement.
+pub const DEFAULT_BASE_URL: &str = crate::backend::HOSTED_API_URL;
 /// Every turn's `reply_to` starts with this. The desktop relay loop leaves those envelopes for the
 /// turn that asked, so the room bridge cannot consume the answer first.
 pub const REQUEST_PREFIX: &str = "rigel-model-";

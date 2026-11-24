@@ -9,7 +9,7 @@ body:
         Thanks for taking the time to report this.
 
         A vulnerability is not a bug report: send it to `security@rigel.invalid` as
-        [SECURITY.md](https://github.com/OkVurb/Rigel/blob/main/SECURITY.md) describes, not here.
+        [SECURITY.md](https://github.com/chuckiphone/Rigel/blob/main/SECURITY.md) describes, not here.
 
   - type: textarea
     id: what-happened

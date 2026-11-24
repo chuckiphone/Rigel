@@ -8,6 +8,7 @@
 
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
+use std::time::Duration;
 
 use clap::{Parser, Subcommand};
 use rigel_core::{
@@ -21,6 +22,7 @@ mod cloud;
 mod doctor;
 mod handoff;
 mod harness;
+mod local;
 mod mail;
 mod network;
 mod phase3;
@@ -155,6 +157,12 @@ enum Command {
     Update {
         #[command(subcommand)]
         command: update::UpdateCommand,
+    },
+
+    /// The local llama.cpp server behind the `llamacpp` door: start it, stop it, show its mode.
+    Local {
+        #[command(subcommand)]
+        command: Option<local::LocalCommand>,
     },
 
     /// The user's own Firebase project: sign in and mirror the shelf.
@@ -426,9 +434,19 @@ enum SkillCommand {
         json: bool,
     },
 
+    /// Keep checking: one forced pass, then refresh whatever is due every interval until stopped.
+    /// This is the headless form of the window's background freshness loop.
+    Watch {
+        /// Seconds between checks; values below 30 are raised to 30.
+        #[arg(long, default_value_t = 300, value_name = "SECONDS")]
+        interval: u64,
+        #[arg(long)]
+        json: bool,
+    },
+
     /// Re-sync every source that is not fresh: the repositories this index holds (at most three,
     /// most recently seen first) and one page of each marketplace. What the window runs at launch
-    /// when the Shelf's auto-update switch is on.
+    /// and on its background passes when the Shelf's auto-update switch is on.
     Refresh {
         #[arg(long)]
         json: bool,
@@ -732,6 +750,8 @@ async fn entry() -> ExitCode {
 
         Command::Update { command } => update::run(&dir, command).await,
 
+        Command::Local { command } => local::run(&dir, command).await,
+
         Command::Cloud { command } => cloud::run(&dir, command).await,
 
         Command::Mail { command } => mail::run(&dir, command).await,
@@ -1015,19 +1035,29 @@ async fn run_skills(dir: &Path, command: SkillCommand) -> ExitCode {
             Err(error) => skills_failure(error, as_json),
         },
 
+        SkillCommand::Watch {
+            interval,
+            json: as_json,
+        } => {
+            let every = Duration::from_secs(interval.max(30));
+            // The first pass is forced, matching the window's launch pass: a shelf that looked
+            // fresh when this process was started is still checked against its remote.
+            match index.refresh_all().await {
+                Ok(report) => print_refresh(&report, as_json),
+                Err(error) => return skills_failure(error, as_json),
+            }
+            loop {
+                tokio::time::sleep(every).await;
+                match index.refresh_stale().await {
+                    Ok(report) => print_refresh(&report, as_json),
+                    Err(error) => return skills_failure(error, as_json),
+                }
+            }
+        }
+
         SkillCommand::Refresh { json: as_json } => match index.refresh_stale().await {
             Ok(report) => {
-                if as_json {
-                    println!("{}", serde_json::to_string(&report).unwrap_or_default());
-                } else {
-                    println!(
-                        "{} source(s) known, {} refreshed",
-                        report.checked, report.refreshed
-                    );
-                    for row in &report.sources {
-                        println!("{:<10} {:<7} {}", row.id, row.state.as_str(), row.detail);
-                    }
-                }
+                print_refresh(&report, as_json);
                 ExitCode::SUCCESS
             }
             Err(error) => skills_failure(error, as_json),
@@ -1388,6 +1418,22 @@ fn skills_failure(error: SkillsError, as_json: bool) -> ExitCode {
     }
     eprintln!("rigel: {error}");
     ExitCode::from(error.exit_code())
+}
+
+/// One refresh pass, in the two shapes the CLI promises: a JSON line for a script, or a count and
+/// one row per source for a person. `watch` prints this on every tick as its heartbeat.
+fn print_refresh(report: &rigel_core::skills::RefreshReport, as_json: bool) {
+    if as_json {
+        println!("{}", serde_json::to_string(report).unwrap_or_default());
+        return;
+    }
+    println!(
+        "{} source(s) known, {} refreshed",
+        report.checked, report.refreshed
+    );
+    for row in &report.sources {
+        println!("{:<10} {:<7} {}", row.id, row.state.as_str(), row.detail);
+    }
 }
 
 async fn run_session(command: SessionCommand) -> ExitCode {
