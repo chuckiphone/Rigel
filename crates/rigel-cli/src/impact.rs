@@ -91,6 +91,9 @@ fn print_impact(plan: &ImpactPlan) {
                 );
             }
         }
+        for path in &plan.symbols.unresolved {
+            println!("symbol   unresolved: {path}");
+        }
         for note in &plan.symbols.notes {
             println!("symbol   note: {note}");
         }

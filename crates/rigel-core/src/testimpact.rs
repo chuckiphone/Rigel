@@ -259,8 +259,9 @@ fn parse_name_status(bytes: &[u8]) -> Vec<ChangedFile> {
     changes
 }
 
-/// Build the impacted-test plan from an explicit change list. This is pure: no command runs,
-/// which is what `test plan` prints and what tests can pin without a real suite.
+/// Build the impacted-test plan from an explicit change list. The test suite is never run; the
+/// package metadata and symbol readers are read-only commands, which is what `test plan` prints
+/// and what tests can pin without executing a real suite.
 pub fn plan(
     root: &Path,
     changed: &[ChangedFile],
