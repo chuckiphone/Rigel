@@ -2696,6 +2696,7 @@ export const api = {
     model?: string,
     provider?: string,
     effort?: string,
+    images?: string[],
   ): Promise<TurnReply> {
     // The provider travels with the model: a settings save that has not landed yet must not send
     // the pick through the previous door (which is how a Gemini pick became a Vertex 401).
@@ -2707,6 +2708,7 @@ export const api = {
       model: model ?? null,
       provider: provider ?? null,
       effort: effort ?? null,
+      images: images ?? null,
     });
   },
 

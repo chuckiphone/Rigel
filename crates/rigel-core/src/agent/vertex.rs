@@ -340,6 +340,11 @@ impl Model for RefreshingModel {
         "vertex".to_string()
     }
 
+    fn supports_images(&self) -> bool {
+        // The inner adapter is the OpenAI-compatible body encoder, which sends image_url parts.
+        true
+    }
+
     async fn chat(
         &self,
         request: ChatRequest,

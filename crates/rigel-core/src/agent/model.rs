@@ -14,6 +14,8 @@ use std::time::Duration;
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
+
+use super::image::ImagePart;
 use tokio_util::sync::CancellationToken;
 
 use crate::domain::Usage;
@@ -32,6 +34,10 @@ pub struct ChatMessage {
     pub role: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub content: Option<String>,
+    /// Image parts beside the text. Empty on every ordinary message, so its serialized form is
+    /// byte-for-byte the old one; a message with images is encoded by [`Self::openai`] instead.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub images: Vec<ImagePart>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tool_calls: Option<Vec<ToolCall>>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -43,6 +49,7 @@ impl ChatMessage {
         Self {
             role: "system".to_string(),
             content: Some(content.into()),
+            images: Vec::new(),
             tool_calls: None,
             tool_call_id: None,
         }
@@ -52,15 +59,53 @@ impl ChatMessage {
         Self {
             role: "user".to_string(),
             content: Some(content.into()),
+            images: Vec::new(),
             tool_calls: None,
             tool_call_id: None,
         }
+    }
+
+    /// A user message whose text and images travel together. The text stays in `content` for
+    /// transcripts and history; an OpenAI-compatible provider receives the mixed content array.
+    pub fn user_with_images(content: impl Into<String>, images: Vec<ImagePart>) -> Self {
+        let mut message = Self::user(content);
+        message.images = images;
+        message
+    }
+
+    pub fn has_images(&self) -> bool {
+        !self.images.is_empty()
+    }
+
+    /// The OpenAI chat-message shape. A text-only message is exactly its serde form; an image
+    /// message becomes the documented `[{type:text}, {type:image_url}]` content array.
+    pub fn openai(&self) -> Value {
+        let mut value = serde_json::to_value(self).unwrap_or(Value::Null);
+        if self.images.is_empty() {
+            return value;
+        }
+        if let Some(object) = value.as_object_mut() {
+            let mut content = Vec::new();
+            if let Some(text) = &self.content {
+                content.push(json!({ "type": "text", "text": text }));
+            }
+            for image in &self.images {
+                content.push(json!({
+                    "type": "image_url",
+                    "image_url": { "url": image.url },
+                }));
+            }
+            object.insert("content".to_string(), Value::Array(content));
+            object.remove("images");
+        }
+        value
     }
 
     pub fn assistant(content: Option<String>, tool_calls: Vec<ToolCall>) -> Self {
         Self {
             role: "assistant".to_string(),
             content,
+            images: Vec::new(),
             tool_calls: if tool_calls.is_empty() {
                 None
             } else {
@@ -74,6 +119,7 @@ impl ChatMessage {
         Self {
             role: "tool".to_string(),
             content: Some(content.into()),
+            images: Vec::new(),
             tool_calls: None,
             tool_call_id: Some(tool_call_id.into()),
         }
@@ -109,6 +155,12 @@ pub struct ChatRequest {
     pub temperature: f32,
     /// Sent as `reasoning_effort`, separate from the model id (D28).
     pub effort: Option<String>,
+}
+
+impl ChatRequest {
+    pub fn has_images(&self) -> bool {
+        self.messages.iter().any(ChatMessage::has_images)
+    }
 }
 
 #[derive(Debug, Clone, Default)]
@@ -158,6 +210,12 @@ pub type DeltaSink<'a> = dyn FnMut(Delta) + Send + 'a;
 pub trait Model: Send + Sync {
     fn id(&self) -> String;
 
+    /// Whether this adapter can send image content. The default is no: a provider that has no
+    /// image encoder must refuse an image turn rather than quietly drop its pixels.
+    fn supports_images(&self) -> bool {
+        false
+    }
+
     /// Stream a reply, calling `on_delta` as pieces arrive.
     ///
     /// Returns only after the stream ends. On cancellation the implementation must stop
@@ -193,6 +251,11 @@ pub enum ModelError {
 
     #[error("context estimate {estimated} tokens exceeds the {window}-token window before send")]
     ContextOverflow { estimated: usize, window: usize },
+
+    #[error(
+        "{model} does not accept image content; pick a vision-capable model or remove the image"
+    )]
+    ImagesNotSupported { model: String },
 
     #[error("the model script has no step left")]
     ScriptExhausted,

@@ -32,6 +32,10 @@ pub enum AgentCommand {
         agent: String,
         #[arg(long)]
         prompt: String,
+        /// Image for the first user message: an HTTPS URL, a data URL, or an image path inside
+        /// the project. Repeat to attach more than one.
+        #[arg(long = "image", value_name = "PATH_OR_URL")]
+        image: Vec<String>,
         /// Price the first step and exit. Sends no request and creates no agent or turn.
         #[arg(long)]
         dry_run: bool,

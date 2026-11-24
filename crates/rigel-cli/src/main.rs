@@ -1783,4 +1783,32 @@ mod tests {
             _ => panic!("expected `rigel agent run`"),
         }
     }
+
+    #[test]
+    fn agent_run_collects_repeatable_images() {
+        let cli = <Cli as clap::Parser>::try_parse_from([
+            "rigel",
+            "agent",
+            "run",
+            "--prompt",
+            "read the sign",
+            "--image",
+            "https://example.com/sign.png",
+            "--image",
+            ".rigel/attachments/camera.png",
+        ])
+        .expect("--image is repeatable");
+        match cli.command {
+            Command::Agent {
+                command: AgentCommand::Run { image, .. },
+            } => assert_eq!(
+                image,
+                vec![
+                    "https://example.com/sign.png".to_string(),
+                    ".rigel/attachments/camera.png".to_string()
+                ]
+            ),
+            _ => panic!("expected `rigel agent run`"),
+        }
+    }
 }

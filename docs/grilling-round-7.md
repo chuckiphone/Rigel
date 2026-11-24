@@ -39,6 +39,15 @@ in the catalogue — one of the largest changes here, which is why it is not a p
 
 **Answer:**
 
+**Implemented 24 Nov 2026 (partial):** `ChatMessage` now carries image parts beside its text;
+the CLI (`--image`), HTTP turn body (`images`) and desktop `.rigel/attachments` paths resolve
+local MIME-sniffed images to data URLs (8 MB cap) and HTTPS URLs as remote image parts. The
+OpenAI-compatible encoder sends the standard `text`/`image_url` content array, while the
+Anthropic Messages adapter and remote `rigel` relay refuse an image with a typed
+`ImagesNotSupported` error. The five-megabyte cap, 2,000-pixel downscale, Anthropic image block
+and Gemini `inline_data` encoder in the recommendation are still open; the request/response
+shape and remaining gaps are in [images.md](images.md).
+
 ---
 
 ### Q177 — Does `@` autocomplete project files in the composer?

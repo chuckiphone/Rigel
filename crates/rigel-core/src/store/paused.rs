@@ -116,6 +116,7 @@ impl PauseStore {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::agent::ImagePart;
 
     async fn service() -> (
         tempfile::TempDir,
@@ -143,7 +144,12 @@ mod tests {
         let store = PauseStore::new(service.pool().clone());
         let messages = vec![
             ChatMessage::system("system"),
-            ChatMessage::user("finish the report"),
+            ChatMessage::user_with_images(
+                "finish the report",
+                vec![ImagePart {
+                    url: "https://example.com/sign.png".to_string(),
+                }],
+            ),
             ChatMessage::assistant(Some("working".to_string()), Vec::new()),
         ];
         store
@@ -167,6 +173,11 @@ mod tests {
         assert_eq!(
             loaded.messages[1].content.as_deref(),
             Some("finish the report")
+        );
+        assert_eq!(loaded.messages[1].images.len(), 1);
+        assert_eq!(
+            loaded.messages[1].images[0].url,
+            "https://example.com/sign.png"
         );
         assert_eq!(loaded.remaining_steps, 3);
         assert_eq!(loaded.remaining_micros, Some(42_000));

@@ -12,7 +12,7 @@ use std::time::Duration;
 use async_trait::async_trait;
 use rigel_core::agent::dag::NodeState;
 use rigel_core::agent::{
-    Cancels, ChatRequest, Coordinator, Delta, DeltaSink, Model, ModelError, RawUsage,
+    Cancels, ChatRequest, Coordinator, Delta, DeltaSink, ImagePart, Model, ModelError, RawUsage,
     ScriptedModel, StopReason, Tools,
 };
 use rigel_core::{
@@ -116,6 +116,10 @@ impl Model for CapturingModel {
         "script".to_string()
     }
 
+    fn supports_images(&self) -> bool {
+        true
+    }
+
     async fn chat(
         &self,
         request: ChatRequest,
@@ -127,6 +131,83 @@ impl Model for CapturingModel {
         on_delta(Delta::Finish("stop".to_string()));
         Ok(())
     }
+}
+
+#[tokio::test]
+async fn an_image_turn_keeps_the_image_on_its_user_message() {
+    let tmp = repo();
+    let service = SessionService::open(tmp.path()).await.unwrap();
+    let session = service.start(Some("images"), Some(25)).await.unwrap();
+    let agent = service
+        .register_agent(&session.id, "native", Some("worker"))
+        .await
+        .unwrap();
+    let model = Arc::new(CapturingModel::default());
+    let coordinator = coordinator_with_model(
+        tmp.path(),
+        &service,
+        model.clone() as Arc<dyn Model>,
+        StopAt::Never,
+        2,
+    );
+
+    let run = coordinator
+        .run_with_images(
+            &session.id,
+            &agent.id,
+            "read the sign",
+            vec![ImagePart {
+                url: "https://example.com/sign.png".to_string(),
+            }],
+        )
+        .await
+        .unwrap();
+    assert_eq!(run.status, "completed");
+
+    let seen = model.seen.lock().unwrap();
+    let user = seen[0]
+        .messages
+        .iter()
+        .find(|message| message.role == "user")
+        .expect("the prompt is the last user message");
+    assert_eq!(user.content.as_deref(), Some("read the sign"));
+    assert_eq!(user.images.len(), 1);
+    assert_eq!(user.images[0].url, "https://example.com/sign.png");
+}
+
+#[tokio::test]
+async fn a_text_only_model_refuses_an_image_turn_without_creating_one() {
+    let tmp = repo();
+    let service = SessionService::open(tmp.path()).await.unwrap();
+    let session = service.start(Some("text-only"), Some(25)).await.unwrap();
+    let agent = service
+        .register_agent(&session.id, "native", Some("worker"))
+        .await
+        .unwrap();
+    let coordinator = coordinator(tmp.path(), &service, SCRIPT, StopAt::Never, 2);
+
+    let error = coordinator
+        .run_with_images(
+            &session.id,
+            &agent.id,
+            "look at this",
+            vec![ImagePart {
+                url: "https://example.com/sign.png".to_string(),
+            }],
+        )
+        .await
+        .expect_err("an adapter without an image encoder must refuse");
+    assert!(
+        matches!(
+            error,
+            rigel_core::AgentError::Model(ModelError::ImagesNotSupported { .. })
+        ),
+        "{error}"
+    );
+    assert!(
+        service.running_turns(&session.id).await.unwrap().is_empty(),
+        "the refusal happens before a turn row is opened"
+    );
 }
 
 fn coordinator_with_model(

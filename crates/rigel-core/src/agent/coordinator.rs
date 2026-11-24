@@ -21,6 +21,7 @@ use tokio_util::sync::CancellationToken;
 
 use super::approval::{PlanAgent, PlanDecision, PlanRequest};
 use super::dag::{Dag, DagNode, NodeState, WaitError};
+use super::image::ImagePart;
 use super::model::{ChatMessage, ChatRequest, Delta, Model, ModelError, ToolCall, ToolCallBuilder};
 use super::team;
 use super::tools::{ToolOutcome, Tools};
@@ -455,6 +456,27 @@ struct StepOutput {
     queue_ms: u64,
 }
 
+/// The first user message of a drive: a fresh prompt (with any images) or the exact messages a
+/// paused turn had already built. Grouping them keeps the private drive signatures small without
+/// changing either path.
+enum TurnSeed {
+    Fresh(ChatMessage),
+    Restored(Vec<ChatMessage>),
+}
+
+impl TurnSeed {
+    fn prompt(&self) -> String {
+        match self {
+            Self::Fresh(message) => message.content.clone().unwrap_or_default(),
+            Self::Restored(messages) => messages
+                .iter()
+                .find(|message| message.role == "user")
+                .and_then(|message| message.content.clone())
+                .unwrap_or_default(),
+        }
+    }
+}
+
 /// A failed model call plus whatever the stream had already delivered.
 ///
 /// Q248: a provider can charge for tokens it generated and then lose the connection before
@@ -807,7 +829,19 @@ impl Coordinator {
         agent_id: &str,
         prompt: &str,
     ) -> Result<TurnRun, AgentError> {
-        self.run_with_parent(session_id, agent_id, prompt, None)
+        self.run_with_images(session_id, agent_id, prompt, Vec::new())
+            .await
+    }
+
+    /// A turn whose first user message carries image parts alongside its text.
+    pub async fn run_with_images(
+        &self,
+        session_id: &str,
+        agent_id: &str,
+        prompt: &str,
+        images: Vec<ImagePart>,
+    ) -> Result<TurnRun, AgentError> {
+        self.run_with_parent_images(session_id, agent_id, prompt, None, images)
             .await
     }
 
@@ -820,12 +854,28 @@ impl Coordinator {
         prompt: &str,
         parent_turn_id: Option<&str>,
     ) -> Result<TurnRun, AgentError> {
+        self.run_with_parent_images(session_id, agent_id, prompt, parent_turn_id, Vec::new())
+            .await
+    }
+
+    async fn run_with_parent_images(
+        &self,
+        session_id: &str,
+        agent_id: &str,
+        prompt: &str,
+        parent_turn_id: Option<&str>,
+        images: Vec<ImagePart>,
+    ) -> Result<TurnRun, AgentError> {
+        if !images.is_empty() && !self.model.supports_images() {
+            return Err(self.images_not_supported());
+        }
         self.reserve_turn(agent_id).await?;
         let turn = self
             .session
             .append_turn_with_parent(agent_id, Some(prompt), parent_turn_id)
             .await?;
-        self.run_existing(session_id, agent_id, turn, prompt).await
+        self.run_existing_with_images(session_id, agent_id, turn, prompt, images)
+            .await
     }
 
     /// Q33: continue a stopped task in a new turn with an explicit step bound. The session
@@ -843,8 +893,15 @@ impl Coordinator {
         }
         self.reserve_turn(agent_id).await?;
         let turn = self.session.append_turn(agent_id, Some(prompt)).await?;
-        self.run_existing_with_steps(session_id, agent_id, turn, prompt, step_budget, true)
-            .await
+        self.run_existing_with_steps(
+            session_id,
+            agent_id,
+            turn,
+            TurnSeed::Fresh(ChatMessage::user(prompt)),
+            step_budget,
+            true,
+        )
+        .await
     }
 
     async fn reserve_turn(&self, agent_id: &str) -> Result<(), AgentError> {
@@ -901,8 +958,38 @@ impl Coordinator {
         turn: Turn,
         prompt: &str,
     ) -> Result<TurnRun, AgentError> {
-        self.run_existing_with_steps(session_id, agent_id, turn, prompt, self.max_steps, false)
+        self.run_existing_with_images(session_id, agent_id, turn, prompt, Vec::new())
             .await
+    }
+
+    /// Drive a turn that already exists, with images in its first user message. The window uses
+    /// this so the turn row exists before the model call and the image is part of that same turn.
+    pub async fn run_existing_with_images(
+        &self,
+        session_id: &str,
+        agent_id: &str,
+        turn: Turn,
+        prompt: &str,
+        images: Vec<ImagePart>,
+    ) -> Result<TurnRun, AgentError> {
+        if !images.is_empty() && !self.model.supports_images() {
+            return Err(self.images_not_supported());
+        }
+        self.run_existing_with_steps(
+            session_id,
+            agent_id,
+            turn,
+            TurnSeed::Fresh(ChatMessage::user_with_images(prompt, images)),
+            self.max_steps,
+            false,
+        )
+        .await
+    }
+
+    fn images_not_supported(&self) -> AgentError {
+        AgentError::Model(ModelError::ImagesNotSupported {
+            model: self.model_name.clone(),
+        })
     }
 
     /// Roadmap 40: reopen a turn that was paused when the process ended. The exact messages and
@@ -951,7 +1038,7 @@ impl Coordinator {
                 &turn,
                 &token,
                 paused.remaining_steps,
-                Some(paused.messages),
+                TurnSeed::Restored(paused.messages),
             )
             .await;
         self.drain_subagents().await;
@@ -977,11 +1064,12 @@ impl Coordinator {
         session_id: &str,
         agent_id: &str,
         turn: Turn,
-        prompt: &str,
+        seed: TurnSeed,
         step_budget: usize,
         continuation: bool,
     ) -> Result<TurnRun, AgentError> {
         self.session.set_agent_status(agent_id, "running").await?;
+        let prompt = seed.prompt();
         if continuation {
             let previous_spend_micros = self
                 .budget
@@ -1007,7 +1095,7 @@ impl Coordinator {
             turn_id: turn.id.clone(),
             parent_turn_id: turn.parent_turn_id.clone(),
             seq: turn.seq,
-            prompt: Some(prompt.to_string()),
+            prompt: Some(prompt.clone()),
         });
 
         let token = match &self.parent_cancel {
@@ -1015,7 +1103,7 @@ impl Coordinator {
             None => self.cancels.register(&turn.id, agent_id),
         };
         let result = self
-            .drive(session_id, agent_id, &turn, &token, step_budget, None)
+            .drive(session_id, agent_id, &turn, &token, step_budget, seed)
             .await;
         self.drain_subagents().await;
         self.cancels.finish(&turn.id);
@@ -1043,7 +1131,7 @@ impl Coordinator {
         turn: &Turn,
         token: &CancellationToken,
         step_budget: usize,
-        restored: Option<Vec<ChatMessage>>,
+        seed: TurnSeed,
     ) -> Result<TurnRun, AgentError> {
         // The board is fetched for every turn, so a child sees its own assignment and every
         // sibling's files, and a resumed parent sees what its earlier children were given.
@@ -1163,41 +1251,44 @@ Plan mode is on (D98): inspect the project and propose a plan. You cannot edit o
         // Q31: use the real prior turns of this agent. Below 80% nothing changes; at or above
         // it, older spans are summarized, the recent turns stay verbatim, and the record names
         // every dropped turn so the replacement is auditable.
-        let prompt = turn.prompt.as_deref().unwrap_or_default();
-        let mut messages = if let Some(restored) = restored {
-            restored
-        } else {
-            let history = self
-                .session
-                .history_for_agent(session_id, agent_id, &turn.id, 200)
-                .await
-                .unwrap_or_default();
-            // Roadmap 57: compaction reads the summary each turn stored when it closed. A turn
-            // from before the table is backfilled once; a finished turn is a lookup.
-            let summaries =
-                super::summary::ensure_history(self.session.pool(), session_id, &history)
+        let mut messages = match seed {
+            TurnSeed::Restored(messages) => messages,
+            TurnSeed::Fresh(first_user) => {
+                let history = self
+                    .session
+                    .history_for_agent(session_id, agent_id, &turn.id, 200)
                     .await
-                    .unwrap_or_default()
-                    .into_iter()
-                    .map(|(id, summary)| (id, summary.summary))
-                    .collect::<std::collections::HashMap<_, _>>();
-            let mut messages = vec![ChatMessage::system(system)];
-            if let Some(compaction) =
-                super::compact::build(&history, &pinned, &self.model_name, &summaries)
-            {
-                self.persist(
-                    turn,
-                    ItemKind::Message,
-                    "compacted",
-                    serde_json::json!(compaction.record()),
-                )
-                .await?;
-                messages.push(ChatMessage::system(compaction.prompt()));
-                messages.extend(compaction.recent);
+                    .unwrap_or_default();
+                // Roadmap 57: compaction reads the summary each turn stored when it closed. A turn
+                // from before the table is backfilled once; a finished turn is a lookup.
+                let summaries =
+                    super::summary::ensure_history(self.session.pool(), session_id, &history)
+                        .await
+                        .unwrap_or_default()
+                        .into_iter()
+                        .map(|(id, summary)| (id, summary.summary))
+                        .collect::<std::collections::HashMap<_, _>>();
+                let mut messages = vec![ChatMessage::system(system)];
+                if let Some(compaction) =
+                    super::compact::build(&history, &pinned, &self.model_name, &summaries)
+                {
+                    self.persist(
+                        turn,
+                        ItemKind::Message,
+                        "compacted",
+                        serde_json::json!(compaction.record()),
+                    )
+                    .await?;
+                    messages.push(ChatMessage::system(compaction.prompt()));
+                    messages.extend(compaction.recent);
+                }
+                messages.push(first_user);
+                messages
             }
-            messages.push(ChatMessage::user(prompt));
-            messages
         };
+        if messages.iter().any(ChatMessage::has_images) && !self.model.supports_images() {
+            return Err(self.images_not_supported());
+        }
         let mut total = Usage::default();
         let mut steps = 0;
         let mut tool_calls = 0;

@@ -102,7 +102,11 @@ the four `/v1/workspace/*` routes below.
   "effort": "medium",
   "max_steps": 40,
   "approve": false,
-  "dry_run": false
+  "dry_run": false,
+  "images": [
+    "https://example.com/traffic-sign.png",
+    ".rigel/attachments/camera.png"
+  ]
 }
 ```
 
@@ -110,6 +114,13 @@ the four `/v1/workspace/*` routes below.
   `/v1/providers`.
 * `model` defaults to that provider's own default. A provider that publishes none requires one.
 * `dry_run: true` prices the first step and creates nothing.
+* `images` is optional and is sent as image parts on the first user message, beside the prompt.
+  Each entry is an HTTPS URL, a `data:image/...;base64,...` URL, or an image path inside the
+  project (absolute inside the project or project-relative). Local files are read once, MIME-
+  sniffed, capped at 8 MB, and inlined as data URLs; `http://` and `file://` are refused. An
+  OpenAI-compatible provider receives the standard `text` / `image_url` content array. The
+  Anthropic Messages adapter and the remote `rigel` relay have no image encoder, so they answer
+  `400 unsupported_content` instead of dropping the image.
 * A turn request stays open until the turn finishes. Fan out by sending concurrent requests:
   each connection runs in its own task, and each turn is recorded and billed independently.
 * `approve` defaults to **false**. With it off, every `run_command`, `fetch_url` and writable

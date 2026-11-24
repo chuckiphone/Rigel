@@ -39,7 +39,9 @@ use std::time::{Duration, Instant, SystemTime};
 
 use async_trait::async_trait;
 use futures::StreamExt;
-use rigel_core::agent::{ChatMessage, ChatRequest, Delta, agentchat, catalog, providers};
+use rigel_core::agent::{
+    ChatMessage, ChatRequest, Delta, ImagePart, ModelError, agentchat, catalog, providers,
+};
 use rigel_core::credentials::{self, KeychainCredentialStore};
 use rigel_core::patches::{PatchError, PatchPipeline};
 use rigel_core::{
@@ -637,6 +639,28 @@ fn bad_request(message: impl Into<String>) -> Reply {
 
 fn not_found(what: &str) -> Reply {
     Reply::error(404, "not_found", format!("{what} does not exist"))
+}
+
+/// `images` on a turn body: HTTPS URLs, data URLs, or project-relative image paths. A missing
+/// field is the ordinary text-only turn and resolves to no images.
+fn images_from_body(project: &Path, body: &Value) -> Result<Vec<ImagePart>, Reply> {
+    match body.get("images") {
+        None | Some(Value::Null) => Ok(Vec::new()),
+        Some(Value::Array(rows)) => {
+            let mut images = Vec::with_capacity(rows.len());
+            for row in rows {
+                let Some(reference) = row.as_str() else {
+                    return Err(bad_request("images must be an array of strings"));
+                };
+                match ImagePart::from_reference(project, reference) {
+                    Ok(image) => images.push(image),
+                    Err(error) => return Err(bad_request(error)),
+                }
+            }
+            Ok(images)
+        }
+        Some(_) => Err(bad_request("images must be an array of strings")),
+    }
 }
 
 /// The probe asks for the single word `OK`; a model that answers with an upgrade notice, an
@@ -1420,6 +1444,10 @@ impl Api {
             Err(error) => return Reply::error(502, "provider_unavailable", error),
         };
         let workspace = self.active();
+        let images = match images_from_body(&workspace.project, &body) {
+            Ok(images) => images,
+            Err(reply) => return reply,
+        };
         let coordinator = self.coordinator(
             &workspace.project,
             &workspace.service,
@@ -1430,7 +1458,10 @@ impl Api {
             approve,
         );
 
-        match coordinator.run(&session.id, &worker.id, &prompt).await {
+        match coordinator
+            .run_with_images(&session.id, &worker.id, &prompt, images)
+            .await
+        {
             Ok(run) => {
                 let spend = self
                     .service()
@@ -1452,15 +1483,22 @@ impl Api {
                     "cap_micros": session.budget_cents.map(|cents| cents * 10_000),
                 }))
             }
-            Err(error) => Reply::error(
-                match error.exit_code() {
-                    3 => 402,
-                    0 => 499,
-                    _ => 502,
-                },
-                "turn_failed",
-                error.to_string(),
-            ),
+            Err(error) => {
+                let (status, code) = match &error {
+                    rigel_core::AgentError::Model(ModelError::ImagesNotSupported { .. }) => {
+                        (400, "unsupported_content")
+                    }
+                    _ => (
+                        match error.exit_code() {
+                            3 => 402,
+                            0 => 499,
+                            _ => 502,
+                        },
+                        "turn_failed",
+                    ),
+                };
+                Reply::error(status, code, error.to_string())
+            }
         }
     }
 
@@ -3687,6 +3725,37 @@ mod tests {
         assert!(optional_i64(&body, "a").is_err());
         assert!(optional_u64(&body, "a").is_err());
         assert!(required_string(&body, "missing").is_err());
+    }
+
+    #[test]
+    fn turn_images_accept_https_and_project_files_but_not_other_shapes() {
+        let project = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(project.path().join(".rigel/attachments")).unwrap();
+        std::fs::write(
+            project.path().join(".rigel/attachments/sign.png"),
+            b"\x89PNG\r\n\x1a\n",
+        )
+        .unwrap();
+
+        let body = json!({"images": [
+            "https://example.com/sign.png",
+            ".rigel/attachments/sign.png"
+        ]});
+        let images = images_from_body(project.path(), &body).unwrap();
+        assert_eq!(images.len(), 2);
+        assert_eq!(images[0].url, "https://example.com/sign.png");
+        assert!(images[1].url.starts_with("data:image/png;base64,"));
+
+        assert!(
+            images_from_body(project.path(), &json!({}))
+                .unwrap()
+                .is_empty()
+        );
+        assert!(images_from_body(project.path(), &json!({"images": [7]})).is_err());
+        assert!(
+            images_from_body(project.path(), &json!({"images": "not-a-list"})).is_err(),
+            "a scalar is not an image list"
+        );
     }
 
     #[test]

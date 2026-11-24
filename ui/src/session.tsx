@@ -70,6 +70,8 @@ import {
 interface QueuedPrompt {
   id: string;
   text: string;
+  /** Images captured with this draft, so a queued image prompt is not silently text-only. */
+  images: string[];
   at: number;
 }
 
@@ -1447,6 +1449,12 @@ export default function SessionView({
     [attachments],
   );
 
+  /** Image attachments travel as content parts, not only as paths the model cannot read. */
+  const imageAttachments = useMemo(
+    () => attachments.filter((path) => /\.(png|jpe?g|gif|webp|avif|bmp)$/i.test(path)),
+    [attachments],
+  );
+
   // The context ring uses the model's published window, never a guessed one. The latest turn's
   // input is the best local measure of what the next request carries.
   useEffect(() => {
@@ -2015,6 +2023,8 @@ export default function SessionView({
       options?: {
         agentId?: string;
         keepComposer?: boolean;
+        /** Images captured by a queued or replayed draft; absent means the live composer. */
+        images?: string[];
         /** A consent-gated fallback carries the chosen pair without waiting for a re-render. */
         model?: string;
         provider?: string;
@@ -2027,6 +2037,7 @@ export default function SessionView({
     if (!prompt || !session || busy) return false;
     const chosenModel = options?.model ?? model;
     const chosenProvider = options?.provider ?? provider;
+    const turnImages = options?.images ?? (options?.keepComposer ? [] : imageAttachments);
     const turnPrompt = options?.keepComposer ? prompt : withAttachments(prompt);
     if (!options?.keepComposer) setText("");
     setError(null);
@@ -2114,6 +2125,7 @@ export default function SessionView({
         workerRoute.model,
         workerRoute.provider,
         workerRoute.effort,
+        turnImages,
       );
       rememberPrompt(prompt);
       if (!options?.keepComposer) setAttachments([]);
@@ -2157,6 +2169,7 @@ export default function SessionView({
     rolePresets,
     target,
     withAttachments,
+    imageAttachments,
     rememberPrompt,
     readOnly,
     setLiveTurn,
@@ -2274,7 +2287,12 @@ export default function SessionView({
     queuedSeq.current += 1;
     setQueue((rows) => [
       ...rows,
-      { id: `queued-${Date.now()}-${queuedSeq.current}`, text: queued, at: Date.now() },
+      {
+        id: `queued-${Date.now()}-${queuedSeq.current}`,
+        text: queued,
+        images: imageAttachments,
+        at: Date.now(),
+      },
     ]);
     // Queueing while a stopped line is held must not release it; only Retry does that.
     setText("");
@@ -2286,7 +2304,16 @@ export default function SessionView({
         ? `Queued for after turn ${liveTurn.seq}. Stop pauses the line instead of dropping it.`
         : "Queued for the next turn.",
     );
-  }, [readOnly, session, text, attachments, withAttachments, liveTurn, onNotice]);
+  }, [
+    readOnly,
+    session,
+    text,
+    attachments,
+    imageAttachments,
+    withAttachments,
+    liveTurn,
+    onNotice,
+  ]);
 
   /**
    * Send reviews first, unless auto-refine is on: then the cheap model tightens the brief and
@@ -2948,7 +2975,7 @@ export default function SessionView({
     if (queuePaused || queueDraining.current) return;
     queueDraining.current = true;
     setQueue((rows) => rows.filter((row) => row.id !== next.id));
-    void deliver(next.text, { keepComposer: true })
+    void deliver(next.text, { keepComposer: true, images: next.images })
       .then((ok) => {
         if (ok) {
           setQueuePaused(false);

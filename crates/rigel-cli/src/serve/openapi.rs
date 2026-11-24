@@ -40,6 +40,11 @@ pub(super) fn document(api: &Api) -> Value {
                     "required": ["prompt"],
                     "properties": {
                         "prompt": { "type": "string", "maxLength": MAX_PROMPT_CHARS },
+                        "images": {
+                            "type": "array",
+                            "items": { "type": "string" },
+                            "description": "Image parts for the first user message: HTTPS URLs, data:image URLs, or image paths inside the project."
+                        },
                         "agent": { "type": "string", "default": "coordinator", "description": "The native agent role the turn runs as. Created on first use." },
                         "provider": { "type": "string", "description": "A provider id from GET /v1/providers. Defaults to RIGEL_PROVIDER, then omniroute." },
                         "model": { "type": "string", "description": "A model id from GET /v1/models. Defaults to the provider's own default." },
@@ -204,7 +209,7 @@ pub(super) fn document(api: &Api) -> Value {
                     },
                     "responses": {
                         "200": { "description": "The finished turn, its usage and the session spend" },
-                        "400": { "description": "Bad prompt, provider or model" },
+                        "400": { "description": "Bad prompt, image, provider or model; an adapter without an image encoder returns unsupported_content" },
                         "402": { "description": "The session or daily budget is exhausted" },
                         "404": { "description": "No such session" },
                         "409": { "description": "The session has ended" },

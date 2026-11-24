@@ -28,7 +28,9 @@ use rigel_core::agent::approval::{
 };
 pub use rigel_core::agent::catalog::ModelOption;
 use rigel_core::agent::routing::RouteExplanation;
-use rigel_core::agent::{Cancels, Coordinator, DEFAULT_MAX_STEPS, fixed_context_chars};
+use rigel_core::agent::{
+    Cancels, Coordinator, DEFAULT_MAX_STEPS, ImagePart, ModelError, fixed_context_chars,
+};
 use rigel_core::agent::{
     capabilities, catalog, custom, health, llamaserver, openrouter, providers, vertex,
 };
@@ -2065,10 +2067,20 @@ fn turn_send(
     // yet (or an agent row written on spawn) would send the model through the previous door.
     provider: Option<String>,
     effort: Option<String>,
+    // Project-relative image attachments for the first user message. The renderer passes the
+    // paths it imported; the command inlines them for a vision-capable adapter.
+    images: Option<Vec<String>>,
 ) -> Result<TurnReply, String> {
     let root = PathBuf::from(&project);
     let service = tauri::async_runtime::block_on(SessionService::open(&root)).map_err(message)?;
     let stored = tauri::async_runtime::block_on(service.get(&session)).map_err(message)?;
+    let images = match images {
+        Some(references) => references
+            .iter()
+            .map(|reference| ImagePart::from_reference(&root, reference))
+            .collect::<Result<Vec<_>, _>>()?,
+        None => Vec::new(),
+    };
 
     // Roadmap 56: naming is a background job. The prompt is already accepted; a hanging cheap
     // model, a missing key or a model that answers with prose cannot delay the turn, and the
@@ -2193,6 +2205,13 @@ fn turn_send(
         }
     };
 
+    if !images.is_empty() && !model.supports_images() {
+        return Err(ModelError::ImagesNotSupported {
+            model: model_name.clone(),
+        }
+        .to_string());
+    }
+
     let cancels = state.cancels.clone();
     let budget = Arc::new(BudgetService::new(
         service.pool().clone(),
@@ -2290,9 +2309,13 @@ fn turn_send(
                     return;
                 }
             };
-            if let Err(error) =
-                runtime.block_on(coordinator.run_existing(&session_id, &agent_id, turn, &prompt))
-            {
+            if let Err(error) = runtime.block_on(coordinator.run_existing_with_images(
+                &session_id,
+                &agent_id,
+                turn,
+                &prompt,
+                images,
+            )) {
                 let _ = app.emit(
                     "rigel://events",
                     AgentEvent::Error {
@@ -3409,6 +3432,7 @@ fn hunk_comment_deliver(
         session,
         comment.agent_id.clone(),
         comment.prompt(),
+        None,
         None,
         None,
         None,

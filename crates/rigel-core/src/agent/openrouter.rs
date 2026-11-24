@@ -18,7 +18,9 @@ use tokio_util::sync::CancellationToken;
 
 use super::limiter::RateLimiter;
 use super::local;
-use super::model::{ChatRequest, Delta, DeltaSink, Model, ModelError, RawUsage, SseDecoder};
+use super::model::{
+    ChatMessage, ChatRequest, Delta, DeltaSink, Model, ModelError, RawUsage, SseDecoder,
+};
 use super::retry::{self, RetryClass};
 
 pub const DEFAULT_BASE_URL: &str = "https://openrouter.ai/api/v1";
@@ -265,6 +267,12 @@ impl OpenRouterModel {
             "temperature": request.temperature,
             "stream_options": { "include_usage": true },
         });
+        // A text-only request keeps the exact serde form above and below. Only a message that
+        // actually carries an image is re-encoded as an OpenAI content array.
+        if request.has_images() {
+            body["messages"] =
+                Value::Array(request.messages.iter().map(ChatMessage::openai).collect());
+        }
         if self.request_usage {
             body["usage"] = json!({ "include": true });
         }
@@ -458,6 +466,10 @@ impl Model for OpenRouterModel {
         self.provider.clone()
     }
 
+    fn supports_images(&self) -> bool {
+        true
+    }
+
     async fn chat(
         &self,
         request: ChatRequest,
@@ -607,6 +619,7 @@ mod tests {
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     use tokio::net::TcpListener;
 
+    use crate::agent::image::ImagePart;
     use crate::agent::model::{ChatMessage, ChatRequest, ToolCallBuilder};
 
     /// A two-connection server: 429 with Retry-After on the first request, SSE on the second.
@@ -702,6 +715,99 @@ mod tests {
         assert_eq!(retries[0].class, RetryClass::Chat);
         assert_eq!(retries[0].attempt, 1);
         assert!(retries[0].delay_ms <= 250, "Retry-After: 0 wins");
+    }
+
+    /// The text-only shape is not merely still valid: it is the same object it was before image
+    /// parts existed. There is no empty `images` key and `content` remains a string.
+    #[test]
+    fn a_text_message_keeps_its_exact_wire_shape() {
+        let model = OpenRouterModel::new("test-key");
+        let body = model.body(&ChatRequest {
+            model: "openai/gpt-4.1-mini".to_string(),
+            messages: vec![ChatMessage::user("hi")],
+            tools: vec![],
+            max_tokens: None,
+            temperature: 0.0,
+            effort: None,
+        });
+        assert_eq!(
+            serde_json::to_string(&body["messages"]).unwrap(),
+            r#"[{"content":"hi","role":"user"}]"#
+        );
+    }
+
+    #[test]
+    fn image_parts_become_openai_text_and_image_url_content() {
+        let model = OpenRouterModel::new("test-key");
+        let body = model.body(&ChatRequest {
+            model: "nvidia/nemotron-3.5-super-vl-120b-a12b".to_string(),
+            messages: vec![ChatMessage::user_with_images(
+                "read the traffic sign in this image, what does it say and what color is the sign?",
+                vec![ImagePart {
+                    url: "https://example.com/traffic-sign.png".to_string(),
+                }],
+            )],
+            tools: vec![],
+            max_tokens: None,
+            temperature: 0.0,
+            effort: None,
+        });
+        let content = &body["messages"][0]["content"];
+        assert_eq!(content[0]["type"], "text");
+        assert!(
+            content[0]["text"]
+                .as_str()
+                .unwrap()
+                .contains("traffic sign")
+        );
+        assert_eq!(content[1]["type"], "image_url");
+        assert_eq!(
+            content[1]["image_url"]["url"],
+            "https://example.com/traffic-sign.png"
+        );
+        assert!(
+            body["messages"][0].get("images").is_none(),
+            "the internal part list must not reach the provider"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_stub_transport_receives_the_image_in_the_request_body() {
+        let (base, seen) = streamed(concat!(
+            "data: {\"choices\":[{\"delta\":{\"content\":\"stop sign\"}}]}\n\n",
+            "data: [DONE]\n\n",
+        ))
+        .await;
+        let model = OpenRouterModel::with_base_url("test-key", base);
+        let request = ChatRequest {
+            model: "nvidia/nemotron-3.5-super-vl-120b-a12b".to_string(),
+            messages: vec![ChatMessage::user_with_images(
+                "what does the sign say?",
+                vec![ImagePart {
+                    url: "data:image/png;base64,iVBORw0KGgo=".to_string(),
+                }],
+            )],
+            tools: vec![],
+            max_tokens: None,
+            temperature: 0.0,
+            effort: None,
+        };
+        let cancel = CancellationToken::new();
+        let mut sink = |_: Delta| {};
+        model.chat(request, &cancel, &mut sink).await.unwrap();
+
+        let calls = seen.lock().unwrap();
+        let raw = calls.last().expect("one request");
+        let body = raw
+            .split_once("\r\n\r\n")
+            .map(|(_, body)| body)
+            .expect("headers and a JSON body");
+        let body: serde_json::Value = serde_json::from_str(body).unwrap();
+        assert_eq!(body["messages"][0]["content"][0]["type"], "text");
+        assert_eq!(
+            body["messages"][0]["content"][1]["image_url"]["url"],
+            "data:image/png;base64,iVBORw0KGgo="
+        );
     }
 
     #[tokio::test]

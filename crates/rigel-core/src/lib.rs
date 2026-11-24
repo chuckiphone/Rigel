@@ -59,12 +59,12 @@ pub use agent::{
     AddressResolver, AgentError, ApprovalScope, Cancels, ChatMessage, ChatRequest, CommandApprover,
     CommandDecision, CommandRequest, Coordinator, DEFAULT_MAX_STEPS, Deliberation, Deliberator,
     Delta, DenyOrigins, Egress, EgressCounters, EgressError, EgressLimits, EgressResponse, Fetched,
-    Finding, MergeQueueEntry, MergeQueueState, MergeQueueView, Model, ModelDeliberator, ModelError,
-    NetworkAction, NetworkCheck, NetworkDecision, NetworkDefault, NetworkPolicy, NetworkRule,
-    NoDeliberation, OpenRouterModel, OriginApprover, OriginDecision, OriginRequest, POLICIES,
-    PinnedResolution, PlanAgent, PlanApprover, PlanDecision, PlanRequest, Policy, Position,
-    QueueLease, Scopes, ScriptedModel, ServerStatus, SkillScript, StopReason, SubagentPolicy,
-    SystemResolver, ToolCall, ToolOutcome, ToolSpec, Tools, TurnRun, classify,
+    Finding, ImagePart, MergeQueueEntry, MergeQueueState, MergeQueueView, Model, ModelDeliberator,
+    ModelError, NetworkAction, NetworkCheck, NetworkDecision, NetworkDefault, NetworkPolicy,
+    NetworkRule, NoDeliberation, OpenRouterModel, OriginApprover, OriginDecision, OriginRequest,
+    POLICIES, PinnedResolution, PlanAgent, PlanApprover, PlanDecision, PlanRequest, Policy,
+    Position, QueueLease, Scopes, ScriptedModel, ServerStatus, SkillScript, StopReason,
+    SubagentPolicy, SystemResolver, ToolCall, ToolOutcome, ToolSpec, Tools, TurnRun, classify,
 };
 pub use agentmail::{
     Mail, MailConfig, MailError, MailStatus, MessageBody, MessageSummary, SentMail, ThreadSummary,

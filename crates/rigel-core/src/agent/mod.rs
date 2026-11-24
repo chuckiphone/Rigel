@@ -44,6 +44,7 @@ pub mod exec;
 pub mod freemode;
 pub mod gemini;
 pub mod health;
+pub mod image;
 pub mod limiter;
 pub mod llamaserver;
 pub mod local;
@@ -97,6 +98,7 @@ pub use egress::{
     SystemResolver,
 };
 pub use freemode::{FreeAttempt, FreeChoice};
+pub use image::ImagePart;
 pub use limiter::{Permit, RateLimiter};
 pub use merge_queue::{MergeQueueEntry, MergeQueueState, MergeQueueView, QueueLease};
 pub use model::{

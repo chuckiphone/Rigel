@@ -4,10 +4,10 @@ use std::sync::Arc;
 
 use rigel_core::{
     AgentEvent, ApprovalScope, BudgetService, Cancels, CommandApprover, CommandDecision,
-    CommandRequest, Coordinator, Deliberator, EventSink, Model, ModelDeliberator, NetworkPolicy,
-    NoDeliberation, OriginApprover, OriginDecision, OriginRequest, PlanApprover, PlanDecision,
-    PlanRequest, ScriptedModel, SessionService, StopAt, StopReason, SubagentPolicy, Tools,
-    credentials,
+    CommandRequest, Coordinator, Deliberator, EventSink, ImagePart, Model, ModelDeliberator,
+    NetworkPolicy, NoDeliberation, OriginApprover, OriginDecision, OriginRequest, PlanApprover,
+    PlanDecision, PlanRequest, ScriptedModel, SessionService, StopAt, StopReason, SubagentPolicy,
+    Tools, credentials,
 };
 use serde_json::json;
 
@@ -801,6 +801,7 @@ pub async fn run_agent(dir: &Path, command: AgentCommand) -> ExitCode {
             session,
             agent,
             prompt,
+            image,
             dry_run,
             script,
             provider,
@@ -835,6 +836,17 @@ pub async fn run_agent(dir: &Path, command: AgentCommand) -> ExitCode {
             let service = match SessionService::open(&project).await {
                 Ok(service) => service,
                 Err(error) => return crate::fail(error),
+            };
+            let images = match image
+                .iter()
+                .map(|reference| ImagePart::from_reference(&project, reference))
+                .collect::<Result<Vec<_>, _>>()
+            {
+                Ok(images) => images,
+                Err(error) => {
+                    eprintln!("rigel: {error}");
+                    return ExitCode::from(1);
+                }
             };
             if dry_run {
                 return quote_run(
@@ -965,7 +977,10 @@ pub async fn run_agent(dir: &Path, command: AgentCommand) -> ExitCode {
                 chat_parent: None,
             };
 
-            match coordinator.run(&session.id, &worker.id, &prompt).await {
+            match coordinator
+                .run_with_images(&session.id, &worker.id, &prompt, images)
+                .await
+            {
                 Ok(run) => {
                     let spend = service
                         .get(&session.id)

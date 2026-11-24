@@ -277,6 +277,7 @@ The gaps are part of the record:
 - [docs/flakes.md](docs/flakes.md): repeated-run flake detection, per-test parsing and the order-dependence limit
 - [docs/audit.md](docs/audit.md): the hash-chained approval ledger, command provenance and JSONL/CSV export
 - [docs/codegraph.md](docs/codegraph.md): the Graph surface, the background indexer, the free-agent concept pass, its bounds and what leaves the machine
+- [docs/images.md](docs/images.md): image-bearing turns, the CLI/HTTP/desktop surfaces, provider support and the remaining image limits
 - [CONTRIBUTING.md](CONTRIBUTING.md): build, checks, layout and the rules for a schema change
 - [SECURITY.md](SECURITY.md): the threat model, every network call and what is not defended
 - [docs/privacy.md](docs/privacy.md): what stays local and what leaves

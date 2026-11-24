@@ -345,6 +345,11 @@ impl Model for AnthropicModel {
         cancel: &CancellationToken,
         on_delta: &mut DeltaSink<'_>,
     ) -> Result<(), ModelError> {
+        if request.has_images() {
+            return Err(ModelError::ImagesNotSupported {
+                model: request.model,
+            });
+        }
         let body = self.body(&request);
         let mut attempt = 0;
 
@@ -529,6 +534,7 @@ mod tests {
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     use tokio::net::TcpListener;
 
+    use crate::agent::image::ImagePart;
     use crate::agent::model::{ToolCall, ToolCallBuilder, ToolSpec};
 
     /// The events a real stream sends for `text "pong"`, one fragmented tool call and one whose
@@ -676,6 +682,29 @@ mod tests {
             temperature: 0.2,
             effort: None,
         }
+    }
+
+    #[tokio::test]
+    async fn an_image_is_refused_by_this_adapter_before_the_wire() {
+        let model = AnthropicModel::new("sk-ant-test");
+        let request = request(
+            "claude-opus-5-5",
+            vec![ChatMessage::user_with_images(
+                "look at this",
+                vec![ImagePart {
+                    url: "https://example.com/sign.png".to_string(),
+                }],
+            )],
+            Vec::new(),
+        );
+        let cancel = CancellationToken::new();
+        let mut sink = |_: Delta| {};
+        let error = model.chat(request, &cancel, &mut sink).await.unwrap_err();
+        assert!(
+            matches!(error, ModelError::ImagesNotSupported { .. }),
+            "{error}"
+        );
+        assert!(error.to_string().contains("does not accept image content"));
     }
 
     #[test]

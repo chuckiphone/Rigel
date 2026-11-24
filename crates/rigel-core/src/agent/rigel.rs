@@ -72,6 +72,11 @@ impl Model for RigelModel {
         cancel: &CancellationToken,
         on_delta: &mut DeltaSink<'_>,
     ) -> Result<(), ModelError> {
+        if request.has_images() {
+            return Err(ModelError::ImagesNotSupported {
+                model: request.model,
+            });
+        }
         let prompt = prompt_of(&request);
         if prompt.is_empty() {
             return Err(ModelError::Other(
