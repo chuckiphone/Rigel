@@ -99,7 +99,7 @@ including upgrade notes, dependencies and known gaps.
 
 ## Install
 
-The newest published build is [0.4.0-alpha.1](https://github.com/chuckiphone/Rigel/releases/tag/v0.4.0-alpha.1),
+The newest published build is [0.4.0-1](https://github.com/chuckiphone/Rigel/releases/tag/v0.4.0-1),
 a pre-release with the Graph surface and the refreshed free-model roster. Its Windows installer is
 attached to that release; because it is a pre-release it does not move the updater's stable
 `releases/latest` feed. 0.3.0 remains source-only. The Windows installer needs no Node, Python or

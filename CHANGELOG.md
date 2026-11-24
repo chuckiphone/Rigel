@@ -2,7 +2,7 @@
 
 Every release, newest first. The heading is the version its `v*` tag publishes.
 
-## 0.4.0-alpha.1 — 2026-11-24
+## 0.4.0-1 — 2026-11-24
 
 - feat(graph): add a read-only code graph of files, top-level symbols, resolved imports and name
   references, with focus, depth and a selected-node neighbour list ([codegraph](docs/codegraph.md))
