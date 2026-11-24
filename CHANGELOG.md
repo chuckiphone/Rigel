@@ -4,6 +4,11 @@ Every release, newest first. The heading is the version its `v*` tag publishes.
 
 ## 0.4.0-1 — 2026-11-24
 
+- feat(test): resolve changed items from the Git hunk and scan imported or module-qualified
+  references, so `rigel impact` names the function/type/module behind a change and a test file
+  that reaches it adds an exact target; package selection remains the floor, common names and
+  unresolved files fall back, and Rust, TypeScript/JavaScript, Python and Go use the existing
+  shallow code-graph readers ([impact](docs/impact.md))
 - feat(test): add `rigel impact` and a compiler-backed Cargo package graph, so a changed
   package selects the packages that path-depend on it; report package roles, declared
   integration tests and CODEOWNERS owners before a merge ([change impact](docs/impact.md))

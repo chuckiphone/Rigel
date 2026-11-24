@@ -17,6 +17,7 @@ use serde::Serialize;
 use thiserror::Error;
 
 use crate::process;
+use crate::symbolimpact::{self, PackageScope, SymbolImpact};
 use crate::testrun::{self, TestPlan, TestRun, TestRunError};
 use crate::tree;
 
@@ -83,6 +84,21 @@ pub struct ImpactedPackage {
     pub changed: Vec<String>,
     /// Integration-test target names the package declares.
     pub tests: Vec<String>,
+    /// Why the package is in the plan: changed items, symbol references, or only the package
+    /// dependency graph.
+    pub selected_by: String,
+    /// The concrete files and changed symbols that justify this package.
+    pub references: Vec<PackageReference>,
+}
+
+/// One file-level reason a package was selected. `kind` is `changed`, `test`, `import` or
+/// `source`; a changed row has the file that contains the item, not a use site.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct PackageReference {
+    pub symbol: String,
+    pub path: String,
+    pub line: usize,
+    pub kind: String,
 }
 
 /// The CODEOWNERS owners for one changed path.
@@ -125,6 +141,9 @@ pub struct ImpactPlan {
     /// CODEOWNERS owners for the changed paths that have a rule.
     pub owners: Vec<OwnerRow>,
     pub graph: GraphSummary,
+    /// The changed items and their scanned references. Empty when symbol resolution was not
+    /// attempted; package selection still applies.
+    pub symbols: SymbolImpact,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -244,6 +263,17 @@ fn parse_name_status(bytes: &[u8]) -> Vec<ChangedFile> {
 /// which is what `test plan` prints and what tests can pin without a real suite.
 pub fn plan(
     root: &Path,
+    changed: &[ChangedFile],
+    force_full: bool,
+) -> Result<ImpactPlan, ImpactError> {
+    plan_with_since(root, "HEAD", changed, force_full)
+}
+
+/// Like [`plan`], but resolves changed items against `since` so a symbol change can be read from
+/// the real Git hunk rather than inferred from the file path.
+pub fn plan_with_since(
+    root: &Path,
+    since: &str,
     changed: &[ChangedFile],
     force_full: bool,
 ) -> Result<ImpactPlan, ImpactError> {
@@ -411,6 +441,32 @@ pub fn plan(
         ));
         needs_full_root = true;
     }
+
+    // Symbol resolution is additive evidence on top of the package graph. It never replaces a
+    // package target: the package answer remains the floor when a name or language is ambiguous.
+    let scopes = symbol_scopes(&cargo, &node);
+    let priority_roots = symbol_priority_roots(&affected, &cargo, &node, changed);
+    let symbols = symbolimpact::analyze(root, since, changed, &scopes, &files, &priority_roots);
+    let known_packages: BTreeSet<String> = scopes.iter().map(|scope| scope.name.clone()).collect();
+    let reached_packages: BTreeSet<String> = symbols
+        .reached
+        .iter()
+        .flat_map(|reach| reach.references.iter())
+        .filter(|reference| known_packages.contains(&reference.package))
+        .map(|reference| reference.package.clone())
+        .collect();
+    let total_packages: BTreeSet<String> = affected
+        .iter()
+        .cloned()
+        .chain(reached_packages.iter().cloned())
+        .collect();
+    if total_packages.len() > MAX_AFFECTED_PACKAGES {
+        risk.insert(format!(
+            "{} packages are reached by the package graph or symbol references (limit {MAX_AFFECTED_PACKAGES})",
+            total_packages.len()
+        ));
+        needs_full_root = true;
+    }
     for name in &affected {
         let Some(package) = cargo.iter().find(|package| &package.name == name) else {
             continue;
@@ -444,6 +500,16 @@ pub fn plan(
         );
     }
 
+    // A test file that names a changed symbol gets an exact target. The package target above
+    // stays too, so symbol selection can add precision but never remove the package-level floor.
+    for reach in &symbols.reached {
+        for reference in &reach.references {
+            if let Some(target) = symbol_test_target(&reach.symbol, reference, &cargo, &node) {
+                add_target(&mut targets, target);
+            }
+        }
+    }
+
     if needs_full_root && let Some(target) = full_root_target(root) {
         full.push(target);
     }
@@ -455,10 +521,19 @@ pub fn plan(
     dedupe_targets(&mut full);
     full.retain(|target| !targets.keys().any(|label| label == &target.label));
 
+    let references_by_package = package_references(&symbols, &cargo);
     let impacted: Vec<ImpactedPackage> = affected
         .iter()
         .filter_map(|name| {
             let package = cargo.iter().find(|package| &package.name == name)?;
+            let references = references_by_package.get(name).cloned().unwrap_or_default();
+            let has_symbol_reference = references.iter().any(|row| row.kind != "changed");
+            let selected_by = match (packages.contains(name), has_symbol_reference) {
+                (true, true) => "changed symbols and package dependency".to_string(),
+                (true, false) => "changed file".to_string(),
+                (false, true) => "package dependency and symbol references".to_string(),
+                (false, false) => "package dependency".to_string(),
+            };
             Some(ImpactedPackage {
                 name: package.name.clone(),
                 root: package.root.clone(),
@@ -469,6 +544,8 @@ pub fn plan(
                 },
                 changed: changed_by_package.get(name).cloned().unwrap_or_default(),
                 tests: package.tests.clone(),
+                selected_by,
+                references,
             })
         })
         .collect();
@@ -483,6 +560,7 @@ pub fn plan(
         packages: impacted,
         owners,
         graph,
+        symbols,
     })
 }
 
@@ -553,6 +631,150 @@ fn rust_test_target(path: &str, package: &CargoPackage) -> Option<(String, Strin
     }
     file.strip_suffix(".rs")
         .map(|test| (test.to_string(), relative.clone()))
+}
+
+fn symbol_scopes(cargo: &[CargoPackage], node: &[NodePackage]) -> Vec<PackageScope> {
+    cargo
+        .iter()
+        .map(|package| PackageScope {
+            name: package.name.clone(),
+            root: package.root.clone(),
+        })
+        .chain(node.iter().map(|package| PackageScope {
+            name: package.name.clone(),
+            root: package.root.clone(),
+        }))
+        .collect()
+}
+
+fn symbol_priority_roots(
+    affected: &BTreeSet<String>,
+    cargo: &[CargoPackage],
+    node: &[NodePackage],
+    changed: &[ChangedFile],
+) -> Vec<String> {
+    let mut roots = BTreeSet::new();
+    for name in affected {
+        if let Some(package) = cargo.iter().find(|package| &package.name == name) {
+            roots.insert(package.root.clone());
+        }
+    }
+    for change in changed {
+        if let Some(package) = node_package_for(&change.path, node) {
+            roots.insert(package.root.clone());
+        }
+    }
+    roots.into_iter().collect()
+}
+
+/// Add a precise test target only when the reference sits in a test file and the runner has a
+/// target smaller than the package suite. This is deliberately additive; the package target stays.
+fn symbol_test_target(
+    symbol: &str,
+    reference: &symbolimpact::SymbolReference,
+    cargo: &[CargoPackage],
+    node: &[NodePackage],
+) -> Option<TestTarget> {
+    if reference.kind != "test" {
+        return None;
+    }
+    let path = reference.path.as_str();
+    if path.ends_with(".rs") {
+        let package = cargo_package_for(path, cargo)?;
+        let (test, relative) = rust_test_target(path, package)?;
+        let mut target = package_target(
+            package,
+            &format!("symbol {symbol} is used by {relative}"),
+            vec![path.to_string()],
+        );
+        target.args.extend(["--test".to_string(), test]);
+        target.label = label(&target.program, &target.args);
+        return Some(target);
+    }
+    if is_node_source(path) && is_node_test(path) {
+        let package = node_package_for(path, node)?;
+        let mut target = node_target(package, Some(relative_to(path, &package.root)));
+        target.reason = format!("symbol {symbol} is used by {path}");
+        return Some(target);
+    }
+    if path.ends_with("_test.go") {
+        let dir = Path::new(path)
+            .parent()
+            .map(|dir| dir.to_string_lossy().replace('\\', "/"))
+            .unwrap_or_default();
+        let args = if dir.is_empty() {
+            vec!["test".to_string(), "./...".to_string()]
+        } else {
+            vec!["test".to_string(), format!("./{dir}")]
+        };
+        return Some(TestTarget {
+            label: label("go", &args),
+            program: "go".into(),
+            args,
+            reason: format!("symbol {symbol} is used by {path}"),
+            paths: vec![path.to_string()],
+        });
+    }
+    if path.ends_with(".py") {
+        let args = vec!["-m".to_string(), "pytest".to_string(), path.to_string()];
+        return Some(TestTarget {
+            label: label("python", &args),
+            program: "python".into(),
+            args,
+            reason: format!("symbol {symbol} is used by {path}"),
+            paths: vec![path.to_string()],
+        });
+    }
+    None
+}
+
+fn package_references(
+    symbols: &SymbolImpact,
+    cargo: &[CargoPackage],
+) -> BTreeMap<String, Vec<PackageReference>> {
+    let mut by_package: BTreeMap<String, Vec<PackageReference>> = BTreeMap::new();
+    for changed in &symbols.changed {
+        let Some(package) = cargo_package_for(&changed.file, cargo) else {
+            continue;
+        };
+        by_package
+            .entry(package.name.clone())
+            .or_default()
+            .push(PackageReference {
+                symbol: changed.name.clone(),
+                path: changed.file.clone(),
+                line: changed.line,
+                kind: "changed".into(),
+            });
+    }
+    for reach in &symbols.reached {
+        for reference in &reach.references {
+            let Some(package) = cargo_package_for(&reference.path, cargo) else {
+                continue;
+            };
+            by_package
+                .entry(package.name.clone())
+                .or_default()
+                .push(PackageReference {
+                    symbol: reach.symbol.clone(),
+                    path: reference.path.clone(),
+                    line: reference.line,
+                    kind: reference.kind.clone(),
+                });
+        }
+    }
+    for rows in by_package.values_mut() {
+        rows.sort_by(|left, right| {
+            (&left.symbol, &left.path, left.line, &left.kind).cmp(&(
+                &right.symbol,
+                &right.path,
+                right.line,
+                &right.kind,
+            ))
+        });
+        rows.dedup();
+    }
+    by_package
 }
 
 fn relative_to(path: &str, root: &str) -> String {
@@ -965,6 +1187,7 @@ fn cargo_package_for<'a>(path: &str, packages: &'a [CargoPackage]) -> Option<&'a
 
 #[derive(Debug, Clone)]
 struct NodePackage {
+    name: String,
     root: String,
     script: String,
 }
@@ -983,8 +1206,23 @@ fn discover_node_packages(root: &Path, files: &[String]) -> Vec<NodePackage> {
                     .and_then(|value| value.as_str())
                     .is_some_and(|value| !value.trim().is_empty())
             })?;
+            let root = path.strip_suffix("/package.json").unwrap_or("").to_string();
+            let name = manifest
+                .get("name")
+                .and_then(|value| value.as_str())
+                .map(str::trim)
+                .filter(|name| !name.is_empty())
+                .map(str::to_string)
+                .unwrap_or_else(|| {
+                    if root.is_empty() {
+                        "root".to_string()
+                    } else {
+                        root.rsplit('/').next().unwrap_or(&root).to_string()
+                    }
+                });
             Some(NodePackage {
-                root: path.strip_suffix("/package.json").unwrap_or("").to_string(),
+                name,
+                root,
                 script: script.to_string(),
             })
         })
@@ -1447,6 +1685,64 @@ mod tests {
     }
 
     #[test]
+    fn a_symbol_reference_adds_an_exact_test_without_dropping_package_targets() {
+        let project = workspace();
+        fs::create_dir_all(project.path().join("crates/app/tests")).unwrap();
+        fs::write(
+            project.path().join("crates/app/tests/integration.rs"),
+            "use demo_core::core;\n#[test]\nfn core_test() { assert_eq!(core(), 1); }\n",
+        )
+        .unwrap();
+        let plan = plan(project.path(), &[change("crates/core/src/lib.rs")], false).unwrap();
+        let labels: Vec<&str> = plan
+            .targets
+            .iter()
+            .map(|target| target.label.as_str())
+            .collect();
+        assert!(labels.contains(&"cargo test -p demo-core"), "{labels:?}");
+        assert!(labels.contains(&"cargo test -p demo-app"), "{labels:?}");
+        assert!(
+            labels.contains(&"cargo test -p demo-app --test integration"),
+            "{labels:?}"
+        );
+        assert!(
+            plan.symbols
+                .changed
+                .iter()
+                .any(|symbol| symbol.name == "core" && symbol.kind == "fn")
+        );
+        let app = plan
+            .packages
+            .iter()
+            .find(|package| package.name == "demo-app")
+            .unwrap();
+        assert!(app.selected_by.contains("symbol references"));
+        assert!(app.references.iter().any(|reference| reference.path
+            == "crates/app/tests/integration.rs"
+            && reference.kind == "test"));
+    }
+
+    #[test]
+    fn an_unrelated_symbol_does_not_add_a_test_target() {
+        let project = workspace();
+        fs::create_dir_all(project.path().join("crates/app/tests")).unwrap();
+        fs::write(
+            project.path().join("crates/app/tests/integration.rs"),
+            "use demo_core::core;\n#[test]\nfn core_test() { assert_eq!(core(), 1); }\n",
+        )
+        .unwrap();
+        let plan = plan(project.path(), &[change("crates/app/src/lib.rs")], false).unwrap();
+        let labels: Vec<&str> = plan
+            .targets
+            .iter()
+            .map(|target| target.label.as_str())
+            .collect();
+        assert_eq!(labels, vec!["cargo test -p demo-app"]);
+        assert!(!plan.symbols.changed.is_empty());
+        assert!(plan.symbols.reached.is_empty());
+    }
+
+    #[test]
     fn codeowners_are_applied_last_match_first() {
         let project = project();
         fs::create_dir_all(project.path().join(".github")).unwrap();
@@ -1598,6 +1894,7 @@ mod tests {
                 packages: Vec::new(),
                 owners: Vec::new(),
                 graph: GraphSummary::default(),
+                symbols: SymbolImpact::default(),
             },
         )
         .await
@@ -1638,6 +1935,7 @@ mod tests {
                 packages: Vec::new(),
                 owners: Vec::new(),
                 graph: GraphSummary::default(),
+                symbols: SymbolImpact::default(),
             },
         )
         .await

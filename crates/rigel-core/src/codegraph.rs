@@ -59,11 +59,11 @@ pub struct CodeGraph {
 }
 
 #[derive(Debug, Clone)]
-struct Symbol {
-    name: String,
-    line: usize,
-    body_start: usize,
-    body_end: usize,
+pub(crate) struct Symbol {
+    pub(crate) name: String,
+    pub(crate) line: usize,
+    pub(crate) body_start: usize,
+    pub(crate) body_end: usize,
 }
 
 #[derive(Debug, Clone)]
@@ -313,7 +313,7 @@ fn is_skipped(path: &str) -> bool {
     .any(|dir| lower.starts_with(dir) || lower.contains(&format!("/{dir}")))
 }
 
-fn language(path: &str) -> Option<&'static str> {
+pub(crate) fn language(path: &str) -> Option<&'static str> {
     let extension = Path::new(path)
         .extension()
         .and_then(|extension| extension.to_str())
@@ -400,7 +400,7 @@ fn regex_for(language: &str) -> &'static [(&'static str, Regex)] {
     }
 }
 
-fn symbols(path: &str, text: &str) -> Vec<Symbol> {
+pub(crate) fn symbols(path: &str, text: &str) -> Vec<Symbol> {
     let language = language(path).unwrap_or_default();
     let patterns = regex_for(language);
     let lines: Vec<&str> = text.lines().collect();
@@ -619,7 +619,7 @@ fn normalize(path: &Path) -> std::path::PathBuf {
     out
 }
 
-fn contains_word(haystack: &str, needle: &str) -> bool {
+pub(crate) fn contains_word(haystack: &str, needle: &str) -> bool {
     let bytes = haystack.as_bytes();
     let needle = needle.as_bytes();
     if needle.is_empty() || needle.len() > bytes.len() {
@@ -642,7 +642,7 @@ fn is_word(byte: u8) -> bool {
     byte.is_ascii_alphanumeric() || byte == b'_'
 }
 
-fn is_common(name: &str) -> bool {
+pub(crate) fn is_common(name: &str) -> bool {
     matches!(
         name,
         "new"

@@ -37,6 +37,7 @@ fn fixture() -> TempDir {
     let project = TempDir::new().unwrap();
     fs::create_dir_all(project.path().join("crates/core/src")).unwrap();
     fs::create_dir_all(project.path().join("crates/app/src")).unwrap();
+    fs::create_dir_all(project.path().join("crates/app/tests")).unwrap();
     fs::create_dir_all(project.path().join(".github")).unwrap();
     fs::write(
         project.path().join("Cargo.toml"),
@@ -61,6 +62,11 @@ fn fixture() -> TempDir {
     fs::write(
         project.path().join("crates/app/src/lib.rs"),
         "pub fn app() { impact_core::core(); }\n",
+    )
+    .unwrap();
+    fs::write(
+        project.path().join("crates/app/tests/integration.rs"),
+        "use impact_core::core;\n#[test]\nfn core_test() { core(); }\n",
     )
     .unwrap();
     fs::write(
@@ -132,6 +138,52 @@ fn a_changed_core_package_reaches_the_app_and_names_both_owners() {
         targets
             .iter()
             .any(|target| target["label"] == "cargo test -p impact-app")
+    );
+    assert!(
+        targets
+            .iter()
+            .any(|target| target["label"] == "cargo test -p impact-app --test integration"),
+        "a test that names the changed symbol gets an exact target"
+    );
+
+    assert_eq!(plan["symbols"]["source"], "git diff");
+    assert!(
+        plan["symbols"]["changed"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|symbol| symbol["name"] == "core" && symbol["kind"] == "fn")
+    );
+    assert!(
+        plan["symbols"]["reached"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|reach| reach["references"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(
+                    |reference| reference["path"] == "crates/app/tests/integration.rs"
+                        && reference["kind"] == "test"
+                ))
+    );
+    let app = packages
+        .iter()
+        .find(|package| package["name"] == "impact-app")
+        .unwrap();
+    assert!(
+        app["selected_by"]
+            .as_str()
+            .unwrap()
+            .contains("symbol references")
+    );
+    assert!(
+        app["references"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|reference| reference["path"] == "crates/app/tests/integration.rs")
     );
 
     let owners = plan["owners"].as_array().unwrap();

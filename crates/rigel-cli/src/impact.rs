@@ -53,6 +53,48 @@ fn print_impact(plan: &ImpactPlan) {
             println!("  {} {}", file.status, file.path);
         }
     }
+    if plan.symbols.changed.is_empty() {
+        if plan.symbols.source != "unavailable"
+            || !plan.symbols.unresolved.is_empty()
+            || !plan.symbols.notes.is_empty()
+        {
+            println!("symbols  {}: no changed item resolved", plan.symbols.source);
+            for path in &plan.symbols.unresolved {
+                println!("symbol   unresolved: {path}");
+            }
+            for note in &plan.symbols.notes {
+                println!("symbol   note: {note}");
+            }
+        }
+    } else {
+        println!(
+            "symbols  {}: {} changed item(s), language {}",
+            plan.symbols.source,
+            plan.symbols.changed.len(),
+            if plan.symbols.languages.is_empty() {
+                "unknown".to_string()
+            } else {
+                plan.symbols.languages.join(", ")
+            }
+        );
+        for symbol in plan.symbols.changed.iter().take(12) {
+            println!(
+                "symbol   {} {} ({}:{}, {})",
+                symbol.kind, symbol.name, symbol.file, symbol.line, symbol.language
+            );
+        }
+        for reach in &plan.symbols.reached {
+            for reference in reach.references.iter().take(8) {
+                println!(
+                    "reach    {} via {}:{} ({}, {})",
+                    reach.symbol, reference.path, reference.line, reference.kind, reference.package
+                );
+            }
+        }
+        for note in &plan.symbols.notes {
+            println!("symbol   note: {note}");
+        }
+    }
     if plan.packages.is_empty() {
         println!("package  none");
     }
@@ -65,6 +107,13 @@ fn print_impact(plan: &ImpactPlan) {
         println!("package  {} ({}, {root})", package.name, package.role);
         if !package.changed.is_empty() {
             println!("  changed: {}", package.changed.join(", "));
+        }
+        println!("  selected by: {}", package.selected_by);
+        for reference in package.references.iter().take(8) {
+            println!(
+                "  reach: {} via {}:{} ({})",
+                reference.symbol, reference.path, reference.line, reference.kind
+            );
         }
         if !package.tests.is_empty() {
             println!("  tests: {}", package.tests.join(", "));

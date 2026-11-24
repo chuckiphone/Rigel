@@ -47,6 +47,7 @@ pub mod spend;
 pub mod storage;
 pub mod store;
 pub mod swarm;
+pub mod symbolimpact;
 pub mod templates;
 pub mod testimpact;
 pub mod testrun;
@@ -139,6 +140,7 @@ pub use snapshot::{
 };
 pub use snapshot::{GcPolicy, GcRemoved, GcReport};
 pub use storage::{StorageError, Store, default_index_dir};
+pub use symbolimpact::{ChangedSymbol, PackageScope, SymbolImpact, SymbolReach, SymbolReference};
 pub use templates::{
     MAX_TEMPLATES, SessionTemplate, SessionTemplates, TemplateAgent, TemplateError, TemplateSkill,
 };

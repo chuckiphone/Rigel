@@ -1,15 +1,18 @@
 # Change-impact graph
 
 `rigel impact` answers one review question before anything runs: **what does this change
-actually reach?** It is the same plan `rigel test plan` builds, printed for a reviewer rather
-than for a runner.
+actually reach?** It is the same plan `rigel test plan` builds, printed for a reviewer rather than
+for a runner. The package graph is the safety floor; changed items and their references are the
+narrower evidence on top of it.
 
 ```
 rigel impact [--project DIR] [--since REV] [--changed-file PATH]... [--full] [--json]
 ```
 
-`--changed-file` supplies paths explicitly and skips Git; otherwise `--since` (default `HEAD`)
-is read with `git diff --name-status` plus untracked files. `.rigel/` is never a project change.
+`--changed-file` supplies paths explicitly and skips Git for the changed-file list; otherwise
+`--since` (default `HEAD`) is read with `git diff --name-status` plus untracked files. `.rigel/`
+is never a project change. The symbol pass still compares an explicit path with `--since` when
+Git is available, so it can find the real hunk rather than treating the whole file as edited.
 
 ## The package graph
 
@@ -29,17 +32,61 @@ receipt says which source was used:
 ```
 
 The graph is over **path dependencies**; registry dependencies are not internal edges. A
-dependent package is selected because its tests compile against the changed package. This is a
-safe over-approximation, not a symbol-level import graph.
+dependent package is selected because its tests compile against the changed package. That is a
+safe over-approximation; symbol reachability never removes it.
+
+## Changed items and references
+
+When Git can answer, the selector reads the real zero-context diff against `--since` and maps
+each changed line to the top-level declaration whose body contains it. A module-level edit (an
+import, an attribute or a deleted item) is reported as treating every top-level symbol in that
+file as changed rather than guessing one. When Git is unavailable, or the path is a new file,
+every top-level symbol in the file is scanned and the receipt says `file scan`. An explicit
+`--changed-file` path with no Git hunk is not treated as an edit: it is reported as unresolved
+and the package answer stands.
+
+The symbol reader is the one already used by the code graph: shallow top-level declarations and
+imports, not a compiler. Reference matching is deliberately conservative:
+
+- **Rust**: a use is accepted when the file imports the item through its module path or writes a
+  qualified path such as `testimpact::changed_files`. A bare `plan()` in another module is not a
+  reference unless that file imports it; this keeps an unrelated `plan::propose` from selecting
+  a package. Crate-root symbols accept `crate::name` and `rigel_core::name` forms.
+- **TypeScript / JavaScript**: top-level exported symbols; a use needs an `import`/`require`
+  naming the symbol, or a qualified `.name` call.
+- **Python**: `def`/`class` names; a use needs `from ... import` or `import`, or a qualified
+  `.name` attribute.
+- **Go**: `func`/`type` names; a use in the same directory is accepted, and another directory
+  needs a package-qualified `.Name`.
+- **Other languages already read by the code graph** (Swift, Kotlin, Java, C/C++, C#, Ruby,
+  PHP): declarations are reported, and only same-file references are trusted. No exact test
+  target is invented for them.
+
+Common declaration names (`run`, `new`, `test`, `parse`, ...) are listed as `ambiguous` and are
+not scanned for references, because a bare common word is not evidence. Their packages still
+come from the package graph. A changed symbol with no scanned reference is listed in a note;
+this means "no reference found by this shallow scan", not "nothing calls it".
+
+Reference scanning is bounded at 40 changed symbols, 500 files, 512 KiB per file, 32 MiB total
+and 200 references per symbol. Tests are scanned before other files, and files in affected
+packages are visited round-robin so one large crate cannot consume the budget before its
+dependents. A bound is reported in `symbols.notes`; selection remains package-safe.
 
 ## What is reported
 
 - `package`: every package the change reaches, with `role` `changed` or `dependent`, its root,
-  the direct changed files and the integration-test targets it declares.
+  the direct changed files, the integration-test targets it declares, `selected_by`, and the
+  changed or referencing `symbol`/`path`/`line` rows that justify it. A package selected only by
+  the dependency closure says so instead of inventing a reference.
+- `symbols`: the changed items, their language and declaration kind, the references found, the
+  packages those references name, `ambiguous` common names, unresolved files and scan notes.
 - `owners`: CODEOWNERS owners for each changed path that has a rule.
 - `selected`: the exact test commands `rigel test run` would execute. A changed package gets
-  `cargo test -p <package>`; a changed integration test under `tests/` gets the exact
-  `--test` target, while dependent packages still get their package runs.
+  `cargo test -p <package>`; a changed integration test under `tests/` gets the exact `--test`
+  target, while dependent packages still get their package runs. A test file that imports or
+  qualifies a changed item adds its exact target (Rust `--test`, a JS test file, a Go test
+  directory or a Python pytest file) **in addition to** the package target. Symbol selection
+  therefore adds precision but never removes the package-level floor.
 - `full`: the full suite when the plan is risky, with every reason.
 - `skipped`: files that produce no target, and why.
 
@@ -56,11 +103,11 @@ the `owners` list rather than being assigned to a default.
 
 ## Selection safety
 
-The dependency closure is capped at **8** packages. A larger closure adds the full suite and
-names the cap; past that point the selected runs cost more than the suite they would replace.
-The existing rules still apply: a manifest, lockfile, build script, migration, workflow or
-release script, more than 6 source files, more than 2 directly changed Cargo packages, an
-unmapped source, generated/vendored source, or `--full` adds the full suite.
+The dependency closure is capped at **8** packages. A larger closure, or a package newly reached
+through symbol references, adds the full suite and names the cap. The existing rules still
+apply: a manifest, lockfile, build script, migration, workflow or release script, more than 6
+source files, more than 2 directly changed Cargo packages, an unmapped source, generated or
+vendored source, or `--full` adds the full suite.
 
 A Cargo package that appears only because of the closure is selected, not treated as a risk:
 its tests genuinely compile against the changed code. The safety net still runs the full suite
@@ -72,20 +119,27 @@ when the selection cannot be trusted.
 # What does this working tree reach?
 rigel impact --since HEAD
 
-# A turn that already knows its files can skip Git.
+# A turn that already knows its files can skip the changed-file listing.
 rigel impact --changed-file crates/rigel-core/src/testimpact.rs --json
+
+# Show the changed function and the files that import or qualify it.
+rigel impact --changed-file crates/rigel-core/src/testimpact.rs
 
 # Show the graph and require the full suite for the review.
 rigel impact --since origin/main --full
 ```
 
 JSON is the same `ImpactPlan` that `rigel test plan --json` prints, with the added `packages`,
-`owners` and `graph` fields.
+`owners`, `graph` and `symbols` fields. `packages[].references` is the per-package evidence.
 
 ## Limits
 
-- Package-level ownership, not symbol-level imports. A change in one module of a large package
-  still selects that package's whole suite.
+- References are direct, not transitive: a test that calls a wrapper which calls the changed
+  function is found by the package closure and full-suite rules, not by following the call
+  chain. Rust macro expansion, re-exports through an alias and dynamic dispatch are not resolved.
+- The symbol reader is a line-oriented heuristic. A symbol name inside a string, a same-named
+  local helper, an unusual declaration form or a file over the scan bounds can hide or add a
+  reference. The package answer and its cap/full-suite rules remain the safe result.
 - No coverage or historical-failure signals; tests outside the dependency closure are found by
   the full-suite fallback, not by this graph.
 - The fallback graph understands inline and table-form `path` dependencies; a workspace
@@ -98,6 +152,9 @@ JSON is the same `ImpactPlan` that `rigel test plan --json` prints, with the add
 ## Tests
 
 `crates/rigel-core/src/testimpact.rs` covers the workspace closure, the reverse direction, the
-metadata source and edge count, CODEOWNERS last-match and `!` rules, and path-dependency
-parsing. `crates/rigel-cli/tests/impact.rs` drives the real binary against a temporary Cargo
-workspace with a real `Cargo.lock` and CODEOWNERS.
+metadata source and edge count, CODEOWNERS last-match and `!` rules, path-dependency parsing,
+and a symbol reference adding an exact test without dropping package targets.
+`crates/rigel-core/src/symbolimpact.rs` covers hunk mapping, enclosing-item selection, Git
+failure fallback, comments, import/qualifier filtering, and ambiguous common names.
+`crates/rigel-cli/tests/impact.rs` drives the real binary against a temporary Cargo workspace
+with a real `Cargo.lock`, CODEOWNERS and a test that imports a changed core function.

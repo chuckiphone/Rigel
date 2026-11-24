@@ -24,23 +24,43 @@ reported, including documentation and generated files.
 - A **Cargo package source** change selects `cargo test -p <package>` for the owning package and
   for every package that reaches it through a Cargo path dependency. The graph comes from
   `cargo metadata --no-deps --locked --offline`; a project without a lockfile falls back to a
-  manifest scan. This is package-level, not symbol-level: the package's unit and integration
-  tests are the smallest reliable unit. `rigel impact` prints the same graph with package roles,
-  declared integration tests and CODEOWNERS owners ([change impact](impact.md)).
+  manifest scan. The package run is the floor. When the changed item can be resolved, a test
+  file that imports or qualifies it adds its exact target, for example
+  `cargo test -p rigel-cli --test impact`; the package target stays as well, so a symbol answer
+  can add precision but never fewer targets. `rigel impact` prints the graph, changed items,
+  references and CODEOWNERS owners ([change impact](impact.md)).
 - A change to a **Cargo integration test** under `tests/` selects the exact target, for example
   `cargo test -p rigel-core --test snapshot`.
 - A **Cargo manifest** change selects the package's tests and requires the full suite.
 - A **JavaScript/TypeScript package source** change selects that package's declared test script
   (`test`, then `test:e2e`, then `test:unit`). A changed test file passes that file to the script,
-  for example `npm --prefix ui run test:e2e -- tests/session.spec.ts`.
+  for example `npm --prefix ui run test:e2e -- tests/session.spec.ts`. A test in any package
+  that imports a changed symbol also gets its exact file target, in addition to the owning
+  package's script.
 - A package manifest with a test script requires the package's full test script.
 - Documentation, data files and generated/vendored paths are reported as skipped with their
   reason.
-- A source file in a language with no selector (Python, Go, Java and so on) is reported as
-  unmapped and forces the full suite rather than silently running nothing.
+- A **Go or Python** test file that references a changed symbol adds `go test ./<dir>` or
+  `python -m pytest <file>`; the changed source is still reported as unmapped, so the full suite
+  follows. Java and the other languages with no selector remain unmapped and force the full
+  suite rather than silently running nothing.
 
 The target list is deduplicated by its displayed command, so several files in one package produce
 one package run.
+
+## Symbol reachability
+
+The selector reads the real Git hunk when it can and maps the changed lines to top-level
+declarations. It then looks for imported or module-qualified uses, not every occurrence of a
+word. Rust uses a `use` path or a qualified `module::name`; TypeScript/JavaScript and Python use
+an import or a qualified `.name`; Go uses a same-directory reference or a package-qualified
+`.Name`. Common names such as `run` and `new` are treated as ambiguous and fall back to the
+package answer. A module-level edit or an unreadable/oversized file is also a package fallback.
+
+The package targets are **always kept**. Symbol reachability can add an exact Rust integration
+test, a JavaScript test file, a Go test directory or a Python test file, and it can mark a
+dependent package as `selected_by` symbol references, but it never selects fewer targets than
+the package-level answer. This is the safety property that makes a shallow parser acceptable.
 
 ## When the full suite follows
 
@@ -99,12 +119,13 @@ The JSON form is designed for a turn or CI step:
 
 ## Limits
 
-- The Cargo side is a compiler-backed **package** graph, not a symbol or import graph. A change in
-  one module of a large package still selects that package's whole suite, and a registry
-  dependency is never treated as an internal edge.
+- The Cargo package graph is compiler-backed; symbol references are a line-oriented heuristic
+  layered on top. Direct references only: a wrapper that calls the changed function is covered
+  by the package target, not by following the call chain. Rust macros, aliases and dynamic
+  dispatch are not resolved, and an unusual declaration can fall back to the package.
 - JavaScript and TypeScript selection remains a package-script map; there is no workspace
-  dependency closure for those packages yet. A test inside another package that crosses the
-  boundary is found by the full-suite fallback, not by the selected run.
+  dependency closure for those packages yet. A symbol reference can add a cross-package test
+  file, but a package with no matching test script is not invented.
 - The selector does not infer test targets from coverage data or historical failures. A package
   whose test script is expensive is still run whole when one of its files changes.
 - Test commands come from the project's manifest, as in the existing Run tests action. Rigel does
@@ -116,8 +137,10 @@ The JSON form is designed for a turn or CI step:
 
 `crates/rigel-core/src/testimpact.rs` covers Cargo source and integration-test selection, the
 path-dependency closure in both directions, skipped documentation, manifest and unmapped-change
-fallbacks, broad/forced plans, CODEOWNERS matching, Git changed-file discovery, and stopping
-before a full run after a selected failure.
+fallbacks, broad/forced plans, CODEOWNERS matching, Git changed-file discovery, symbol-reference
+exact targets without dropping package targets, and stopping before a full run after a selected
+failure. `crates/rigel-core/src/symbolimpact.rs` covers hunk mapping, import/qualifier filtering
+and ambiguous names.
 `crates/rigel-cli/tests/testimpact.rs` drives the real binary against a temporary Git project with
 a `package.json` test script: plan output, manifest risk, explicit `--changed-file`, and an actual
 `rigel test run`. `crates/rigel-cli/tests/impact.rs` drives the Cargo graph and owners.

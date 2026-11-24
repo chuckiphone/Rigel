@@ -213,7 +213,7 @@ pub(crate) fn build_plan(
             })
             .collect()
     };
-    testimpact::plan(project, &changed, full).map_err(|error| error.to_string())
+    testimpact::plan_with_since(project, since, &changed, full).map_err(|error| error.to_string())
 }
 
 fn normalize(project: &Path, path: &str) -> String {
@@ -230,6 +230,18 @@ fn print_plan(plan: &ImpactPlan) {
         println!("changed  {} file(s)", plan.changed.len());
         for file in &plan.changed {
             println!("  {} {}", file.status, file.path);
+        }
+        if !plan.symbols.changed.is_empty() {
+            println!(
+                "symbols  {}: {} changed item(s), {} reference(s)",
+                plan.symbols.source,
+                plan.symbols.changed.len(),
+                plan.symbols
+                    .reached
+                    .iter()
+                    .map(|reach| reach.references.len())
+                    .sum::<usize>()
+            );
         }
     }
     for target in &plan.targets {
