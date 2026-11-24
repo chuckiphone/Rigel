@@ -127,7 +127,9 @@ pub async fn run(project: &Path) -> Result<TestRun, TestRunError> {
     run_plan(project, &plan).await
 }
 
-pub(crate) async fn run_plan(project: &Path, plan: &TestPlan) -> Result<TestRun, TestRunError> {
+/// Run one plan. Callers are the impacted-test runner and `rigel proof record`, both of which
+/// already built the command from a manifest rather than from free text.
+pub async fn run_plan(project: &Path, plan: &TestPlan) -> Result<TestRun, TestRunError> {
     let mut command = Command::new(&plan.program);
     command
         .args(&plan.args)

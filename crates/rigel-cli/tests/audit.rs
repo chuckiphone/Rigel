@@ -132,3 +132,99 @@ async fn provenance_prints_unknown_and_its_reason_for_an_unrecorded_chain() {
         "no snapshot was taken: the command was not destructive"
     );
 }
+
+#[tokio::test]
+async fn an_export_is_offline_verifiable_and_a_csv_has_a_header() {
+    let data = TempDir::new().unwrap();
+    let project = TempDir::new().unwrap();
+    let service = SessionService::open(project.path()).await.unwrap();
+    let session = service.start(Some("export"), None).await.unwrap();
+    let agent = service
+        .register_agent_with(&session.id, "native", Some("commander"), None)
+        .await
+        .unwrap();
+    service
+        .record_approval(
+            &session.id,
+            &agent.id,
+            None,
+            "command",
+            &json!({ "command": "echo exported" }),
+            "allowed",
+            Some("once"),
+            1_700_000_000_000,
+        )
+        .await
+        .unwrap();
+
+    let jsonl = project.path().join("audit-export.jsonl");
+    let (code, stdout) = rigel(
+        data.path(),
+        &[
+            "audit",
+            "export",
+            "--project",
+            project.path().to_str().unwrap(),
+            "--format",
+            "jsonl",
+            "--out",
+            jsonl.to_str().unwrap(),
+            "--json",
+        ],
+    );
+    assert_eq!(code, 0, "{stdout}");
+    let report: Value = serde_json::from_str(stdout.trim()).unwrap();
+    assert_eq!(report["records"], 1);
+    assert_eq!(report["valid"], true);
+    assert_eq!(report["sha256"].as_str().unwrap().len(), 64);
+
+    let (code, stdout) = rigel(
+        data.path(),
+        &[
+            "audit",
+            "verify",
+            "--file",
+            jsonl.to_str().unwrap(),
+            "--json",
+        ],
+    );
+    assert_eq!(code, 0, "{stdout}");
+    let verified: Value = serde_json::from_str(stdout.trim()).unwrap();
+    assert_eq!(verified["valid"], true);
+    assert_eq!(verified["records"], 1);
+
+    let csv = project.path().join("audit-export.csv");
+    let (code, stdout) = rigel(
+        data.path(),
+        &[
+            "audit",
+            "export",
+            "--project",
+            project.path().to_str().unwrap(),
+            "--format",
+            "csv",
+            "--out",
+            csv.to_str().unwrap(),
+            "--json",
+        ],
+    );
+    assert_eq!(code, 0, "{stdout}");
+    let text = std::fs::read_to_string(&csv).unwrap();
+    assert!(text.starts_with("seq,approval_id,session_id"));
+    assert_eq!(text.lines().count(), 2);
+
+    std::fs::write(&jsonl, "not the ledger\n").unwrap();
+    let (code, stdout) = rigel(
+        data.path(),
+        &[
+            "audit",
+            "verify",
+            "--file",
+            jsonl.to_str().unwrap(),
+            "--json",
+        ],
+    );
+    assert_eq!(code, 2, "{stdout}");
+    let broken: Value = serde_json::from_str(stdout.trim()).unwrap();
+    assert_eq!(broken["valid"], false);
+}

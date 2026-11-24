@@ -25,6 +25,42 @@ pub const GENESIS_HASH: &str = "000000000000000000000000000000000000000000000000
 /// Versioned so a future format can be refused instead of silently interpreted as this one.
 pub const SCHEMA: &str = "rigel.audit.approval/1";
 
+/// The two shapes an audit export can take. JSONL is the ledger itself and can be verified
+/// offline by [`verify_file`]; CSV is the SIEM-friendly projection.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ExportFormat {
+    Jsonl,
+    Csv,
+}
+
+impl ExportFormat {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Jsonl => "jsonl",
+            Self::Csv => "csv",
+        }
+    }
+
+    pub fn extension(self) -> &'static str {
+        match self {
+            Self::Jsonl => "jsonl",
+            Self::Csv => "csv",
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct ExportReport {
+    pub path: PathBuf,
+    pub format: String,
+    pub records: usize,
+    /// SHA-256 of the exact exported bytes.
+    pub sha256: String,
+    /// The last record's hash, or the genesis hash for an empty ledger.
+    pub chain_tip: String,
+    pub valid: bool,
+}
+
 /// One approval, exactly as it appears on a ledger line.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ApprovalRecord {
@@ -77,6 +113,8 @@ pub enum ChainError {
     Broken { line: usize, reason: String },
     #[error("could not encode an audit record: {0}")]
     Encode(String),
+    #[error("the export file already exists: {0}")]
+    Exists(PathBuf),
 }
 
 /// One broken link. `line` is 1-based, the same numbering a text editor and `rigel audit
@@ -323,6 +361,126 @@ pub fn verify_file(path: &Path) -> Result<VerifyReport, ChainError> {
     Ok(check_records(path, &records))
 }
 
+/// Export an intact ledger. A broken chain is refused rather than copied: an export that looks
+/// authoritative is worse than no export. The destination is never overwritten.
+pub fn export(
+    root: &Path,
+    format: ExportFormat,
+    destination: &Path,
+) -> Result<ExportReport, ChainError> {
+    if destination.exists() {
+        return Err(ChainError::Exists(destination.to_path_buf()));
+    }
+    let path = ledger_path(root);
+    let records = match read_records(&path) {
+        Ok(records) => records,
+        Err(ChainError::Broken { line, reason }) => {
+            return Err(ChainError::Broken { line, reason });
+        }
+        Err(error) => return Err(error),
+    };
+    let report = check_records(&path, &records);
+    if let Some(bad) = report.first_bad {
+        return Err(ChainError::Broken {
+            line: bad.line,
+            reason: bad.reason,
+        });
+    }
+
+    let mut bytes = Vec::new();
+    match format {
+        ExportFormat::Jsonl => {
+            for record in &records {
+                let line = serde_json::to_string(record)
+                    .map_err(|error| ChainError::Encode(error.to_string()))?;
+                bytes.extend_from_slice(line.as_bytes());
+                bytes.push(b'\n');
+            }
+        }
+        ExportFormat::Csv => {
+            bytes.extend_from_slice(
+                b"seq,approval_id,session_id,agent_id,turn_id,kind,decision,scope,requested_at,decided_at,prev_hash,hash,request\n",
+            );
+            for record in &records {
+                let request = serde_json::to_string(&record.request)
+                    .map_err(|error| ChainError::Encode(error.to_string()))?;
+                let fields = [
+                    record.seq.to_string(),
+                    record.approval_id.clone(),
+                    record.session_id.clone(),
+                    record.agent_id.clone(),
+                    record.turn_id.clone().unwrap_or_default(),
+                    record.kind.clone(),
+                    record.decision.clone(),
+                    record.scope.clone().unwrap_or_default(),
+                    record.requested_at.to_string(),
+                    record
+                        .decided_at
+                        .map(|at| at.to_string())
+                        .unwrap_or_default(),
+                    record.prev_hash.clone(),
+                    record.hash.clone(),
+                    request,
+                ];
+                for (index, field) in fields.iter().enumerate() {
+                    if index > 0 {
+                        bytes.push(b',');
+                    }
+                    bytes.extend_from_slice(csv_field(field).as_bytes());
+                }
+                bytes.push(b'\n');
+            }
+        }
+    }
+    if let Some(parent) = destination
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+    {
+        fs::create_dir_all(parent).map_err(|source| ChainError::Io {
+            path: parent.to_path_buf(),
+            source,
+        })?;
+    }
+    fs::write(destination, &bytes).map_err(|source| ChainError::Io {
+        path: destination.to_path_buf(),
+        source,
+    })?;
+    let sha256 = digest_bytes(&bytes);
+    let chain_tip = records
+        .last()
+        .map(|record| record.hash.clone())
+        .unwrap_or_else(|| GENESIS_HASH.to_string());
+    Ok(ExportReport {
+        path: destination.to_path_buf(),
+        format: format.as_str().to_string(),
+        records: records.len(),
+        sha256,
+        chain_tip,
+        valid: true,
+    })
+}
+
+fn csv_field(value: &str) -> String {
+    if value
+        .chars()
+        .any(|character| matches!(character, ',' | '"' | '\n' | '\r'))
+    {
+        format!("\"{}\"", value.replace('"', "\"\""))
+    } else {
+        value.to_string()
+    }
+}
+
+fn digest_bytes(bytes: &[u8]) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(bytes);
+    hasher
+        .finalize()
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -390,5 +548,64 @@ mod tests {
         let report = verify(root.path()).unwrap();
         assert!(report.valid);
         assert_eq!(report.records, 0);
+    }
+
+    #[test]
+    fn a_jsonl_export_is_an_offline_verifiable_ledger() {
+        let root = tempfile::tempdir().unwrap();
+        append(root.path(), input("a", "allowed")).unwrap();
+        append(root.path(), input("b", "denied")).unwrap();
+        let destination = root.path().join("export.jsonl");
+        let report = export(root.path(), ExportFormat::Jsonl, &destination).unwrap();
+        assert_eq!(report.records, 2);
+        assert!(report.valid);
+        assert_eq!(report.chain_tip.len(), 64);
+
+        let verified = verify_file(&destination).unwrap();
+        assert!(verified.valid, "{verified:?}");
+        assert_eq!(verified.records, 2);
+        let bytes = fs::read(&destination).unwrap();
+        assert_eq!(report.sha256, digest_bytes(&bytes));
+    }
+
+    #[test]
+    fn a_csv_export_has_one_row_per_record_and_escapes_json() {
+        let root = tempfile::tempdir().unwrap();
+        let mut tricky = input("a", "allowed");
+        tricky.request = serde_json::json!({ "command": "echo \"a,b\"", "note": "line\nbreak" });
+        append(root.path(), tricky).unwrap();
+        let destination = root.path().join("export.csv");
+        let report = export(root.path(), ExportFormat::Csv, &destination).unwrap();
+        assert_eq!(report.records, 1);
+        let text = fs::read_to_string(&destination).unwrap();
+        let lines: Vec<&str> = text.lines().collect();
+        assert!(lines[0].starts_with("seq,approval_id,session_id"));
+        assert_eq!(lines.len(), 2);
+        assert!(text.contains("\"\"command\"\""), "{text}");
+        assert!(text.contains("a,b"), "{text}");
+    }
+
+    #[test]
+    fn export_refuses_a_broken_chain_and_existing_destination() {
+        let root = tempfile::tempdir().unwrap();
+        append(root.path(), input("a", "allowed")).unwrap();
+        let path = ledger_path(root.path());
+        let text = fs::read_to_string(&path).unwrap();
+        fs::write(&path, text.replace("allowed", "denied")).unwrap();
+        let destination = root.path().join("export.jsonl");
+        assert!(matches!(
+            export(root.path(), ExportFormat::Jsonl, &destination),
+            Err(ChainError::Broken { .. })
+        ));
+        assert!(!destination.exists());
+
+        let intact = tempfile::tempdir().unwrap();
+        append(intact.path(), input("a", "allowed")).unwrap();
+        let destination = intact.path().join("export.jsonl");
+        export(intact.path(), ExportFormat::Jsonl, &destination).unwrap();
+        assert!(matches!(
+            export(intact.path(), ExportFormat::Jsonl, &destination),
+            Err(ChainError::Exists(_))
+        ));
     }
 }

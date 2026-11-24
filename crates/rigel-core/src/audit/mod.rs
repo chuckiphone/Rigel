@@ -9,8 +9,8 @@ pub mod chain;
 pub mod provenance;
 
 pub use chain::{
-    ApprovalInput, ApprovalRecord, BrokenLink, ChainError, VerifyReport, append, ledger_path,
-    verify, verify_file,
+    ApprovalInput, ApprovalRecord, BrokenLink, ChainError, ExportFormat, ExportReport,
+    VerifyReport, append, export, ledger_path, verify, verify_file,
 };
 pub use provenance::{
     ApprovalLink, CommandProvenance, Link, ProvenanceError, ToolCallLink, command,

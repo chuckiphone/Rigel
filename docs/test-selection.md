@@ -21,8 +21,12 @@ reported, including documentation and generated files.
 
 ## What gets selected
 
-- A **Cargo package source** change selects `cargo test -p <package>`. This is package-level, not
-  symbol-level: the package's unit and integration tests are the smallest reliable unit.
+- A **Cargo package source** change selects `cargo test -p <package>` for the owning package and
+  for every package that reaches it through a Cargo path dependency. The graph comes from
+  `cargo metadata --no-deps --locked --offline`; a project without a lockfile falls back to a
+  manifest scan. This is package-level, not symbol-level: the package's unit and integration
+  tests are the smallest reliable unit. `rigel impact` prints the same graph with package roles,
+  declared integration tests and CODEOWNERS owners ([change impact](impact.md)).
 - A change to a **Cargo integration test** under `tests/` selects the exact target, for example
   `cargo test -p rigel-core --test snapshot`.
 - A **Cargo manifest** change selects the package's tests and requires the full suite.
@@ -45,6 +49,7 @@ The plan adds the full suite when any of these is true:
 - a manifest, lockfile, build script, migration, workflow or release script changed;
 - more than **6** source files changed;
 - more than **2** Cargo packages changed;
+- the dependency closure is larger than **8** packages;
 - a source file could not be mapped to a package;
 - source changed in a generated or vendored tree;
 - `--full` was passed.
@@ -94,9 +99,12 @@ The JSON form is designed for a turn or CI step:
 
 ## Limits
 
-- This is a map, not a compiler-backed dependency graph. Cargo packages and JavaScript package
-  scripts are coarse boundaries; a test inside another package that crosses the boundary is found
-  by the full-suite fallback, not by the selected run.
+- The Cargo side is a compiler-backed **package** graph, not a symbol or import graph. A change in
+  one module of a large package still selects that package's whole suite, and a registry
+  dependency is never treated as an internal edge.
+- JavaScript and TypeScript selection remains a package-script map; there is no workspace
+  dependency closure for those packages yet. A test inside another package that crosses the
+  boundary is found by the full-suite fallback, not by the selected run.
 - The selector does not infer test targets from coverage data or historical failures. A package
   whose test script is expensive is still run whole when one of its files changes.
 - Test commands come from the project's manifest, as in the existing Run tests action. Rigel does
@@ -106,9 +114,10 @@ The JSON form is designed for a turn or CI step:
 
 ## Tests
 
-`crates/rigel-core/src/testimpact.rs` covers Cargo source and integration-test selection, skipped
-documentation, manifest and unmapped-change fallbacks, broad/forced plans, Git changed-file
-discovery, and stopping before a full run after a selected failure.
+`crates/rigel-core/src/testimpact.rs` covers Cargo source and integration-test selection, the
+path-dependency closure in both directions, skipped documentation, manifest and unmapped-change
+fallbacks, broad/forced plans, CODEOWNERS matching, Git changed-file discovery, and stopping
+before a full run after a selected failure.
 `crates/rigel-cli/tests/testimpact.rs` drives the real binary against a temporary Git project with
 a `package.json` test script: plan output, manifest risk, explicit `--changed-file`, and an actual
-`rigel test run`.
+`rigel test run`. `crates/rigel-cli/tests/impact.rs` drives the Cargo graph and owners.

@@ -23,11 +23,13 @@ mod cloud;
 mod doctor;
 mod handoff;
 mod harness;
+mod impact;
 mod local;
 mod mail;
 mod network;
 mod phase3;
 mod plugins;
+mod proof;
 mod route;
 mod serve;
 mod testing;
@@ -129,6 +131,29 @@ enum Command {
     Test {
         #[command(subcommand)]
         command: testing::TestCommand,
+    },
+
+    /// Show the packages, tests and owners a change reaches, without running anything.
+    Impact {
+        #[arg(long, value_name = "PATH", default_value = ".")]
+        project: PathBuf,
+        /// The git revision to compare with. Defaults to HEAD.
+        #[arg(long, default_value = "HEAD", value_name = "REV")]
+        since: String,
+        /// Use this changed path instead of asking git; repeat for more than one.
+        #[arg(long, value_name = "PATH")]
+        changed_file: Vec<String>,
+        /// Ask for the full suite even when the change is small and mapped.
+        #[arg(long)]
+        full: bool,
+        #[arg(long)]
+        json: bool,
+    },
+
+    /// Record and verify proof-carrying evidence for the current change.
+    Proof {
+        #[command(subcommand)]
+        command: proof::ProofCommand,
     },
 
     /// Explain which provider and model a turn would use, and why.
@@ -621,6 +646,16 @@ async fn entry() -> ExitCode {
         Command::Backup { command } => backup::run(command, dir).await,
 
         Command::Test { command } => testing::run(command).await,
+
+        Command::Impact {
+            project,
+            since,
+            changed_file,
+            full,
+            json: as_json,
+        } => impact::run(project, since, changed_file, full, as_json),
+
+        Command::Proof { command } => proof::run(command).await,
 
         Command::Audit { command } => audit::run(command).await,
 

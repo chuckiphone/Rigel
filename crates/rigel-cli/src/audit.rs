@@ -6,9 +6,17 @@
 use std::path::PathBuf;
 use std::process::ExitCode;
 
-use clap::Subcommand;
-use rigel_core::audit::{self, Link};
+use clap::{Subcommand, ValueEnum};
+use rigel_core::audit::{self, ExportFormat, Link};
 use serde::Serialize;
+
+#[derive(Debug, Clone, Copy, ValueEnum)]
+pub enum ExportFormatArg {
+    /// The ledger itself, one JSON object per line; verifiable offline.
+    Jsonl,
+    /// A SIEM-friendly projection with a header row and escaped fields.
+    Csv,
+}
 
 #[derive(Subcommand)]
 pub enum AuditCommand {
@@ -16,6 +24,21 @@ pub enum AuditCommand {
     Verify {
         #[arg(long, value_name = "PATH", default_value = ".")]
         project: PathBuf,
+        /// Verify a copied ledger instead of the project's own.
+        #[arg(long, value_name = "FILE")]
+        file: Option<PathBuf>,
+        #[arg(long)]
+        json: bool,
+    },
+
+    /// Export an intact chain to JSONL or CSV; a broken chain is refused.
+    Export {
+        #[arg(long, value_name = "PATH", default_value = ".")]
+        project: PathBuf,
+        #[arg(long, value_enum, default_value_t = ExportFormatArg::Jsonl)]
+        format: ExportFormatArg,
+        #[arg(long, value_name = "FILE")]
+        out: PathBuf,
         #[arg(long)]
         json: bool,
     },
@@ -34,7 +57,14 @@ pub enum AuditCommand {
 
 pub async fn run(command: AuditCommand) -> ExitCode {
     match command {
-        AuditCommand::Verify { project, json } => match audit::verify(&project) {
+        AuditCommand::Verify {
+            project,
+            file,
+            json,
+        } => match file
+            .as_deref()
+            .map_or_else(|| audit::verify(&project), audit::verify_file)
+        {
             Ok(report) => {
                 if json {
                     println!(
@@ -62,6 +92,48 @@ pub async fn run(command: AuditCommand) -> ExitCode {
                 ExitCode::from(2)
             }
         },
+
+        AuditCommand::Export {
+            project,
+            format,
+            out,
+            json,
+        } => {
+            let format = match format {
+                ExportFormatArg::Jsonl => ExportFormat::Jsonl,
+                ExportFormatArg::Csv => ExportFormat::Csv,
+            };
+            match audit::export(&project, format, &out) {
+                Ok(report) => {
+                    if json {
+                        println!(
+                            "{}",
+                            serde_json::to_string_pretty(&report)
+                                .unwrap_or_else(|_| "{}".to_string())
+                        );
+                    } else {
+                        println!(
+                            "exported {} {} record(s) to {}",
+                            report.records,
+                            report.format,
+                            report.path.display()
+                        );
+                        println!("  sha256 {}  chain tip {}", report.sha256, report.chain_tip);
+                    }
+                    ExitCode::SUCCESS
+                }
+                Err(error) => {
+                    if json {
+                        println!(
+                            "{}",
+                            serde_json::json!({ "ok": false, "error": error.to_string() })
+                        );
+                    }
+                    eprintln!("rigel: could not export the audit chain: {error}");
+                    ExitCode::from(2)
+                }
+            }
+        }
 
         AuditCommand::Provenance {
             project,

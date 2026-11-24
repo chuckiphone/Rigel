@@ -31,6 +31,7 @@ pub mod pins;
 pub mod plan;
 pub mod plugin;
 pub mod process;
+pub mod proof;
 pub mod provenance;
 pub mod redaction;
 pub mod resume;
@@ -108,6 +109,9 @@ pub use plugin::{
     Broker, Capabilities, Catalog, CatalogEntry, CatalogKind, CatalogTier, InstallReport,
     InstalledPlugin, PluginError, PluginHost, PluginManifest, PluginReply, PluginRuntime,
     PluginStore, PluginTool,
+};
+pub use proof::{
+    Evidence as ProofEvidence, ProofBundle, ProofError, ProofFile, ProofSummary, ProofVerification,
 };
 pub use provenance::{Provenance, ProvenanceError};
 pub use resume::{ResumeError, ResumeOutcome};

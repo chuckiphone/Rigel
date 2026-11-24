@@ -24,6 +24,8 @@ use crate::tree;
 pub const MAX_CHANGED_FILES: usize = 6;
 /// Touching more Cargo packages than this is a broad change, not an impacted edit.
 pub const MAX_PACKAGES: usize = 2;
+/// A dependency closure larger than this is slower than the full suite it would replace.
+pub const MAX_AFFECTED_PACKAGES: usize = 8;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct ChangedFile {
@@ -69,6 +71,46 @@ pub struct SkippedChange {
     pub reason: String,
 }
 
+/// One package touched by the change, either directly or through a Cargo path dependency.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct ImpactedPackage {
+    pub name: String,
+    /// Project-relative package root; empty for a single-package repository.
+    pub root: String,
+    /// `changed` or `dependent`.
+    pub role: String,
+    /// Directly changed files in this package; empty for a dependent.
+    pub changed: Vec<String>,
+    /// Integration-test target names the package declares.
+    pub tests: Vec<String>,
+}
+
+/// The CODEOWNERS owners for one changed path.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct OwnerRow {
+    pub path: String,
+    pub owners: Vec<String>,
+}
+
+/// Which graph the selection used, so a receipt says whether it was compiler-backed.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct GraphSummary {
+    /// `cargo metadata` or `manifest scan`.
+    pub source: String,
+    pub packages: usize,
+    pub edges: usize,
+}
+
+impl Default for GraphSummary {
+    fn default() -> Self {
+        Self {
+            source: "none".into(),
+            packages: 0,
+            edges: 0,
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct ImpactPlan {
     pub changed: Vec<ChangedFile>,
@@ -78,6 +120,11 @@ pub struct ImpactPlan {
     pub skipped: Vec<SkippedChange>,
     /// Why the full suite is required; empty when selected targets are the whole run.
     pub risk: Vec<String>,
+    /// The packages the change reaches, directly and through the Cargo dependency graph.
+    pub packages: Vec<ImpactedPackage>,
+    /// CODEOWNERS owners for the changed paths that have a rule.
+    pub owners: Vec<OwnerRow>,
+    pub graph: GraphSummary,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -88,6 +135,9 @@ pub struct ImpactRun {
     pub ok: bool,
     /// A selected or full target failed, so nothing after it ran.
     pub stopped: bool,
+    /// Proof-carrying evidence, when `rigel test run --proof` wrote it.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub proof: Option<crate::proof::ProofBundle>,
 }
 
 #[derive(Debug, Error)]
@@ -125,7 +175,11 @@ pub fn changed_files(root: &Path, since: &str) -> Result<Vec<ChangedFile>, Impac
             status: "?".into(),
         });
     }
-    Ok(changes.into_values().collect())
+    // `.rigel/` is Rigel's own state (sessions, proofs, audit rows), never a project change.
+    Ok(changes
+        .into_values()
+        .filter(|change| change.path != ".rigel" && !change.path.starts_with(".rigel/"))
+        .collect())
 }
 
 fn git(root: &Path, args: &[&str]) -> Result<Vec<u8>, ImpactError> {
@@ -194,13 +248,17 @@ pub fn plan(
     force_full: bool,
 ) -> Result<ImpactPlan, ImpactError> {
     let files = tree::project_files(root).map_err(|error| ImpactError::Tree(error.to_string()))?;
-    let cargo = discover_cargo_packages(root, &files);
+    let (cargo, graph) = discover_cargo_packages(root, &files);
     let node = discover_node_packages(root, &files);
 
     let mut targets: BTreeMap<String, TestTarget> = BTreeMap::new();
     let mut skipped = Vec::new();
     let mut risk = BTreeSet::new();
     let mut packages: BTreeSet<String> = BTreeSet::new();
+    // A package whose whole suite must run. A changed integration test adds its exact target
+    // instead; a source change inside the same package still needs the package target.
+    let mut package_needed: BTreeSet<String> = BTreeSet::new();
+    let mut changed_by_package: BTreeMap<String, Vec<String>> = BTreeMap::new();
     let mut changed_sources = 0usize;
     let mut needs_full_root = false;
     let mut full: Vec<TestTarget> = Vec::new();
@@ -224,10 +282,11 @@ pub fn plan(
             needs_full_root = true;
             if let Some(package) = cargo_package_for(path, &cargo) {
                 packages.insert(package.name.clone());
-                add_target(
-                    &mut targets,
-                    package_target(package, "changed Cargo manifest", vec![path.to_string()]),
-                );
+                package_needed.insert(package.name.clone());
+                changed_by_package
+                    .entry(package.name.clone())
+                    .or_default()
+                    .push(path.to_string());
             }
             continue;
         }
@@ -267,6 +326,10 @@ pub fn plan(
             };
             changed_sources += 1;
             packages.insert(package.name.clone());
+            changed_by_package
+                .entry(package.name.clone())
+                .or_default()
+                .push(path.to_string());
             if let Some((test, relative)) = rust_test_target(path, package) {
                 let mut target = package_target(
                     package,
@@ -277,14 +340,7 @@ pub fn plan(
                 target.label = label(&target.program, &target.args);
                 add_target(&mut targets, target);
             } else {
-                add_target(
-                    &mut targets,
-                    package_target(
-                        package,
-                        &format!("source change in package {}", package.name),
-                        vec![path.to_string()],
-                    ),
-                );
+                package_needed.insert(package.name.clone());
             }
             continue;
         }
@@ -344,6 +400,50 @@ pub fn plan(
         needs_full_root = true;
     }
 
+    // The compiler-backed graph turns a changed package into the packages that depend on it.
+    // Those packages' tests exercise the changed code, so they are selected rather than left
+    // to the full-suite fallback.
+    let affected = affected_closure(&cargo, &packages);
+    if affected.len() > MAX_AFFECTED_PACKAGES {
+        risk.insert(format!(
+            "{} packages are in the dependency closure (limit {MAX_AFFECTED_PACKAGES})",
+            affected.len()
+        ));
+        needs_full_root = true;
+    }
+    for name in &affected {
+        let Some(package) = cargo.iter().find(|package| &package.name == name) else {
+            continue;
+        };
+        let direct = packages.contains(name);
+        if direct && !package_needed.contains(name) {
+            // A changed integration test already named the exact target.
+            continue;
+        }
+        let reason = if direct {
+            format!("changed package {name}")
+        } else {
+            let via: Vec<String> = packages
+                .iter()
+                .filter(|changed| depends_on(&cargo, name, changed))
+                .cloned()
+                .collect();
+            if via.is_empty() {
+                "depends on a changed package".to_string()
+            } else {
+                format!("depends on changed package {}", via.join(", "))
+            }
+        };
+        add_target(
+            &mut targets,
+            package_target(
+                package,
+                &reason,
+                changed_by_package.get(name).cloned().unwrap_or_default(),
+            ),
+        );
+    }
+
     if needs_full_root && let Some(target) = full_root_target(root) {
         full.push(target);
     }
@@ -355,12 +455,34 @@ pub fn plan(
     dedupe_targets(&mut full);
     full.retain(|target| !targets.keys().any(|label| label == &target.label));
 
+    let impacted: Vec<ImpactedPackage> = affected
+        .iter()
+        .filter_map(|name| {
+            let package = cargo.iter().find(|package| &package.name == name)?;
+            Some(ImpactedPackage {
+                name: package.name.clone(),
+                root: package.root.clone(),
+                role: if packages.contains(name) {
+                    "changed".into()
+                } else {
+                    "dependent".into()
+                },
+                changed: changed_by_package.get(name).cloned().unwrap_or_default(),
+                tests: package.tests.clone(),
+            })
+        })
+        .collect();
+    let owners = owner_rows(root, changed);
+
     Ok(ImpactPlan {
         changed: changed.to_vec(),
         targets: targets.into_values().collect(),
         full,
         skipped,
         risk: risk.into_iter().collect(),
+        packages: impacted,
+        owners,
+        graph,
     })
 }
 
@@ -458,22 +580,356 @@ struct CargoPackage {
     /// Project-relative package root, empty for a single-package repository.
     root: String,
     name: String,
+    /// Internal Cargo package names this package depends on.
+    dependencies: Vec<String>,
+    /// Integration-test target names declared by the package.
+    tests: Vec<String>,
 }
 
-fn discover_cargo_packages(root: &Path, files: &[String]) -> Vec<CargoPackage> {
-    let mut packages: Vec<CargoPackage> = files
+fn discover_cargo_packages(root: &Path, files: &[String]) -> (Vec<CargoPackage>, GraphSummary) {
+    if let Some(mut packages) = cargo_metadata_packages(root) {
+        let edges = packages
+            .iter()
+            .map(|package| package.dependencies.len())
+            .sum();
+        let count = packages.len();
+        packages.sort_by_key(|left| std::cmp::Reverse(left.root.len()));
+        return (
+            packages,
+            GraphSummary {
+                source: "cargo metadata".into(),
+                packages: count,
+                edges,
+            },
+        );
+    }
+    let mut packages = manifest_scan_packages(root, files);
+    let edges = packages
+        .iter()
+        .map(|package| package.dependencies.len())
+        .sum();
+    let count = packages.len();
+    packages.sort_by_key(|left| std::cmp::Reverse(left.root.len()));
+    (
+        packages,
+        GraphSummary {
+            source: "manifest scan".into(),
+            packages: count,
+            edges,
+        },
+    )
+}
+
+#[derive(serde::Deserialize)]
+struct CargoMetadata {
+    packages: Vec<MetadataPackage>,
+}
+
+#[derive(serde::Deserialize)]
+struct MetadataPackage {
+    name: String,
+    manifest_path: String,
+    #[serde(default)]
+    dependencies: Vec<MetadataDependency>,
+    #[serde(default)]
+    targets: Vec<MetadataTarget>,
+}
+
+#[derive(serde::Deserialize)]
+struct MetadataDependency {
+    name: String,
+    #[serde(default)]
+    path: Option<String>,
+    #[serde(default)]
+    source: Option<String>,
+}
+
+#[derive(serde::Deserialize)]
+struct MetadataTarget {
+    name: String,
+    #[serde(default)]
+    kind: Vec<String>,
+}
+
+/// Ask Cargo for the workspace graph without resolving or compiling anything. Metadata is the
+/// compiler-backed answer; the manifest scan below is the offline fallback when it cannot run.
+fn cargo_metadata_packages(root: &Path) -> Option<Vec<CargoPackage>> {
+    if !root.join("Cargo.toml").is_file() {
+        return None;
+    }
+    let mut command = Command::new("cargo");
+    command
+        .args([
+            "metadata",
+            "--no-deps",
+            "--format-version",
+            "1",
+            "--manifest-path",
+        ])
+        .arg(root.join("Cargo.toml"));
+    // A plan must never rewrite the project's lockfile or reach the network. `--locked` is
+    // accepted only when a lockfile exists; a fresh project falls back to the manifest scan.
+    if root.join("Cargo.lock").is_file() {
+        command.arg("--locked").arg("--offline");
+    } else {
+        return None;
+    }
+    process::hide(&mut command);
+    let output = command.output().ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let metadata: CargoMetadata = serde_json::from_slice(&output.stdout).ok()?;
+    if metadata.packages.is_empty() {
+        return None;
+    }
+    let root = root.canonicalize().ok()?;
+    let mut packages = Vec::new();
+    let mut by_dir: BTreeMap<String, String> = BTreeMap::new();
+    let mut by_name: BTreeMap<String, usize> = BTreeMap::new();
+    for package in &metadata.packages {
+        let Some(dir) = Path::new(&package.manifest_path).parent() else {
+            continue;
+        };
+        let Some(root_rel) = relative_dir(&root, dir) else {
+            continue;
+        };
+        let tests = package
+            .targets
+            .iter()
+            .filter(|target| target.kind.iter().any(|kind| kind == "test"))
+            .map(|target| target.name.clone())
+            .collect();
+        by_dir.insert(root_rel.clone(), package.name.clone());
+        by_name.insert(package.name.clone(), packages.len());
+        packages.push(CargoPackage {
+            root: root_rel,
+            name: package.name.clone(),
+            dependencies: Vec::new(),
+            tests,
+        });
+    }
+    for package in &metadata.packages {
+        let Some(&index) = by_name.get(&package.name) else {
+            continue;
+        };
+        let Some(dir) = Path::new(&package.manifest_path).parent() else {
+            continue;
+        };
+        let mut dependencies = Vec::new();
+        for dependency in &package.dependencies {
+            if dependency.source.is_some() {
+                continue;
+            }
+            let mut target = None;
+            if let Some(path) = &dependency.path {
+                let resolved = if Path::new(path).is_absolute() {
+                    Path::new(path).to_path_buf()
+                } else {
+                    dir.join(path)
+                };
+                target = relative_dir(&root, &resolved).and_then(|rel| by_dir.get(&rel).cloned());
+            }
+            if target.is_none() {
+                target = by_dir
+                    .values()
+                    .find(|name| **name == dependency.name)
+                    .cloned();
+            }
+            if let Some(name) = target
+                && name != package.name
+                && !dependencies.contains(&name)
+            {
+                dependencies.push(name);
+            }
+        }
+        packages[index].dependencies = dependencies;
+    }
+    Some(packages)
+}
+
+fn relative_dir(root: &Path, dir: &Path) -> Option<String> {
+    let dir = dir.canonicalize().ok()?;
+    let relative = dir.strip_prefix(root).ok()?;
+    Some(relative.to_string_lossy().replace('\\', "/"))
+}
+
+/// Fallback when `cargo metadata` is unavailable: read each manifest's package name, its path
+/// dependencies and its `tests/` targets. Registry dependencies are never treated as internal.
+fn manifest_scan_packages(root: &Path, files: &[String]) -> Vec<CargoPackage> {
+    let mut raw = Vec::new();
+    for path in files
         .iter()
         .filter(|path| path.ends_with("Cargo.toml") && !is_generated(path))
-        .filter_map(|path| {
-            let name = cargo_package_name(&root.join(path))?;
-            Some(CargoPackage {
-                root: path.strip_suffix("/Cargo.toml").unwrap_or("").to_string(),
-                name,
+    {
+        let Some(name) = cargo_package_name(&root.join(path)) else {
+            continue;
+        };
+        let dir = path.strip_suffix("/Cargo.toml").unwrap_or("").to_string();
+        let tests = files
+            .iter()
+            .filter_map(|file| {
+                let relative = relative_to(file, &dir);
+                let mut parts = relative.split('/');
+                if parts.next()? != "tests" {
+                    return None;
+                }
+                let file = parts.next()?;
+                if parts.next().is_some() {
+                    return None;
+                }
+                file.strip_suffix(".rs").map(str::to_string)
             })
-        })
+            .collect();
+        raw.push((dir, name, cargo_path_dependencies(&root.join(path)), tests));
+    }
+    let by_dir: BTreeMap<String, String> = raw
+        .iter()
+        .map(|(dir, name, _, _)| (dir.clone(), name.clone()))
         .collect();
-    packages.sort_by_key(|left| std::cmp::Reverse(left.root.len()));
-    packages
+    raw.into_iter()
+        .map(
+            |(root, name, path_deps, tests): (
+                String,
+                String,
+                Vec<(String, String)>,
+                Vec<String>,
+            )| {
+                let mut dependencies: Vec<String> = Vec::new();
+                for (_, target) in path_deps {
+                    let resolved = normalize_relative(&root, &target);
+                    if let Some(dependency) = by_dir.get(&resolved)
+                        && dependency != &name
+                        && !dependencies.contains(dependency)
+                    {
+                        dependencies.push(dependency.clone());
+                    }
+                }
+                CargoPackage {
+                    root,
+                    name,
+                    dependencies,
+                    tests,
+                }
+            },
+        )
+        .collect()
+}
+
+fn cargo_path_dependencies(manifest: &Path) -> Vec<(String, String)> {
+    let text = fs::read_to_string(manifest).unwrap_or_default();
+    let mut section = String::new();
+    let mut table_dependency: Option<String> = None;
+    let mut dependencies = Vec::new();
+    for line in text.lines() {
+        let line = line.split('#').next().unwrap_or("").trim();
+        if line.starts_with('[') && line.ends_with(']') {
+            section = line.trim_matches(['[', ']']).to_string();
+            table_dependency = ["dependencies.", "dev-dependencies.", "build-dependencies."]
+                .iter()
+                .find_map(|prefix| section.strip_prefix(prefix).map(str::to_string));
+            continue;
+        }
+        if let Some(name) = &table_dependency {
+            if let Some(path) = path_value(line) {
+                dependencies.push((name.clone(), path));
+            }
+            continue;
+        }
+        if !is_dependency_section(&section) {
+            continue;
+        }
+        let Some((key, value)) = line.split_once('=') else {
+            continue;
+        };
+        if let Some(path) = path_value(value) {
+            dependencies.push((
+                key.trim().trim_matches('"').trim_matches('\'').to_string(),
+                path,
+            ));
+        }
+    }
+    dependencies
+}
+
+fn is_dependency_section(section: &str) -> bool {
+    matches!(
+        section,
+        "dependencies" | "dev-dependencies" | "build-dependencies"
+    ) || section.ends_with(".dependencies")
+        || section.ends_with(".dev-dependencies")
+        || section.ends_with(".build-dependencies")
+}
+
+fn path_value(text: &str) -> Option<String> {
+    let at = text.find("path")?;
+    let rest = text[at + 4..].trim_start();
+    let rest = rest.strip_prefix('=')?.trim_start();
+    let quote = rest.chars().next()?;
+    if quote != '"' && quote != '\'' {
+        return None;
+    }
+    let end = rest[1..].find(quote)?;
+    Some(rest[1..1 + end].to_string())
+}
+
+fn normalize_relative(base: &str, path: &str) -> String {
+    let mut parts: Vec<&str> = base.split('/').filter(|part| !part.is_empty()).collect();
+    let path = path.replace('\\', "/");
+    for part in path.split('/') {
+        match part {
+            "" | "." => {}
+            ".." => {
+                parts.pop();
+            }
+            other => parts.push(other),
+        }
+    }
+    parts.join("/")
+}
+
+/// Every package that reaches one of the changed packages through path dependencies.
+fn affected_closure(packages: &[CargoPackage], changed: &BTreeSet<String>) -> BTreeSet<String> {
+    let mut affected = changed.clone();
+    loop {
+        let mut grew = false;
+        for package in packages {
+            if affected.contains(&package.name) {
+                continue;
+            }
+            if package
+                .dependencies
+                .iter()
+                .any(|dependency| affected.contains(dependency))
+            {
+                affected.insert(package.name.clone());
+                grew = true;
+            }
+        }
+        if !grew {
+            break;
+        }
+    }
+    affected
+}
+
+fn depends_on(packages: &[CargoPackage], from: &str, target: &str) -> bool {
+    let mut seen = BTreeSet::new();
+    let mut stack = vec![from.to_string()];
+    while let Some(name) = stack.pop() {
+        let Some(package) = packages.iter().find(|package| package.name == name) else {
+            continue;
+        };
+        for dependency in &package.dependencies {
+            if dependency == target {
+                return true;
+            }
+            if seen.insert(dependency.clone()) {
+                stack.push(dependency.clone());
+            }
+        }
+    }
+    false
 }
 
 fn cargo_package_name(manifest: &Path) -> Option<String> {
@@ -572,6 +1028,141 @@ fn within(path: &str, root: &str) -> bool {
     root.is_empty() || path == root || path.starts_with(&format!("{root}/"))
 }
 
+/* ------------------------------- owners --------------------------------- */
+
+struct CodeRule {
+    pattern: String,
+    owners: Vec<String>,
+    negated: bool,
+}
+
+struct CodeOwners {
+    rules: Vec<CodeRule>,
+}
+
+fn load_codeowners(root: &Path) -> CodeOwners {
+    let path = [".github/CODEOWNERS", "CODEOWNERS", "docs/CODEOWNERS"]
+        .iter()
+        .map(|relative| root.join(relative))
+        .find(|candidate| candidate.is_file());
+    let Some(path) = path else {
+        return CodeOwners { rules: Vec::new() };
+    };
+    let text = fs::read_to_string(path).unwrap_or_default();
+    let mut rules = Vec::new();
+    for line in text.lines() {
+        let line = line.split('#').next().unwrap_or("").trim();
+        if line.is_empty() {
+            continue;
+        }
+        let mut parts = line.split_whitespace();
+        let Some(pattern) = parts.next() else {
+            continue;
+        };
+        let negated = pattern.starts_with('!');
+        let pattern = pattern.trim_start_matches('!');
+        if pattern.is_empty() {
+            continue;
+        }
+        rules.push(CodeRule {
+            pattern: pattern.to_string(),
+            owners: parts.map(str::to_string).collect(),
+            negated,
+        });
+    }
+    CodeOwners { rules }
+}
+
+impl CodeOwners {
+    /// The last matching rule wins, as CODEOWNERS specifies; `!` clears the owners.
+    fn owners_for(&self, path: &str) -> Vec<String> {
+        let mut owners = Vec::new();
+        for rule in &self.rules {
+            if codeowners_match(&rule.pattern, path) {
+                if rule.negated {
+                    owners.clear();
+                } else {
+                    owners = rule.owners.clone();
+                }
+            }
+        }
+        owners
+    }
+}
+
+fn owner_rows(root: &Path, changed: &[ChangedFile]) -> Vec<OwnerRow> {
+    let rules = load_codeowners(root);
+    changed
+        .iter()
+        .filter_map(|file| {
+            let owners = rules.owners_for(&file.path);
+            (!owners.is_empty()).then(|| OwnerRow {
+                path: file.path.clone(),
+                owners,
+            })
+        })
+        .collect()
+}
+
+fn codeowners_match(pattern: &str, path: &str) -> bool {
+    let pattern = pattern.trim_start_matches('/');
+    if pattern.is_empty() {
+        return false;
+    }
+    let mut pattern = pattern.to_string();
+    if pattern.ends_with('/') {
+        pattern.push_str("**");
+    }
+    let pattern_parts: Vec<&str> = pattern.split('/').filter(|part| !part.is_empty()).collect();
+    let path_parts: Vec<&str> = path
+        .trim_start_matches('/')
+        .split('/')
+        .filter(|part| !part.is_empty())
+        .collect();
+    if pattern_parts.is_empty() {
+        return false;
+    }
+    if pattern_parts.len() == 1 && !pattern.contains('/') {
+        // A pattern without a slash matches a file or directory at any depth.
+        return path_parts
+            .iter()
+            .any(|part| glob_segment(pattern_parts[0], part));
+    }
+    glob_parts(&pattern_parts, &path_parts)
+}
+
+fn glob_parts(pattern: &[&str], path: &[&str]) -> bool {
+    if pattern.is_empty() {
+        return path.is_empty();
+    }
+    if pattern[0] == "**" {
+        if glob_parts(&pattern[1..], path) {
+            return true;
+        }
+        return !path.is_empty() && glob_parts(pattern, &path[1..]);
+    }
+    if path.is_empty() {
+        return false;
+    }
+    glob_segment(pattern[0], path[0]) && glob_parts(&pattern[1..], &path[1..])
+}
+
+fn glob_segment(pattern: &str, text: &str) -> bool {
+    let pattern: Vec<char> = pattern.chars().collect();
+    let text: Vec<char> = text.chars().collect();
+    fn walk(pattern: &[char], text: &[char]) -> bool {
+        match pattern.first() {
+            None => text.is_empty(),
+            Some('*') => {
+                walk(&pattern[1..], text) || (!text.is_empty() && walk(pattern, &text[1..]))
+            }
+            Some('?') => !text.is_empty() && walk(&pattern[1..], &text[1..]),
+            Some(character) => text.first() == Some(character) && walk(&pattern[1..], &text[1..]),
+        }
+    }
+    walk(&pattern, &text)
+}
+
 /* -------------------------------- paths --------------------------------- */
 
 fn is_generated(path: &str) -> bool {
@@ -668,6 +1259,12 @@ fn is_source(path: &str) -> bool {
     )
 }
 
+/// Proof bundles use the selector's exact source list so a docs-only change is treated the same
+/// way in both receipts.
+pub(crate) fn is_source_path(path: &str) -> bool {
+    is_source(path)
+}
+
 /* --------------------------------- run ---------------------------------- */
 
 /// Run selected targets in order, stopping at the first failure. The full suite runs only after
@@ -705,6 +1302,7 @@ pub async fn run(root: &Path, plan: ImpactPlan) -> Result<ImpactRun, ImpactError
         full_runs,
         ok,
         stopped,
+        proof: None,
     })
 }
 
@@ -763,6 +1361,133 @@ mod tests {
         let plan = plan(project.path(), &[change("crates/demo/tests/a.rs")], false).unwrap();
         assert_eq!(plan.targets[0].label, "cargo test -p demo --test a");
         assert!(plan.full.is_empty());
+    }
+
+    fn workspace() -> tempfile::TempDir {
+        let dir = tempfile::tempdir().unwrap();
+        fs::create_dir_all(dir.path().join("crates/core/src")).unwrap();
+        fs::create_dir_all(dir.path().join("crates/app/src")).unwrap();
+        fs::write(
+            dir.path().join("Cargo.toml"),
+            "[workspace]\nmembers = [\"crates/core\", \"crates/app\"]\nresolver = \"2\"\n",
+        )
+        .unwrap();
+        fs::write(
+            dir.path().join("crates/core/Cargo.toml"),
+            "[package]\nname = \"demo-core\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+        )
+        .unwrap();
+        fs::write(
+            dir.path().join("crates/core/src/lib.rs"),
+            "pub fn core() {}\n",
+        )
+        .unwrap();
+        fs::write(
+            dir.path().join("crates/app/Cargo.toml"),
+            "[package]\nname = \"demo-app\"\nversion = \"0.1.0\"\nedition = \"2021\"\n\n[dependencies]\ndemo-core = { path = \"../core\" }\n",
+        )
+        .unwrap();
+        fs::write(
+            dir.path().join("crates/app/src/lib.rs"),
+            "pub fn app() { demo_core::core(); }\n",
+        )
+        .unwrap();
+        let mut command = Command::new("cargo");
+        command
+            .arg("generate-lockfile")
+            .arg("--offline")
+            .arg("--manifest-path")
+            .arg(dir.path().join("Cargo.toml"));
+        process::hide(&mut command);
+        assert!(
+            command.status().unwrap().success(),
+            "the fixture lockfile is generated"
+        );
+        dir
+    }
+
+    #[test]
+    fn a_changed_package_selects_the_packages_that_depend_on_it() {
+        let project = workspace();
+        let plan = plan(project.path(), &[change("crates/core/src/lib.rs")], false).unwrap();
+        let labels: Vec<&str> = plan
+            .targets
+            .iter()
+            .map(|target| target.label.as_str())
+            .collect();
+        assert!(labels.contains(&"cargo test -p demo-core"), "{labels:?}");
+        assert!(labels.contains(&"cargo test -p demo-app"), "{labels:?}");
+        assert_eq!(plan.graph.source, "cargo metadata");
+        assert_eq!(plan.graph.packages, 2);
+        assert_eq!(plan.graph.edges, 1);
+        assert!(
+            plan.packages
+                .iter()
+                .any(|package| package.name == "demo-app" && package.role == "dependent")
+        );
+        assert!(
+            plan.targets
+                .iter()
+                .any(|target| target.label == "cargo test -p demo-app"
+                    && target.reason.contains("demo-core"))
+        );
+    }
+
+    #[test]
+    fn a_change_in_the_dependent_package_does_not_select_the_dependency() {
+        let project = workspace();
+        let plan = plan(project.path(), &[change("crates/app/src/lib.rs")], false).unwrap();
+        let labels: Vec<&str> = plan
+            .targets
+            .iter()
+            .map(|target| target.label.as_str())
+            .collect();
+        assert_eq!(labels, vec!["cargo test -p demo-app"]);
+        assert_eq!(plan.packages.len(), 1);
+    }
+
+    #[test]
+    fn codeowners_are_applied_last_match_first() {
+        let project = project();
+        fs::create_dir_all(project.path().join(".github")).unwrap();
+        fs::write(
+            project.path().join(".github/CODEOWNERS"),
+            "* @fallback\n/crates/demo/ @demo\ncrates/demo/src/*.rs @src\n",
+        )
+        .unwrap();
+        let plan = plan(
+            project.path(),
+            &[change("crates/demo/src/lib.rs"), change("README.md")],
+            false,
+        )
+        .unwrap();
+        let owners: BTreeMap<&str, &Vec<String>> = plan
+            .owners
+            .iter()
+            .map(|row| (row.path.as_str(), &row.owners))
+            .collect();
+        assert_eq!(owners["crates/demo/src/lib.rs"], &vec!["@src".to_string()]);
+        assert_eq!(owners["README.md"], &vec!["@fallback".to_string()]);
+    }
+
+    #[test]
+    fn a_negated_codeowners_rule_clears_the_owners() {
+        let project = project();
+        fs::write(
+            project.path().join("CODEOWNERS"),
+            "/crates/demo/ @demo\n!crates/demo/generated/\n",
+        )
+        .unwrap();
+        let rules = load_codeowners(project.path());
+        assert_eq!(rules.owners_for("crates/demo/src/lib.rs"), vec!["@demo"]);
+        assert!(rules.owners_for("crates/demo/generated/out.rs").is_empty());
+    }
+
+    #[test]
+    fn path_dependencies_are_read_without_metadata() {
+        let project = workspace();
+        let deps = cargo_path_dependencies(&project.path().join("crates/app/Cargo.toml"));
+        assert_eq!(deps, vec![("demo-core".to_string(), "../core".to_string())]);
     }
 
     #[test]
@@ -870,6 +1595,9 @@ mod tests {
                 full: vec![pass],
                 skipped: Vec::new(),
                 risk: vec!["fixture risk".into()],
+                packages: Vec::new(),
+                owners: Vec::new(),
+                graph: GraphSummary::default(),
             },
         )
         .await
@@ -907,6 +1635,9 @@ mod tests {
                 full: vec![target()],
                 skipped: Vec::new(),
                 risk: vec!["fixture risk".into()],
+                packages: Vec::new(),
+                owners: Vec::new(),
+                graph: GraphSummary::default(),
             },
         )
         .await

@@ -53,6 +53,8 @@ closes to the tray, so a running session is not interrupted by losing the window
 | **Subagents** | Four read-only children with a parent DAG; write mode gives a child a worktree, per-file claims and a reviewed merge. |
 | **Home** | The Rigel Paper: each local day set as a broadsheet from the session database, with a lead story, dispatches, a plate, the day's numbers and a rack of earlier days. |
 | **Code graph** | A read-only map of the project's files, top-level symbols, imports and references, with focus and depth. A background indexer keeps `.rigel/codegraph.json` current as files change, and at most every ten minutes a live free OpenRouter row adds architecture concepts that point at real files ([codegraph](docs/codegraph.md)). |
+| **Test impact and proof** | `rigel impact` shows the Cargo package dependency graph and CODEOWNERS owners behind a change; `rigel test plan\|run` selects impacted tests with a full-suite safety net; `rigel proof` records checkable evidence and marks it stale when the tree moves ([impact](docs/impact.md), [proof](docs/proof.md)). |
+| **Audit** | A hash-chained approval ledger with command provenance and offline-verifiable JSONL or CSV export ([audit](docs/audit.md)). |
 | **Headless API** | `rigel serve` exposes the same coordinator over loopback HTTP with bearer auth, an OpenAPI 3.1 spec and SSE; `rigel handoff` packages an unfinished session as a rules-preserving prompt. |
 | **Site and CMS** | A static site plus a Payload CMS; the VPS stack (Caddy, Fastify API, Postgres) is documented in [deploy/README.md](deploy/README.md). |
 
@@ -270,6 +272,9 @@ The gaps are part of the record:
 - [docs/updates.md](docs/updates.md): the signed launch check, the deferred self-replace, the switches and the exact log lines
 - [docs/backup.md](docs/backup.md): encrypted local backups, restore safety, key rotation and the scheduled restore drill
 - [docs/test-selection.md](docs/test-selection.md): impacted tests first, the full-suite safety net and the exact risk rules
+- [docs/impact.md](docs/impact.md): the Cargo dependency graph, package roles, CODEOWNERS owners and the selection cap
+- [docs/proof.md](docs/proof.md): proof-carrying test evidence, freshness, staleness and what verification does not prove
+- [docs/audit.md](docs/audit.md): the hash-chained approval ledger, command provenance and JSONL/CSV export
 - [docs/codegraph.md](docs/codegraph.md): the Graph surface, the background indexer, the free-agent concept pass, its bounds and what leaves the machine
 - [CONTRIBUTING.md](CONTRIBUTING.md): build, checks, layout and the rules for a schema change
 - [SECURITY.md](SECURITY.md): the threat model, every network call and what is not defended

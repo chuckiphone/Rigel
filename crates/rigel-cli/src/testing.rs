@@ -6,6 +6,7 @@ use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 use clap::Subcommand;
+use rigel_core::proof;
 use rigel_core::testimpact::{self, ChangedFile, ImpactPlan, ImpactRun};
 use rigel_core::testrun::TestRun;
 
@@ -38,6 +39,9 @@ pub enum TestCommand {
         changed_file: Vec<String>,
         #[arg(long)]
         full: bool,
+        /// Record proof-carrying evidence for the runs in `.rigel/proofs/`.
+        #[arg(long)]
+        proof: bool,
         #[arg(long)]
         json: bool,
     },
@@ -67,6 +71,7 @@ pub async fn run(command: TestCommand) -> ExitCode {
             since,
             changed_file,
             full,
+            proof,
             json,
         } => {
             let plan = match build_plan(&project, &since, &changed_file, full) {
@@ -78,17 +83,29 @@ pub async fn run(command: TestCommand) -> ExitCode {
             }
             if plan.targets.is_empty() && plan.full.is_empty() {
                 if plan.changed.is_empty() || plan.risk.is_empty() {
+                    let mut report = ImpactRun {
+                        plan,
+                        runs: Vec::new(),
+                        full_runs: Vec::new(),
+                        ok: true,
+                        stopped: false,
+                        proof: None,
+                    };
+                    if proof && let Err(error) = attach_proof(&project, &since, &mut report) {
+                        return fail(&error, json);
+                    }
                     if json {
-                        let report = ImpactRun {
-                            plan,
-                            runs: Vec::new(),
-                            full_runs: Vec::new(),
-                            ok: true,
-                            stopped: false,
-                        };
                         print_json(&report);
                     } else {
                         println!("no tests selected: nothing to run");
+                        if let Some(bundle) = &report.proof {
+                            println!(
+                                "proof    {} ({} evidence, {})",
+                                bundle.id,
+                                bundle.evidence.len(),
+                                if bundle.ok { "passed" } else { "failed" }
+                            );
+                        }
                     }
                     return ExitCode::SUCCESS;
                 }
@@ -98,7 +115,10 @@ pub async fn run(command: TestCommand) -> ExitCode {
                 );
             }
             match testimpact::run(&project, plan).await {
-                Ok(report) => {
+                Ok(mut report) => {
+                    if proof && let Err(error) = attach_proof(&project, &since, &mut report) {
+                        return fail(&error, json);
+                    }
                     if json {
                         print_json(&report);
                     } else {
@@ -116,7 +136,7 @@ pub async fn run(command: TestCommand) -> ExitCode {
     }
 }
 
-fn build_plan(
+pub(crate) fn build_plan(
     project: &Path,
     since: &str,
     explicit: &[String],
@@ -197,6 +217,32 @@ fn print_runs(report: &ImpactRun) {
     } else if report.ok {
         println!("tests    passed");
     }
+    if let Some(bundle) = &report.proof {
+        println!(
+            "proof    {} ({} evidence, {})",
+            bundle.id,
+            bundle.evidence.len(),
+            if bundle.ok { "passed" } else { "failed" }
+        );
+    }
+}
+
+fn attach_proof(project: &Path, since: &str, report: &mut ImpactRun) -> Result<(), String> {
+    let evidence: Vec<proof::Evidence> = report
+        .runs
+        .iter()
+        .chain(report.full_runs.iter())
+        .map(proof::evidence_from_run)
+        .collect();
+    let bundle = proof::record(
+        project,
+        since,
+        evidence,
+        vec!["recorded by rigel test run --proof".to_string()],
+    )
+    .map_err(|error| error.to_string())?;
+    report.proof = Some(bundle);
+    Ok(())
 }
 
 fn print_run(kind: &str, run: &TestRun) {

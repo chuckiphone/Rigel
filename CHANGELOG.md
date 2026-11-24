@@ -4,6 +4,14 @@ Every release, newest first. The heading is the version its `v*` tag publishes.
 
 ## 0.4.0-1 — 2026-11-24
 
+- feat(test): add `rigel impact` and a compiler-backed Cargo package graph, so a changed
+  package selects the packages that path-depend on it; report package roles, declared
+  integration tests and CODEOWNERS owners before a merge ([change impact](docs/impact.md))
+- feat(test): add `rigel proof record|list|show|verify` and `rigel test run --proof`, storing
+  base-commit, per-file hash and command evidence under `.rigel/proofs/`, with a freshness
+  check that names files changed after the run ([proof](docs/proof.md))
+- feat(audit): add `rigel audit export --format jsonl|csv` for intact approval chains, with
+  offline JSONL verification through `rigel audit verify --file` ([audit](docs/audit.md))
 - feat(test): add `rigel test plan|run` to select impacted Cargo and JavaScript/TypeScript
   targets from changed files, report skipped paths and risk reasons, and run the full suite
   after selected targets only when manifests, broad changes or an incomplete mapping require it
