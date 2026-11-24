@@ -7,7 +7,7 @@
 import { existsSync, readFileSync, readdirSync } from "node:fs";
 import path from "node:path";
 
-const SEMVER = /^\d+\.\d+\.\d+$/;
+const SEMVER = /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/;
 
 export class VersionError extends Error {}
 
@@ -35,7 +35,7 @@ export function readVersions(root) {
   const html = read("web/index.html");
   const site = html.match(/data-version="([^"]+)"/);
   if (!site) throw new VersionError("web/index.html has no data-version on the download button");
-  const label = html.match(/Get Rigel\s+(\d+\.\d+\.\d+)/);
+  const label = html.match(/Get Rigel\s+(\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?)/);
 
   return {
     build: [
@@ -58,9 +58,33 @@ export function published(root) {
 }
 
 function less(left, right) {
-  const [a, b, c] = left.split(".").map(Number);
-  const [x, y, z] = right.split(".").map(Number);
-  return a - x || b - y || c - z;
+  const [leftCore, leftPre] = left.split("-", 2);
+  const [rightCore, rightPre] = right.split("-", 2);
+  const [a, b, c] = leftCore.split(".").map(Number);
+  const [x, y, z] = rightCore.split(".").map(Number);
+  const core = a - x || b - y || c - z;
+  if (core !== 0) return core;
+  // A pre-release sorts before its release; otherwise compare the identifiers the way semver
+  // orders them (numeric identifiers numerically, text lexically).
+  if (!leftPre && !rightPre) return 0;
+  if (!leftPre) return 1;
+  if (!rightPre) return -1;
+  const leftParts = leftPre.split(".");
+  const rightParts = rightPre.split(".");
+  for (let index = 0; index < Math.max(leftParts.length, rightParts.length); index += 1) {
+    const one = leftParts[index];
+    const other = rightParts[index];
+    if (one === undefined) return -1;
+    if (other === undefined) return 1;
+    if (one === other) continue;
+    const oneNumber = /^\d+$/.test(one) ? Number(one) : null;
+    const otherNumber = /^\d+$/.test(other) ? Number(other) : null;
+    if (oneNumber !== null && otherNumber !== null) return oneNumber - otherNumber;
+    if (oneNumber !== null) return -1;
+    if (otherNumber !== null) return 1;
+    return one < other ? -1 : 1;
+  }
+  return 0;
 }
 
 /**
