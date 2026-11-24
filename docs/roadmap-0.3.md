@@ -12,9 +12,9 @@ directory. A current, offline, 404 or truncated feed stays silent; every failure
 `update.log` or `updates/apply.log`. `crates/rigel-core/tests/updater_apply_e2e.rs` proves both
 branches with a loopback feed and a real binary swap. See [updates.md](updates.md).
 
-**Tally (2026-11-24):** 93 Done · 7 Blocked · 100 Open. The 0.3.0 preview tree ships every Done
+**Tally (2026-11-24):** 95 Done · 6 Blocked · 99 Open. The 0.3.0 preview tree ships every Done
 item. The previous pass closed 53, 60, 64, 67, 69, 70, 75, 78, 80, 106, 107, 130, 140 and 182;
-this pass closed 43, 44, 45, 46, 47, 48, 49, 52, 55, 56, 57, 58, 61, 62, 63, 65, 66, 68, 74, 77 and 84. The
+this pass closed 43, 44, 45, 46, 47, 48, 49, 52, 55, 56, 57, 58, 61, 62, 63, 65, 66, 68, 74, 76, 77 and 84. The
 remaining open and blocked items below are unchanged by these passes.
 
 **Verified gate (2026-11-08).** `cargo fmt --all -- --check`, `cargo clippy --workspace
@@ -957,6 +957,24 @@ done signal, and the eight-state table is the evidence a review will use.
 76. **W3 · P2 · L · SQLCipher option.** `crates/rigel-core/src/store/cipher.rs` encrypts a project
     database with a key held in the keychain. — done when migration both ways is tested and the
     recovery limits are documented next to the setting.
+    **Done (2026-11-24):** `store/cipher.rs` adds SQLCipher 4 at-rest encryption for
+    `.rigel/rigel.db`. A 32-byte key is read from `RIGEL_DB_KEY` (64 hexadecimal characters) or
+    the OS keychain entry `rigel/db-key`; it is never logged, and `DbKey` has a redacted `Debug`.
+    `Store::open_project` classifies the file by its header, creates encrypted databases, migrates
+    plaintext files in place with `sqlcipher_export` plus an integrity check, and refuses to open
+    an encrypted file with no key. A wrong key maps to a distinct actionable error instead of a
+    plaintext fallback. A keyed daily backup uses `VACUUM INTO` on a keyed connection, so the
+    copy stays encrypted. `rigel db status|encrypt|decrypt|forget-key` exposes the setting. The workspace
+    vendors `libsqlite3-sys` with SQLCipher's libtomcrypt provider, removing the OpenSSL/Perl
+    build dependency on Windows. Tests: `cargo test -p rigel-core --test cipher` proves encrypted
+    creation, missing-key refusal, wrong-key refusal, correct-key reads, plaintext migration and
+    decryption, and an encrypted daily backup; three unit tests cover key parsing/redaction,
+    generation and header classification. Setup and recovery limits are in
+    [encryption](encryption.md).
+    **Known limitations:** the key is machine-wide, not per project; there is no key rotation
+    command; losing the key makes the database unrecoverable; an interrupted swap leaves a
+    `*.pre-encryption-<pid>` or `*.pre-decryption-<pid>` file beside the database. The index
+    database and exported diagnostics remain outside the encrypted boundary.
 
 77. **W3 · P1 · L · Skill signature at load.** `crates/rigel-core/src/skills/verify.rs` checks a
     skill's content hash and publisher signature before it loads. — done when a tampered body is

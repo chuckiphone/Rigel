@@ -7,8 +7,10 @@ is in [SECURITY.md](../SECURITY.md). A per-call receipt with purposes and retent
 ## What stays on this machine
 
 - `.rigel/rigel.db` holds prompts, turns, tool calls, command output, patches, spend records,
-  approvals and session metadata. It is ordinary SQLite, readable by your Windows account, and is
-  not encrypted at rest.
+  approvals and session metadata. It is ordinary SQLite by default, readable by your Windows
+  account. You can turn on SQLCipher encryption with `rigel db encrypt`; the key is held in the
+  OS keychain (or `RIGEL_DB_KEY`), and the database then fails closed without it. See
+  [encryption](encryption.md).
 - `settings.toml`, `cloud.json` and `agentmail.json` hold preferences and non-secret configuration.
 - Provider keys, the Firebase refresh token, the App Check client token and the AgentMail key live
   in the OS keychain.

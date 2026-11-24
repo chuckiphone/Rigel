@@ -31,8 +31,9 @@ Ed25519-signed and every artifact has a published SHA-256.
 
 ## Data and support
 
-The local database is not encrypted at rest. The privacy note in [privacy.md](privacy.md) explains
-what leaves the machine. Support is through GitHub Issues and Discussions, without a service-level
+The local database is plaintext by default and can be encrypted at rest with `rigel db encrypt`;
+[encryption.md](encryption.md) explains the key and recovery limits. The privacy note in
+[privacy.md](privacy.md) explains what leaves the machine. Support is through GitHub Issues and Discussions, without a service-level
 agreement. Security reports go through [SECURITY.md](../SECURITY.md).
 
 ## Changes

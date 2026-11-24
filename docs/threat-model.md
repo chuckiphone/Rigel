@@ -18,10 +18,14 @@ AgentMail key are stored in the OS keychain, not in `settings.toml` or `cloud.js
 database is readable only through the user's account. Signing out removes the local cloud
 credentials, and account deletion is a typed confirmation with an export offered first.
 
+**Mitigation (at rest).** The project database can be encrypted with SQLCipher; the key lives in
+the OS keychain or `RIGEL_DB_KEY`, and a missing or wrong key fails closed. See
+[encryption.md](encryption.md).
+
 **Non-goal: defending against an administrator or kernel-level attacker.** Rigel runs as an
 ordinary desktop process and cannot protect memory or the keychain from the account that owns
-them. The database is also not encrypted at rest; [privacy.md](privacy.md) says so plainly, and
-full-disk encryption remains the user's control.
+them. Encryption is opt-in and does not cover a plaintext project, the index database, crash
+dumps or files outside `.rigel/rigel.db`; full-disk encryption remains the user's control.
 
 ## 2. A malicious repository the user opens
 
@@ -100,7 +104,8 @@ silently discards a real registration. Password reset does not reveal account ex
 
 ## Residual risks
 
-- The database is not encrypted, and backups are the user's responsibility.
+- The database is plaintext unless the user enables SQLCipher, and backups are the user's
+  responsibility.
 - A user can approve a destructive command; approvals show exact text, cwd and timeout, but do
   not judge intent.
 - Third-party providers, Firebase, AgentMail and MCP servers apply their own retention and

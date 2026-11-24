@@ -18,6 +18,7 @@ mod audit;
 mod backup;
 mod claims;
 mod cloud;
+mod db;
 mod doctor;
 mod handoff;
 mod harness;
@@ -66,6 +67,12 @@ enum Command {
     Migrate {
         #[arg(long, value_name = "PATH", default_value = ".")]
         project: PathBuf,
+    },
+
+    /// Inspect or change at-rest encryption for a project database.
+    Db {
+        #[command(subcommand)]
+        command: db::DbCommand,
     },
 
     /// Session operations for one project.
@@ -584,6 +591,8 @@ async fn entry() -> ExitCode {
                 ExitCode::from(2)
             }
         },
+
+        Command::Db { command } => db::run(command).await,
 
         Command::Serve {
             project,

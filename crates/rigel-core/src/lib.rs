@@ -140,6 +140,7 @@ pub use snapshot::{
 };
 pub use snapshot::{GcPolicy, GcRemoved, GcReport};
 pub use storage::{StorageError, Store, default_index_dir};
+pub use store::cipher::{CipherError, DatabaseState, DbKey};
 pub use symbolimpact::{ChangedSymbol, PackageScope, SymbolImpact, SymbolReach, SymbolReference};
 pub use templates::{
     MAX_TEMPLATES, SessionTemplate, SessionTemplates, TemplateAgent, TemplateError, TemplateSkill,

@@ -4,6 +4,12 @@ Every release, newest first. The heading is the version its `v*` tag publishes.
 
 ## 0.4.0-1 — 2026-11-24
 
+- security(db): add opt-in SQLCipher 4 encryption for `.rigel/rigel.db`; the 32-byte key comes
+  from `RIGEL_DB_KEY` or the OS keychain, plaintext databases migrate in place with an integrity
+  check, keyed backups stay encrypted, and a missing or wrong key fails closed with an actionable
+  error. `rigel db status|encrypt|decrypt|forget-key` manages the setting; the vendored
+  `libsqlite3-sys` uses SQLCipher's libtomcrypt provider so Windows builds no longer need an
+  OpenSSL/Perl toolchain ([encryption](docs/encryption.md))
 - security(skills): verify an Ed25519 publisher signature and the SHA-256 of a skill's
   instructions before `skill_load` or the MCP `rigel_skill_load` returns a body; built-ins are
   trusted by origin, downloaded unsigned skills require `.rigel/skill-trust.json` with

@@ -76,6 +76,11 @@ vendor/rigel-b/build.log
 !vendor/sqlx-sqlite/**
 vendor/sqlx-sqlite/target/
 
+# SQLCipher's vendored libsqlite3-sys build (roadmap 76).
+!vendor/libsqlite3-sys/
+!vendor/libsqlite3-sys/**
+vendor/libsqlite3-sys/target/
+
 # Local room data and one-off captures stay machine-local. The built sidecar in
 # crates/rigel-app/binaries is tracked so a clean checkout can bundle the app.
 .concord/

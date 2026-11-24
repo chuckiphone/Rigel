@@ -26,7 +26,8 @@ SQLite's FTS5 tables, and a migration rehearsal upgrades every prefix to the cur
 
 There is one writer per process and no multi-writer server. Upgrades are tested by replaying
 prefixes, and a failed migration must be fixed at the source rather than skipped. Backups remain
-the user's responsibility, and the database is not encrypted at rest.
+the user's responsibility. The database is plaintext by default and can be encrypted at rest
+with SQLCipher, keyed from the OS keychain or `RIGEL_DB_KEY`; see [encryption](../encryption.md).
 
 ## Reopen if
 

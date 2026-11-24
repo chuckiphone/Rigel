@@ -814,6 +814,18 @@ decompressed bytes. The scan found no live credential. Raw matches are fixtures,
 URLs, hashes, public web keys and one expired GitHub release-asset JWT in a removed imported
 conversation attachment; the disposition is recorded in [security-audit.md](security-audit.md).
 
+**SQLCipher at rest (24 Nov 2026):** roadmap-0.3 item 76 is closed. `store/cipher.rs` reads a
+32-byte key from `RIGEL_DB_KEY` (64 hex characters) or the OS keychain entry `rigel/db-key`, never
+logs it, and classifies the database by header before opening. `Store::open_project` creates an
+encrypted database when a key is configured, migrates an existing plaintext file with
+`sqlcipher_export` and an integrity check, and refuses an encrypted file when the key is missing
+or wrong. Keyed daily backups use `VACUUM INTO` on a keyed connection, so the copy stays encrypted.
+`rigel db status|encrypt|decrypt|forget-key`
+exposes the setting, and [encryption.md](encryption.md) documents the key, in-place swap and
+recovery limits. The workspace vendors `libsqlite3-sys` with SQLCipher's libtomcrypt provider so a
+Windows build no longer needs OpenSSL's Perl toolchain. Tests: `cargo test -p rigel-core --test
+cipher` (3 passed) and `cargo test -p rigel-core --lib store::cipher` (3 passed).
+
 ---
 
 ## 3. Decisions of record

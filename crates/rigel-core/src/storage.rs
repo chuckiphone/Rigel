@@ -12,11 +12,12 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use sqlx::SqlitePool;
-use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions, SqliteSynchronous};
+use sqlx::sqlite::SqlitePoolOptions;
 
 use crate::migrate::{
     INDEX_MIGRATIONS, MigrateError, Migration, PROJECT_MIGRATIONS, apply, now_ms,
 };
+use crate::store::cipher::{self, CipherError, DatabaseState, DbKey};
 
 #[derive(Debug, thiserror::Error)]
 pub enum StorageError {
@@ -35,6 +36,9 @@ pub enum StorageError {
 
     #[error("could not put the database in WAL mode: {0}")]
     Wal(String),
+
+    #[error(transparent)]
+    Cipher(#[from] CipherError),
 }
 
 /// An open, migrated database. Cloning shares the pool.
@@ -50,10 +54,35 @@ impl Store {
     /// Also writes `.rigel/.gitignore` on first use so a session log can never be
     /// committed by accident (handoff §6.1).
     pub async fn open_project(root: &Path) -> Result<Self, StorageError> {
+        let key = cipher::resolve_key()?;
+        Self::open_project_with_key(root, key.as_ref()).await
+    }
+
+    /// Open a project with an explicit key decision. `Some(key)` encrypts a new database and
+    /// migrates an existing plaintext one before opening it; `None` refuses an encrypted file.
+    /// Tests use this to avoid depending on the machine's keychain.
+    pub async fn open_project_with_key(
+        root: &Path,
+        key: Option<&DbKey>,
+    ) -> Result<Self, StorageError> {
         let dir = root.join(".rigel");
         create_dir(&dir)?;
         write_gitignore(&dir)?;
-        let store = Self::open(dir.join("rigel.db"), PROJECT_MIGRATIONS).await?;
+        let path = dir.join("rigel.db");
+        let state = cipher::database_state(&path)?;
+        match (key, state) {
+            (Some(key), DatabaseState::Plaintext) => {
+                cipher::encrypt_database(&path, key).await?;
+            }
+            (None, DatabaseState::Encrypted) => {
+                return Err(CipherError::MissingKey { path }.into());
+            }
+            _ => {}
+        }
+        let store = match key {
+            Some(key) => Self::open_keyed(path, PROJECT_MIGRATIONS, key).await?,
+            None => Self::open(path, PROJECT_MIGRATIONS).await?,
+        };
         // Q273: one copy a day, three kept. A backup that cannot be written must not stop the
         // project from opening; the next launch tries again, and diagnostics still reports the
         // database's own health.
@@ -73,20 +102,44 @@ impl Store {
         path: impl AsRef<Path>,
         migrations: &[Migration],
     ) -> Result<Self, StorageError> {
-        let path = path.as_ref().to_path_buf();
+        Self::connect(path.as_ref().to_path_buf(), migrations, None).await
+    }
 
+    async fn open_keyed(
+        path: PathBuf,
+        migrations: &[Migration],
+        key: &DbKey,
+    ) -> Result<Self, StorageError> {
+        let encrypted = cipher::database_state(&path)? == DatabaseState::Encrypted;
+        match Self::connect(path.clone(), migrations, Some(key)).await {
+            Ok(store) => Ok(store),
+            Err(error) if encrypted => {
+                if is_database_error(&error) {
+                    Err(CipherError::WrongKey {
+                        path,
+                        detail: error.to_string(),
+                    }
+                    .into())
+                } else {
+                    Err(error)
+                }
+            }
+            Err(error) => Err(error),
+        }
+    }
+
+    async fn connect(
+        path: PathBuf,
+        migrations: &[Migration],
+        key: Option<&DbKey>,
+    ) -> Result<Self, StorageError> {
         // `journal_mode` is deliberately not an option here. sqlx applies requested pragmas
         // on every connection it opens, and switching journal mode takes an exclusive lock
         // that `busy_timeout` cannot wait for: a connection opened while another write is in
         // flight fails immediately with "database is locked", and the attempt can also
         // invalidate a read snapshot underneath a deferred transaction. WAL belongs to the
         // file, so it is set once, below.
-        let options = SqliteConnectOptions::new()
-            .filename(&path)
-            .create_if_missing(true)
-            .synchronous(SqliteSynchronous::Normal)
-            .foreign_keys(true)
-            .busy_timeout(Duration::from_secs(5));
+        let options = cipher::options(&path, key);
 
         let pool = SqlitePoolOptions::new()
             .max_connections(5)
@@ -130,7 +183,18 @@ impl Store {
         create_dir(&backups)?;
         let day = now.div_euclid(24 * 60 * 60 * 1000);
         let target = backups.join(format!("rigel-{day}.db"));
-        if !target.exists() {
+        let ready = fs::metadata(&target)
+            .map(|meta| meta.len() > 0)
+            .unwrap_or(false);
+        if !ready {
+            // A crashed earlier attempt can leave an empty file; VACUUM INTO refuses to
+            // overwrite an existing path, so clear it first.
+            if target.exists() {
+                fs::remove_file(&target).map_err(|source| StorageError::Io {
+                    path: target.clone(),
+                    source,
+                })?;
+            }
             let escaped = target.to_string_lossy().replace('\'', "''");
             sqlx::query(&format!("VACUUM INTO '{escaped}'"))
                 .execute(&self.pool)
@@ -139,6 +203,13 @@ impl Store {
         prune_backups(&backups, 3)?;
         Ok(Some(target))
     }
+}
+
+fn is_database_error(error: &StorageError) -> bool {
+    matches!(
+        error,
+        StorageError::Database(_) | StorageError::Migrate(MigrateError::Database(_))
+    )
 }
 
 /// Keep the newest `keep` daily copies, identified by the day encoded in the file name.

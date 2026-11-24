@@ -10,7 +10,9 @@ age = { workspace = true }
 async-trait = { workspace = true }
 ed25519-dalek = { workspace = true }
 futures = { workspace = true }
+getrandom = { workspace = true }
 keyring = { workspace = true }
+libsqlite3-sys = { workspace = true }
 regex = { workspace = true }
 reqwest = { workspace = true }
 serde = { workspace = true }

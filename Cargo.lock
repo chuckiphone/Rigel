@@ -2481,11 +2481,10 @@ dependencies = [
 [[package]]
 name = "libsqlite3-sys"
 version = "0.39.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "14a5f01b87b92705d07b433c06f96cbc764637d81a0bffb5734ce17cf0f9a2b3"
 dependencies = [
  "cc",
  "pkg-config",
+ "sqlcipher-src",
  "vcpkg",
 ]
 
@@ -3692,7 +3691,9 @@ dependencies = [
  "async-trait",
  "ed25519-dalek",
  "futures",
+ "getrandom 0.3.4",
  "keyring",
+ "libsqlite3-sys",
  "regex",
  "reqwest 0.12.28",
  "serde",
@@ -4382,6 +4383,12 @@ dependencies = [
  "base64ct",
  "der",
 ]
+
+[[package]]
+name = "sqlcipher-src"
+version = "419.0.6+sqlcipher-4.19.0-sqlite-3.53.4-libtomcrypt-1.18.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ab732d48ebf2a1449e94d071b26544f99845834c75c3c210e927ace097b49aa4"
 
 [[package]]
 name = "sqlx"
