@@ -13,7 +13,7 @@ use std::io::Write;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr, TcpStream};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 const HOST: &str = "127.0.0.1";
 const PORT: u16 = 20140;
@@ -104,7 +104,7 @@ fn stamp() -> u64 {
 
 /// The window has no console in a release build, so a supervisor failure must leave evidence in
 /// the app data directory instead of disappearing through a detached `eprintln`.
-fn log(data_dir: &Path, message: &str) {
+pub(crate) fn log(data_dir: &Path, message: &str) {
     let path = data_dir.join("control-api.log");
     let Ok(mut file) = std::fs::OpenOptions::new()
         .create(true)
@@ -170,6 +170,43 @@ fn spawn_api(root: &Path) -> Result<u32, String> {
         .map_err(|error| format!("could not start rigel serve: {error}"))
 }
 
+/// Start the API when it is not already answering, and wait until it does. The window calls
+/// this before it becomes visible, so the first localhost request cannot race the bind. A first
+/// launch has no project yet, and `Ok(false)` lets the window open immediately in that case.
+pub fn ensure(
+    data_dir: &Path,
+    project: fn() -> Option<PathBuf>,
+    timeout: Duration,
+) -> Result<bool, String> {
+    if serving() {
+        return Ok(true);
+    }
+    let Some(root) = project().or_else(|| remembered_project(data_dir)) else {
+        return Ok(false);
+    };
+    ensure_project(&normalize_project_path(&root), timeout)?;
+    Ok(true)
+}
+
+/// Spawn one server and poll until the port answers. The probe is deliberately the same
+/// token-less `/v1/health` request the supervisor uses; a 401 still proves the API is listening.
+fn ensure_project(root: &Path, timeout: Duration) -> Result<u32, String> {
+    let pid = spawn_api(root)?;
+    let deadline = Instant::now() + timeout;
+    loop {
+        if serving() {
+            return Ok(pid);
+        }
+        if Instant::now() >= deadline {
+            return Err(format!(
+                "started rigel serve pid {pid}, but {HOST}:{PORT} did not answer within {}s",
+                timeout.as_secs()
+            ));
+        }
+        std::thread::sleep(Duration::from_millis(150));
+    }
+}
+
 /// Supervise the API for the life of the window. The open project wins; a window with nothing
 /// open falls back to the project the previous server used.
 pub fn start(data_dir: PathBuf, project: fn() -> Option<PathBuf>) {
@@ -188,20 +225,11 @@ pub fn start(data_dir: PathBuf, project: fn() -> Option<PathBuf>) {
                     None => "no project available to start the control API".to_string(),
                     Some(root) => {
                         let root = normalize_project_path(&root);
-                        match spawn_api(&root) {
-                            Ok(pid) => {
-                                std::thread::sleep(BOOT_GRACE);
-                                if serving() {
-                                    format!(
-                                        "control API listening on {HOST}:{PORT} (pid {pid}, project {})",
-                                        root.display()
-                                    )
-                                } else {
-                                    format!(
-                                        "started rigel serve pid {pid}, but {HOST}:{PORT} did not answer",
-                                    )
-                                }
-                            }
+                        match ensure_project(&root, BOOT_GRACE) {
+                            Ok(pid) => format!(
+                                "control API listening on {HOST}:{PORT} (pid {pid}, project {})",
+                                root.display()
+                            ),
                             Err(problem) => problem,
                         }
                     }

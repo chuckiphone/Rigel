@@ -5,9 +5,15 @@
   "identifier": "dev.rigel.desktop",
   "build": {
     "frontendDist": "../../ui/dist",
-    "devUrl": "http://localhost:5173",
-    "beforeDevCommand": "npm --prefix ../ui run dev",
-    "beforeBuildCommand": "npm --prefix ../ui run build"
+    "devUrl": "http://127.0.0.1:5173",
+    "beforeDevCommand": {
+      "script": "node scripts/ui-task.mjs dev",
+      "cwd": "../.."
+    },
+    "beforeBuildCommand": {
+      "script": "node scripts/ui-task.mjs build",
+      "cwd": "../.."
+    }
   },
   "app": {
     "windows": [
@@ -19,7 +25,8 @@
         "minHeight": 600,
         "resizable": true,
         "decorations": false,
-        "center": true
+        "center": true,
+        "visible": false
       },
       {
         "label": "tray",

@@ -5090,6 +5090,14 @@ pub fn run() {
             relay::start(index_dir(), current_project_root);
             // The window is the supervisor the user actually keeps running: it starts the API on
             // launch and again after a crash, so a reboot no longer leaves Muse with a refusal.
+            // Wait for the API before the first paint: a fresh logon otherwise opened the window
+            // while the server was still binding, and a localhost request looked like a dead app.
+            if let Err(problem) =
+                control::ensure(&index_dir(), current_project_root, Duration::from_secs(12))
+            {
+                eprintln!("rigel: {problem}");
+                control::log(&index_dir(), &problem);
+            }
             control::start(index_dir(), current_project_root);
             watch_room_agents();
             spawn_code_graph_watch();
@@ -5104,6 +5112,12 @@ pub fn run() {
             });
             spawn_approval_watcher(app.handle().clone());
             spawn_conflict_watcher(app.handle().clone());
+            // The main window is created hidden so the API wait is the first thing the user
+            // sees, or rather does not see. Show it once setup has reached this point even when
+            // there was no project or the API failed, so the app is never a hidden process.
+            if let Some(window) = app.get_webview_window("main") {
+                let _ = window.show();
+            }
             Ok(())
         })
         .manage(AppRuntime {

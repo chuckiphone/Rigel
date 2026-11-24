@@ -100,9 +100,12 @@ check(
   windows.webviewInstallMode?.type === "downloadBootstrapper",
   "the WebView2 bootstrapper is configured",
 );
+const beforeBuild = config.build?.beforeBuildCommand;
+const buildScript =
+  typeof beforeBuild === "string" ? beforeBuild : beforeBuild?.script;
 check(
-  typeof config.build?.beforeBuildCommand === "string" &&
-    config.build.beforeBuildCommand.includes("ui run build"),
+  typeof buildScript === "string" &&
+    (buildScript.includes("ui run build") || buildScript.includes("ui-task.mjs build")),
   "the UI is rebuilt before bundling",
 );
 

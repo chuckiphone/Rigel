@@ -57,10 +57,10 @@ cd crates/rigel-app
 cargo tauri build
 ```
 
-Run it from `crates/rigel-app`: Tauri executes `beforeBuildCommand` one level above the app
-directory (`crates/`), which is why the committed hook says `npm --prefix ../ui run build`. From
-the repository root the hook resolves the wrong directory and the build fails loudly rather than
-shipping a stale `ui/dist`.
+The committed hook sets `cwd` to the repository root and runs `scripts/ui-task.mjs build`, which
+resolves `ui/` from its own path. Building from the repository root or from `crates/rigel-app`
+therefore both rebuild the UI instead of shipping a stale `ui/dist`; the hook fails loudly if the
+UI build fails.
 
 The output lands in `target/release/bundle/msi` and `target/release/bundle/nsis`. The base bundle
 config lives in [crates/rigel-app/tauri.conf.json](../crates/rigel-app/tauri.conf.json): `msi` and

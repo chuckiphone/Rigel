@@ -92,10 +92,35 @@ pub struct ServeOptions {
     pub as_json: bool,
 }
 
-/// Hide this process's console window. Started from a `Run` entry there is a console to hide;
-/// started from a terminal there is one the operator is using, so the caller decides.
+/// Start a console-free copy of this command. A `Run` entry otherwise opens a console tab that
+/// Windows Terminal keeps visible even after `ShowWindow`; the copy has no console to show.
 #[cfg(windows)]
 fn hide_console_window() {
+    // A logon entry starts this console binary directly, and Windows Terminal (the default
+    // console host on Windows 11) gives it a visible tab that `GetConsoleProcessList` reports as
+    // shared. Rather than guess whether the console is ours, relaunch once through the same
+    // arguments with CREATE_NO_WINDOW: the child has no console at all, and this parent exits so
+    // the logon shell is free. The marker stops the child from relaunching forever. Inherited
+    // stdio keeps a caller's `>> api.log` redirection working.
+    if std::env::var_os("RIGEL_CONSOLE_HIDDEN").is_none()
+        && let Ok(executable) = std::env::current_exe()
+    {
+        use std::os::windows::process::CommandExt;
+        let mut command = std::process::Command::new(executable);
+        command
+            .args(std::env::args_os().skip(1))
+            .env("RIGEL_CONSOLE_HIDDEN", "1")
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::inherit())
+            .stderr(std::process::Stdio::inherit())
+            .creation_flags(0x0800_0000); // CREATE_NO_WINDOW
+        if command.spawn().is_ok() {
+            std::process::exit(0);
+        }
+    }
+
+    // The relaunch normally handles this. If it could not start, fall back to hiding only a
+    // console Windows created for this process; a shared one belongs to the operator's terminal.
     use core::ffi::c_void;
     unsafe extern "system" {
         fn GetConsoleWindow() -> *mut c_void;
@@ -106,8 +131,6 @@ fn hide_console_window() {
     // belongs to this process alone. A null handle is the documented "no console" answer.
     unsafe {
         let mut holders = [0u32; 2];
-        // One holder means Windows made this console for this process, which is the logon case.
-        // More means an operator's shell is attached, and hiding it would hide their terminal.
         if GetConsoleProcessList(holders.as_mut_ptr(), 2) > 1 {
             return;
         }

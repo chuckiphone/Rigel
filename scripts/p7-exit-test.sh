@@ -52,7 +52,7 @@ check "no failures on a fresh data directory" "$fails" "0"
 check "the reported exit code is the failure state" "$code" "$([ "$fails" = "0" ] && echo 1 || echo 2)"
 check "there are checks, not an empty list" "$([ "$rows" -ge 10 ] && echo yes || echo no)" "yes"
 check "every harness has a row" \
-  "$(printf '%s' "$doc" | python -c 'import sys,json; print(sum(1 for c in json.load(sys.stdin)["checks"] if c["id"].startswith("harness:")))')" "5"
+  "$(printf '%s' "$doc" | python -c 'import sys,json; print(sum(1 for c in json.load(sys.stdin)["checks"] if c["id"].startswith("harness:")))')" "6"
 "$exe" doctor --project "$tmp/project" --json >/dev/null 2>&1 || true
 set +e
 "$exe" doctor --project "$tmp/project" >/dev/null 2>&1
@@ -97,9 +97,11 @@ assert bundle["windows"]["webviewInstallMode"]["type"] == "downloadBootstrapper"
 assert bundle["windows"]["webviewInstallMode"]["silent"] is True
 assert bundle["windows"]["allowDowngrades"] is False
 assert bundle["publisher"]
-# The hook runs in `crates/`, so the UI is `../ui` from there; without it the build ships a stale
+# The hook must rebuild the UI wherever Tauri runs it; without it the build ships a stale
 # ui/dist or fails (both seen during P7.5).
-assert config["build"]["beforeBuildCommand"] == "npm --prefix ../ui run build"
+hook = config["build"]["beforeBuildCommand"]
+script = hook if isinstance(hook, str) else hook["script"]
+assert "ui-task.mjs build" in script or script == "npm --prefix ../ui run build"
 print("configured")
 PY
 check "msi + nsis, silent WebView2 bootstrapper, no downgrades" "$?" "0"
@@ -152,10 +154,10 @@ echo "p7: a signed update manifest"
 if command -v openssl >/dev/null 2>&1 && command -v xxd >/dev/null 2>&1; then
   work="$tmp/update"
   mkdir -p "$work"
-  printf 'installer bytes for the test\n' > "$work/rigel-0.2.0.msi"
-  sha="$(sha256sum "$work/rigel-0.2.0.msi" | cut -d' ' -f1)"
-  version="0.2.0"
-  url="https://example.test/rigel-0.2.0.msi"
+  printf 'installer bytes for the test\n' > "$work/rigel-9.0.0.msi"
+  sha="$(sha256sum "$work/rigel-9.0.0.msi" | cut -d' ' -f1)"
+  version="9.0.0"
+  url="https://example.test/rigel-9.0.0.msi"
   printf '%s\n%s\n%s' "$version" "$url" "$sha" > "$work/message"
   openssl genpkey -algorithm ed25519 -out "$work/key.pem" 2>/dev/null
   openssl pkeyutl -sign -inkey "$work/key.pem" -rawin -in "$work/message" -out "$work/sig.bin"
@@ -175,13 +177,13 @@ PY
   check "the signature verifies" "$(printf '%s' "$checked" | grep -c '"verified":true' || true)" "1"
   check "the version is newer than this build" "$(printf '%s' "$checked" | grep -c '"available":true' || true)" "1"
   check "the artifact matches the signed hash" \
-    "$("$exe" --data-dir "$tmp/data" update verify "$work/rigel-0.2.0.msi" --manifest "$work/manifest.json" --json 2>/dev/null | grep -c '"ok":true' || true)" "1"
+    "$("$exe" --data-dir "$tmp/data" update verify "$work/rigel-9.0.0.msi" --manifest "$work/manifest.json" --json 2>/dev/null | grep -c '"ok":true' || true)" "1"
 
   python - "$work" <<'PY'
 import json, sys
 work = sys.argv[1]
 manifest = json.load(open(work + "/manifest.json"))
-manifest["url"] = "https://evil.test/rigel-0.2.0.msi"
+manifest["url"] = "https://evil.test/rigel-9.0.0.msi"
 json.dump(manifest, open(work + "/tampered.json", "w"), indent=2)
 PY
   set +e
@@ -190,9 +192,9 @@ PY
   set -e
   check "a changed URL is refused" "$tampered" "1"
 
-  printf 'tampered bytes\n' > "$work/rigel-0.2.0.msi"
+  printf 'tampered bytes\n' > "$work/rigel-9.0.0.msi"
   set +e
-  "$exe" --data-dir "$tmp/data" update verify "$work/rigel-0.2.0.msi" --manifest "$work/manifest.json" --json >/dev/null 2>&1
+  "$exe" --data-dir "$tmp/data" update verify "$work/rigel-9.0.0.msi" --manifest "$work/manifest.json" --json >/dev/null 2>&1
   rehashed=$?
   set -e
   check "changed artifact bytes are refused" "$rehashed" "1"
