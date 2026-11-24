@@ -46,7 +46,9 @@ every top-level symbol in the file is scanned and the receipt says `file scan`. 
 and the package answer stands.
 
 The symbol reader is the one already used by the code graph: shallow top-level declarations and
-imports, not a compiler. Reference matching is deliberately conservative:
+imports, not a compiler. Reference matching is deliberately conservative, and then a bounded
+reverse-use walk follows a declaration to the declarations that use it. A test can therefore be
+selected through a wrapper even when the test never names the changed item itself:
 
 - **Rust**: a use is accepted when the file imports the item through its module path or writes a
   qualified path such as `testimpact::changed_files`. A bare `plan()` in another module is not a
@@ -67,10 +69,21 @@ not scanned for references, because a bare common word is not evidence. Their pa
 come from the package graph. A changed symbol with no scanned reference is listed in a note;
 this means "no reference found by this shallow scan", not "nothing calls it".
 
+The walk starts at each changed declaration and moves backward through use sites. A use inside
+another declaration (for example a wrapper body) makes that declaration reached; an import or a
+use outside any declaration is a file-level leaf and stops there. Every reported reference
+carries `depth` (`1` is a direct use) and `via`, the declaration chain from the changed item to
+the use. A per-root visited set stops cycles and duplicate rows. For each changed item the walk
+is capped at `MAX_REACH_DEPTH = 4`, 600 reached declarations and 4,000 reverse-use edges. The caps are
+explicit: a caller beyond the depth cap is not guessed, and a cycle/revisit, depth stop, node
+stop or edge stop is reported in `symbols.notes`.
+
 Reference scanning is bounded at 40 changed symbols, 500 files, 512 KiB per file, 32 MiB total
 and 200 references per symbol. Tests are scanned before other files, and files in affected
 packages are visited round-robin so one large crate cannot consume the budget before its
-dependents. A bound is reported in `symbols.notes`; selection remains package-safe.
+dependents. A bound is reported in `symbols.notes`; selection remains package-safe. Because the
+package targets are kept independently, a transitive chain can only add an exact test target or
+another package's evidence; it cannot remove the package-level floor.
 
 ## What is reported
 
@@ -78,7 +91,8 @@ dependents. A bound is reported in `symbols.notes`; selection remains package-sa
   the direct changed files, the integration-test targets it declares, `selected_by`, and the
   changed or referencing `symbol`/`path`/`line` rows that justify it. A package selected only by
   the dependency closure says so instead of inventing a reference.
-- `symbols`: the changed items, their language and declaration kind, the references found, the
+- `symbols`: the changed items, their language and declaration kind, the references found with
+  their depth and `via` chain, `max_depth`, `depth_limit`, `reached_symbols`, `cycles`, the
   packages those references name, `ambiguous` common names, unresolved files and scan notes.
 - `owners`: CODEOWNERS owners for each changed path that has a rule.
 - `selected`: the exact test commands `rigel test run` would execute. A changed package gets
@@ -134,9 +148,11 @@ JSON is the same `ImpactPlan` that `rigel test plan --json` prints, with the add
 
 ## Limits
 
-- References are direct, not transitive: a test that calls a wrapper which calls the changed
-  function is found by the package closure and full-suite rules, not by following the call
-  chain. Rust macro expansion, re-exports through an alias and dynamic dispatch are not resolved.
+- Reachability follows use chains only up to the fixed bounds above. Rust macro expansion,
+  re-exports through an alias, trait/dynamic dispatch and a call made only through a function
+  pointer are not resolved; neither is a chain that crosses a file-level use. A caller beyond
+  depth 4 or the node/edge caps is deliberately left to the package target. These are limits of
+  the shallow evidence, not a claim that the test is irrelevant.
 - The symbol reader is a line-oriented heuristic. A symbol name inside a string, a same-named
   local helper, an unusual declaration form or a file over the scan bounds can hide or add a
   reference. The package answer and its cap/full-suite rules remain the safe result.
@@ -155,6 +171,7 @@ JSON is the same `ImpactPlan` that `rigel test plan --json` prints, with the add
 metadata source and edge count, CODEOWNERS last-match and `!` rules, path-dependency parsing,
 and a symbol reference adding an exact test without dropping package targets.
 `crates/rigel-core/src/symbolimpact.rs` covers hunk mapping, enclosing-item selection, Git
-failure fallback, comments, import/qualifier filtering, and ambiguous common names.
+failure fallback, comments, import/qualifier filtering, ambiguous common names, an
+intermediate-only chain, a cycle, the depth cap and an unrelated chain.
 `crates/rigel-cli/tests/impact.rs` drives the real binary against a temporary Cargo workspace
 with a real `Cargo.lock`, CODEOWNERS and a test that imports a changed core function.

@@ -68,14 +68,18 @@ fn print_impact(plan: &ImpactPlan) {
         }
     } else {
         println!(
-            "symbols  {}: {} changed item(s), language {}",
+            "symbols  {}: {} changed item(s), language {}; reach depth {}/{}, {} declaration(s), {} cycle/revisit skip(s)",
             plan.symbols.source,
             plan.symbols.changed.len(),
             if plan.symbols.languages.is_empty() {
                 "unknown".to_string()
             } else {
                 plan.symbols.languages.join(", ")
-            }
+            },
+            plan.symbols.max_depth,
+            plan.symbols.depth_limit,
+            plan.symbols.reached_symbols,
+            plan.symbols.cycles,
         );
         for symbol in plan.symbols.changed.iter().take(12) {
             println!(
@@ -86,8 +90,14 @@ fn print_impact(plan: &ImpactPlan) {
         for reach in &plan.symbols.reached {
             for reference in reach.references.iter().take(8) {
                 println!(
-                    "reach    {} via {}:{} ({}, {})",
-                    reach.symbol, reference.path, reference.line, reference.kind, reference.package
+                    "reach    {} via {}:{} ({}, {}, depth {}; {})",
+                    reach.symbol,
+                    reference.path,
+                    reference.line,
+                    reference.kind,
+                    reference.package,
+                    reference.depth,
+                    reference.via.join(" -> ")
                 );
             }
         }

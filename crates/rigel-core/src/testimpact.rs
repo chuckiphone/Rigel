@@ -1743,6 +1743,88 @@ mod tests {
         assert!(plan.symbols.reached.is_empty());
     }
 
+    fn transitive_workspace() -> tempfile::TempDir {
+        let dir = tempfile::tempdir().unwrap();
+        fs::create_dir_all(dir.path().join("crates/core/src")).unwrap();
+        fs::create_dir_all(dir.path().join("crates/app/src")).unwrap();
+        fs::create_dir_all(dir.path().join("crates/app/tests")).unwrap();
+        fs::write(
+            dir.path().join("Cargo.toml"),
+            "[workspace]\nmembers = [\"crates/core\", \"crates/app\"]\nresolver = \"2\"\n",
+        )
+        .unwrap();
+        fs::write(
+            dir.path().join("crates/core/Cargo.toml"),
+            "[package]\nname = \"demo-core\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+        )
+        .unwrap();
+        fs::write(
+            dir.path().join("crates/core/src/lib.rs"),
+            "pub fn core() {}\n",
+        )
+        .unwrap();
+        fs::write(
+            dir.path().join("crates/app/Cargo.toml"),
+            "[package]\nname = \"demo-app\"\nversion = \"0.1.0\"\nedition = \"2021\"\n\n[dependencies]\ndemo-core = { path = \"../core\" }\n",
+        )
+        .unwrap();
+        fs::write(
+            dir.path().join("crates/app/src/lib.rs"),
+            "use demo_core::core;\npub fn wrapper() { core(); }\npub fn other() {}\n",
+        )
+        .unwrap();
+        fs::write(
+            dir.path().join("crates/app/tests/transitive.rs"),
+            "use demo_app::wrapper;\n#[test]\nfn transitive() { wrapper(); }\n",
+        )
+        .unwrap();
+        let mut command = Command::new("cargo");
+        command
+            .arg("generate-lockfile")
+            .arg("--offline")
+            .arg("--manifest-path")
+            .arg(dir.path().join("Cargo.toml"));
+        process::hide(&mut command);
+        assert!(
+            command.status().unwrap().success(),
+            "the fixture lockfile is generated"
+        );
+        dir
+    }
+
+    #[test]
+    fn a_transitive_symbol_reference_adds_the_exact_test() {
+        let project = transitive_workspace();
+        let plan = plan(project.path(), &[change("crates/core/src/lib.rs")], false).unwrap();
+        let labels: Vec<&str> = plan
+            .targets
+            .iter()
+            .map(|target| target.label.as_str())
+            .collect();
+        assert!(labels.contains(&"cargo test -p demo-core"), "{labels:?}");
+        assert!(labels.contains(&"cargo test -p demo-app"), "{labels:?}");
+        assert!(
+            labels.contains(&"cargo test -p demo-app --test transitive"),
+            "{labels:?}"
+        );
+        assert!(
+            plan.symbols
+                .reached
+                .iter()
+                .flat_map(|reach| reach.references.iter())
+                .any(
+                    |reference| reference.path == "crates/app/tests/transitive.rs"
+                        && reference.depth >= 2
+                )
+        );
+        let app = plan
+            .packages
+            .iter()
+            .find(|package| package.name == "demo-app")
+            .unwrap();
+        assert!(app.selected_by.contains("symbol references"));
+    }
+
     #[test]
     fn codeowners_are_applied_last_match_first() {
         let project = project();

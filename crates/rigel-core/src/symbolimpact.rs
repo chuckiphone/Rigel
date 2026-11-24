@@ -2,13 +2,14 @@
 //! reference those items.
 //!
 //! The package graph answers "which packages can compile against this change". This module adds
-//! the narrower question: "which changed function, type or module is named by which file". It
-//! reuses the shallow symbol and import readers in [`crate::codegraph`] instead of adding a
-//! language parser. The result is evidence for the selector, never a claim of compiler accuracy:
-//! an edit whose item cannot be mapped falls back to the whole changed file, and the caller keeps
-//! the package-level answer as the floor.
+//! the narrower question: "which changed function, type or module is named by which file, or by a
+//! file that reaches it through another declaration". It reuses the shallow symbol and import
+//! readers in [`crate::codegraph`] instead of adding a language parser. The result is evidence
+//! for the selector, never a claim of compiler accuracy: an edit whose item cannot be mapped
+//! falls back to the whole changed file, and the caller keeps the package-level answer as the
+//! floor.
 
-use std::collections::{BTreeMap, BTreeSet, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashSet, VecDeque};
 use std::fs;
 use std::path::Path;
 use std::process::Command;
@@ -27,6 +28,11 @@ pub const MAX_SYMBOL_FILE_BYTES: u64 = 512 * 1024;
 pub const MAX_SYMBOL_SCAN_BYTES: u64 = 32 * 1024 * 1024;
 pub const MAX_CHANGED_SYMBOLS: usize = 40;
 pub const MAX_REFERENCES_PER_SYMBOL: usize = 200;
+/// A changed item is a seed; each hop to a caller is one depth. The cap is explicit in the
+/// receipt, and a caller beyond it is not guessed.
+pub const MAX_REACH_DEPTH: usize = 4;
+pub const MAX_REACH_NODES: usize = 600;
+pub const MAX_REACH_EDGES: usize = 4000;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct ChangedSymbol {
@@ -49,6 +55,11 @@ pub struct SymbolReference {
     pub line: usize,
     /// `test`, `import` or `source`.
     pub kind: String,
+    /// `1` is a direct use of the changed item; higher values follow one or more declarations.
+    pub depth: usize,
+    /// Declaration names from the changed item to the referencing declaration, for example
+    /// `["changed", "wrapper", "test"]`. A file-level use ends at the changed item.
+    pub via: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -66,6 +77,13 @@ pub struct SymbolImpact {
     pub languages: Vec<String>,
     pub changed: Vec<ChangedSymbol>,
     pub reached: Vec<SymbolReach>,
+    pub depth_limit: usize,
+    /// Deepest reference actually reported.
+    pub max_depth: usize,
+    /// Declarations reached through one or more edges, excluding the changed seeds.
+    pub reached_symbols: usize,
+    /// Edges skipped because the declaration was already reached (a cycle or a revisit).
+    pub cycles: usize,
     /// Common declaration names (`run`, `new`, `test`, ...) that were deliberately not used for
     /// reference matching; their package selection remains the fallback.
     pub ambiguous: Vec<String>,
@@ -223,18 +241,43 @@ pub fn analyze(
         ));
     }
 
-    let (reached, unreferenced, truncated) =
-        references(root, files, priority_roots, scopes, &changed_symbols);
-    impact.reached = reached;
-    if truncated {
+    let report = references(root, files, priority_roots, scopes, &changed_symbols);
+    impact.reached = report.reached;
+    impact.depth_limit = MAX_REACH_DEPTH;
+    impact.max_depth = report.max_depth;
+    impact.reached_symbols = report.reached_symbols;
+    impact.cycles = report.cycles;
+    impact.unresolved.extend(report.unresolved);
+    if report.file_truncated {
         impact
             .notes
             .push("the reference scan hit its file or byte bound".into());
     }
-    if !unreferenced.is_empty() {
+    if report.edges_capped {
+        impact.notes.push(format!(
+            "the symbol reach graph hit its {MAX_REACH_EDGES}-edge bound"
+        ));
+    }
+    if report.nodes_capped {
+        impact.notes.push(format!(
+            "the symbol reach walk hit its {MAX_REACH_NODES}-declaration bound"
+        ));
+    }
+    if report.depth_capped {
+        impact.notes.push(format!(
+            "the symbol reach walk stopped at depth {MAX_REACH_DEPTH}; deeper callers were not scanned"
+        ));
+    }
+    if report.cycles > 0 {
+        impact.notes.push(format!(
+            "the cycle/revisit guard skipped {} already-reached edge(s)",
+            report.cycles
+        ));
+    }
+    if !report.unreferenced.is_empty() {
         impact.notes.push(format!(
             "no scanned reference to: {}",
-            unreferenced.join(", ")
+            report.unreferenced.join(", ")
         ));
     }
     impact.changed = changed_symbols;
@@ -260,105 +303,100 @@ fn select_symbols(
         .collect()
 }
 
+#[derive(Debug, Clone)]
+struct SymbolDef {
+    file: String,
+    name: String,
+    line: usize,
+    body_end: usize,
+    language: String,
+}
+
+impl SymbolDef {
+    fn key(&self) -> (String, String) {
+        (self.file.clone(), self.name.clone())
+    }
+}
+
+#[derive(Debug, Clone)]
+struct ScannedFile {
+    path: String,
+    text: String,
+    line_ranges: Vec<(usize, usize)>,
+    package: String,
+    test: bool,
+    symbols: Vec<SymbolDef>,
+}
+
+struct ReachReport {
+    reached: Vec<SymbolReach>,
+    unreferenced: Vec<String>,
+    unresolved: Vec<String>,
+    file_truncated: bool,
+    edges_capped: bool,
+    nodes_capped: bool,
+    depth_capped: bool,
+    cycles: usize,
+    max_depth: usize,
+    reached_symbols: usize,
+}
+
+fn empty_report() -> ReachReport {
+    ReachReport {
+        reached: Vec::new(),
+        unreferenced: Vec::new(),
+        unresolved: Vec::new(),
+        file_truncated: false,
+        edges_capped: false,
+        nodes_capped: false,
+        depth_capped: false,
+        cycles: 0,
+        max_depth: 0,
+        reached_symbols: 0,
+    }
+}
+
 fn references(
     root: &Path,
     files: &[String],
     priority_roots: &[String],
     scopes: &[PackageScope],
     changed: &[ChangedSymbol],
-) -> (Vec<SymbolReach>, Vec<String>, bool) {
+) -> ReachReport {
     let searchable: Vec<&ChangedSymbol> = changed
         .iter()
         .filter(|symbol| symbol.name.len() >= 3 && !codegraph::is_common(&symbol.name))
         .collect();
     if searchable.is_empty() {
-        return (Vec::new(), Vec::new(), false);
-    }
-    let changed_keys: BTreeSet<(String, String)> = searchable
-        .iter()
-        .map(|symbol| (symbol.file.clone(), symbol.name.clone()))
-        .collect();
-    let by_key: BTreeMap<(String, String), &ChangedSymbol> = searchable
-        .iter()
-        .map(|symbol| ((symbol.file.clone(), symbol.name.clone()), *symbol))
-        .collect();
-    let mut by_symbol: BTreeMap<(String, String), Vec<SymbolReference>> = searchable
-        .iter()
-        .map(|symbol| ((symbol.file.clone(), symbol.name.clone()), Vec::new()))
-        .collect();
-
-    // Spend the scan budget first on tests anywhere, then round-robin the packages the package
-    // graph selected so one large crate cannot exhaust the budget before its dependents are
-    // scanned.
-    let mut ordered: Vec<&String> = Vec::new();
-    let mut seen = HashSet::new();
-    for file in files {
-        if is_test_path(file) && seen.insert(file.as_str()) {
-            ordered.push(file);
-        }
-    }
-    let roots: Vec<&str> = priority_roots
-        .iter()
-        .map(String::as_str)
-        .filter(|root| !root.is_empty())
-        .collect();
-    let mut buckets: BTreeMap<&str, Vec<&String>> = BTreeMap::new();
-    for file in files {
-        if seen.contains(file.as_str()) {
-            continue;
-        }
-        if let Some(root) = roots
-            .iter()
-            .filter(|root| within(file, root))
-            .max_by_key(|root| root.len())
-        {
-            buckets.entry(root).or_default().push(file);
-        }
-    }
-    let mut took = true;
-    while took {
-        took = false;
-        for root in &roots {
-            let Some(bucket) = buckets.get_mut(root) else {
-                continue;
-            };
-            while let Some(file) = bucket.first().copied() {
-                bucket.remove(0);
-                if seen.insert(file.as_str()) {
-                    ordered.push(file);
-                    took = true;
-                    break;
-                }
-            }
-        }
-    }
-    for file in files {
-        if seen.insert(file.as_str()) {
-            ordered.push(file);
-        }
+        return empty_report();
     }
 
+    let mut report = empty_report();
+    let ordered = ordered_paths(files, changed, priority_roots);
+    let mut scanned_files = Vec::new();
     let mut scanned = 0usize;
     let mut bytes_scanned = 0u64;
-    let mut truncated = false;
     for path in ordered {
         if scanned >= MAX_SYMBOL_FILES || bytes_scanned >= MAX_SYMBOL_SCAN_BYTES {
-            truncated = true;
+            report.file_truncated = true;
             break;
         }
-        if codegraph::language(path).is_none() || is_skipped(path) {
+        let Some(language) = codegraph::language(&path) else {
+            continue;
+        };
+        if is_skipped(&path) {
             continue;
         }
-        let full = root.join(path);
+        let full = root.join(&path);
         let Ok(meta) = fs::metadata(&full) else {
             continue;
         };
         if meta.len() > MAX_SYMBOL_FILE_BYTES {
-            truncated = true;
+            report.file_truncated = true;
             continue;
         }
         if bytes_scanned.saturating_add(meta.len()) > MAX_SYMBOL_SCAN_BYTES {
-            truncated = true;
+            report.file_truncated = true;
             break;
         }
         let Ok(bytes) = fs::read(&full) else {
@@ -367,88 +405,307 @@ fn references(
         scanned += 1;
         bytes_scanned = bytes_scanned.saturating_add(meta.len());
         let text = String::from_utf8_lossy(&bytes);
-        let package = package_label(path, scopes);
-        let test = is_test_path(path);
-        let imported: HashSet<(String, String)> = searchable
-            .iter()
-            .filter(|symbol| import_evidence(path, &text, symbol))
-            .map(|symbol| (symbol.file.clone(), symbol.name.clone()))
-            .collect();
-        let definitions: HashSet<(String, usize)> = codegraph::symbols(path, &text)
+        let mut line_ranges = Vec::new();
+        let mut offset = 0usize;
+        for line in text.split_inclusive('\n') {
+            let content = line.trim_end_matches(['\n', '\r']);
+            line_ranges.push((offset, offset + content.len()));
+            offset += line.len();
+        }
+        let symbols = codegraph::symbols(&path, &text)
             .into_iter()
-            .map(|symbol| (symbol.name, symbol.line))
+            .map(|symbol| SymbolDef {
+                file: path.clone(),
+                name: symbol.name,
+                line: symbol.line,
+                body_end: symbol.body_end,
+                language: language.to_string(),
+            })
             .collect();
-        for (line_number, line) in text.lines().enumerate() {
-            let trimmed = line.trim_start();
-            if is_comment(trimmed) {
+        scanned_files.push(ScannedFile {
+            path: path.clone(),
+            text: text.to_string(),
+            line_ranges,
+            package: package_label(&path, scopes),
+            test: is_test_path(&path),
+            symbols,
+        });
+    }
+
+    let mut defs: Vec<SymbolDef> = Vec::new();
+    let mut by_name: BTreeMap<String, Vec<usize>> = BTreeMap::new();
+    let mut by_key: BTreeMap<(String, String), usize> = BTreeMap::new();
+    for file in &scanned_files {
+        for symbol in &file.symbols {
+            let key = symbol.key();
+            if by_key.contains_key(&key) {
                 continue;
             }
-            for (file, name) in &changed_keys {
-                if !codegraph::contains_word(line, name) {
+            let index = defs.len();
+            by_key.insert(key, index);
+            by_name.entry(symbol.name.clone()).or_default().push(index);
+            defs.push(symbol.clone());
+        }
+    }
+
+    // Index every declaration name's occurrences. Reverse uses are resolved on demand during the
+    // walk below: one dense crate's unrelated references must not exhaust the edge budget before
+    // the changed item's chain has been seen.
+    let mut occurrences: BTreeMap<String, Vec<(usize, usize)>> = BTreeMap::new();
+    for (file_index, file) in scanned_files.iter().enumerate() {
+        for (line_index, &(start, end)) in file.line_ranges.iter().enumerate() {
+            let line = &file.text[start..end];
+            for word in line_words(line) {
+                if !by_name.contains_key(word) {
                     continue;
                 }
-                let Some(symbol) = by_key.get(&(file.clone(), name.clone())) else {
+                let rows = occurrences.entry(word.to_string()).or_default();
+                if rows.last() != Some(&(file_index, line_index)) {
+                    rows.push((file_index, line_index));
+                }
+            }
+        }
+    }
+
+    for symbol in &searchable {
+        let root_key = (symbol.file.clone(), symbol.name.clone());
+        let Some(&root_index) = by_key.get(&root_key) else {
+            report.unresolved.push(format!(
+                "{}::{}: changed item is outside the scanned declaration index; package fallback applies",
+                symbol.file, symbol.name
+            ));
+            continue;
+        };
+        let mut visited: BTreeSet<(String, String)> = BTreeSet::new();
+        visited.insert(root_key.clone());
+        let mut queue: VecDeque<(usize, Vec<String>, usize)> = VecDeque::new();
+        queue.push_back((root_index, vec![symbol.name.clone()], 0));
+        let mut rows: Vec<SymbolReference> = Vec::new();
+        let mut seen: BTreeSet<(String, usize, String)> = BTreeSet::new();
+        let mut edges = 0usize;
+        'walk: while let Some((target_index, chain, depth)) = queue.pop_front() {
+            let target = &defs[target_index];
+            let Some(found) = occurrences.get(&target.name) else {
+                continue;
+            };
+            if depth >= MAX_REACH_DEPTH {
+                if found.iter().any(|&(file_index, line_index)| {
+                    let file = &scanned_files[file_index];
+                    let (start, end) = file.line_ranges[line_index];
+                    let line = &file.text[start..end];
+                    !is_comment(line.trim_start())
+                        && !(target.file == file.path && target.line == line_index + 1)
+                }) {
+                    report.depth_capped = true;
+                }
+                continue;
+            }
+            let mut import_cache: BTreeMap<usize, bool> = BTreeMap::new();
+            for &(file_index, line_index) in found {
+                let file = &scanned_files[file_index];
+                let (start, end) = file.line_ranges[line_index];
+                let line = &file.text[start..end];
+                let trimmed = line.trim_start();
+                if is_comment(trimmed) {
                     continue;
+                }
+                // The declaration line itself is a definition, not a use.
+                if target.file == file.path && target.line == line_index + 1 {
+                    continue;
+                }
+                let imported = *import_cache.entry(file_index).or_insert_with(|| {
+                    import_evidence(&file.path, &file.text, &target.file, &target.name)
+                });
+                if !reference_allowed(
+                    &file.path,
+                    line,
+                    &target.file,
+                    &target.name,
+                    &target.language,
+                    imported,
+                ) {
+                    continue;
+                }
+                let source: Vec<&SymbolDef> = if is_import_line(trimmed) {
+                    Vec::new()
+                } else {
+                    file.symbols
+                        .iter()
+                        .filter(|symbol| {
+                            line_index + 1 >= symbol.line && line_index < symbol.body_end
+                        })
+                        .collect()
                 };
-                if !reference_allowed(path, line, symbol, &imported) {
-                    continue;
-                }
-                // The declaration itself is not a use of the item.
-                if path == file && line_number + 1 == definition_line(changed, file, name) {
-                    continue;
-                }
-                if definitions.contains(&(name.clone(), line_number + 1)) {
-                    continue;
-                }
-                let references = by_symbol.entry((file.clone(), name.clone())).or_default();
-                if references.len() >= MAX_REFERENCES_PER_SYMBOL {
-                    truncated = true;
-                    continue;
-                }
-                let kind = if test {
+                let kind = if file.test {
                     "test"
                 } else if is_import_line(trimmed) {
                     "import"
                 } else {
                     "source"
                 };
-                let reference = SymbolReference {
-                    path: path.clone(),
-                    package: package.clone(),
-                    line: line_number + 1,
-                    kind: kind.to_string(),
-                };
-                if !references.contains(&reference) {
-                    references.push(reference);
+                let next_depth = depth + 1;
+                if source.is_empty() {
+                    if edges >= MAX_REACH_EDGES {
+                        report.edges_capped = true;
+                        break 'walk;
+                    }
+                    edges += 1;
+                    if seen.insert((file.path.clone(), line_index + 1, kind.to_string()))
+                        && rows.len() < MAX_REFERENCES_PER_SYMBOL
+                    {
+                        rows.push(SymbolReference {
+                            path: file.path.clone(),
+                            package: file.package.clone(),
+                            line: line_index + 1,
+                            kind: kind.to_string(),
+                            depth: next_depth,
+                            via: chain.clone(),
+                        });
+                        report.max_depth = report.max_depth.max(next_depth);
+                    }
+                    continue;
+                }
+                for declaration in &source {
+                    let source_key = declaration.key();
+                    if source_key == (target.file.clone(), target.name.clone()) {
+                        continue;
+                    }
+                    if edges >= MAX_REACH_EDGES {
+                        report.edges_capped = true;
+                        break 'walk;
+                    }
+                    edges += 1;
+                    if !visited.insert(source_key.clone()) {
+                        report.cycles += 1;
+                        continue;
+                    }
+                    let mut via = chain.clone();
+                    via.push(declaration.name.clone());
+                    if seen.insert((file.path.clone(), line_index + 1, kind.to_string())) {
+                        if rows.len() < MAX_REFERENCES_PER_SYMBOL {
+                            rows.push(SymbolReference {
+                                path: file.path.clone(),
+                                package: file.package.clone(),
+                                line: line_index + 1,
+                                kind: kind.to_string(),
+                                depth: next_depth,
+                                via: via.clone(),
+                            });
+                            report.max_depth = report.max_depth.max(next_depth);
+                        } else {
+                            report.file_truncated = true;
+                        }
+                    }
+                    if report.reached_symbols >= MAX_REACH_NODES {
+                        report.nodes_capped = true;
+                        continue;
+                    }
+                    if let Some(&source_index) = by_key.get(&source_key) {
+                        report.reached_symbols += 1;
+                        queue.push_back((source_index, via, next_depth));
+                    }
                 }
             }
         }
-    }
-
-    let mut reached = Vec::new();
-    let mut unreferenced = Vec::new();
-    for symbol in searchable {
-        let key = (symbol.file.clone(), symbol.name.clone());
-        let references = by_symbol.remove(&key).unwrap_or_default();
-        if references.is_empty() {
-            unreferenced.push(symbol.name.clone());
+        if rows.is_empty() {
+            report.unreferenced.push(symbol.name.clone());
             continue;
         }
-        let packages: Vec<String> = references
+        rows.sort_by(|left, right| {
+            (left.depth, &left.path, left.line, &left.kind).cmp(&(
+                right.depth,
+                &right.path,
+                right.line,
+                &right.kind,
+            ))
+        });
+        let packages: Vec<String> = rows
             .iter()
             .map(|reference| reference.package.clone())
             .filter(|package| !package.is_empty())
             .collect::<BTreeSet<_>>()
             .into_iter()
             .collect();
-        reached.push(SymbolReach {
+        report.reached.push(SymbolReach {
             symbol: symbol.name.clone(),
             file: symbol.file.clone(),
-            references,
+            references: rows,
             packages,
         });
     }
-    (reached, unreferenced, truncated)
+    report
+}
+
+/// Deterministic scan order: changed files, tests, affected packages round-robin, then the rest.
+fn ordered_paths(
+    files: &[String],
+    changed: &[ChangedSymbol],
+    priority_roots: &[String],
+) -> Vec<String> {
+    let mut ordered: Vec<String> = Vec::new();
+    let mut seen = HashSet::new();
+    for change in changed {
+        if !is_skipped(&change.file) && seen.insert(change.file.clone()) {
+            ordered.push(change.file.clone());
+        }
+    }
+    for file in files {
+        if is_test_path(file) && seen.insert(file.clone()) {
+            ordered.push(file.clone());
+        }
+    }
+    let roots: Vec<&str> = priority_roots
+        .iter()
+        .map(String::as_str)
+        .filter(|root| !root.is_empty())
+        .collect();
+    let mut buckets: BTreeMap<String, Vec<String>> = BTreeMap::new();
+    for file in files {
+        if seen.contains(file) {
+            continue;
+        }
+        if let Some(root) = roots
+            .iter()
+            .filter(|root| within(file, root))
+            .max_by_key(|root| root.len())
+        {
+            buckets
+                .entry(root.to_string())
+                .or_default()
+                .push(file.clone());
+        }
+    }
+    let mut took = true;
+    while took {
+        took = false;
+        for root in &roots {
+            let Some(bucket) = buckets.get_mut(*root) else {
+                continue;
+            };
+            while let Some(file) = bucket.first().cloned() {
+                bucket.remove(0);
+                if seen.insert(file.clone()) {
+                    ordered.push(file);
+                    took = true;
+                    break;
+                }
+            }
+        }
+    }
+    for file in files {
+        if seen.insert(file.clone()) {
+            ordered.push(file.clone());
+        }
+    }
+    ordered
+}
+
+fn line_words(line: &str) -> Vec<&str> {
+    line.split(|character: char| {
+        !(character.is_ascii_alphanumeric() || character == '_' || character == '$')
+    })
+    .filter(|word| word.len() >= 3)
+    .collect()
 }
 
 /// A Rust file's module path inside its crate. `src/lib.rs`, `src/main.rs` and a `mod.rs` file
@@ -470,9 +727,9 @@ fn rust_module_path(file: &str) -> String {
     parts.join("::")
 }
 
-fn import_evidence(path: &str, text: &str, symbol: &ChangedSymbol) -> bool {
+fn import_evidence(path: &str, text: &str, target_file: &str, target_name: &str) -> bool {
     let language = codegraph::language(path).unwrap_or_default();
-    let module = rust_module_path(&symbol.file);
+    let module = rust_module_path(target_file);
     for line in text.lines() {
         let line = line.trim();
         let compact: String = line
@@ -484,14 +741,14 @@ fn import_evidence(path: &str, text: &str, symbol: &ChangedSymbol) -> bool {
                 if !line.starts_with("use ") && !line.starts_with("pub use ") {
                     continue;
                 }
-                if !codegraph::contains_word(line, &symbol.name) {
+                if !codegraph::contains_word(line, target_name) {
                     continue;
                 }
                 if module.is_empty() {
-                    if compact.contains(&format!("::{}", symbol.name)) {
+                    if compact.contains(&format!("::{target_name}")) {
                         return true;
                     }
-                } else if compact.contains(&format!("{module}::{}", symbol.name))
+                } else if compact.contains(&format!("{module}::{target_name}"))
                     || compact.contains(&format!("{module}::{{"))
                 {
                     return true;
@@ -499,14 +756,14 @@ fn import_evidence(path: &str, text: &str, symbol: &ChangedSymbol) -> bool {
             }
             "typescript" | "javascript" | "web" => {
                 if (line.starts_with("import ") || line.contains("require("))
-                    && codegraph::contains_word(line, &symbol.name)
+                    && codegraph::contains_word(line, target_name)
                 {
                     return true;
                 }
             }
             "python"
                 if (line.starts_with("from ") || line.starts_with("import "))
-                    && codegraph::contains_word(line, &symbol.name) =>
+                    && codegraph::contains_word(line, target_name) =>
             {
                 return true;
             }
@@ -522,48 +779,38 @@ fn import_evidence(path: &str, text: &str, symbol: &ChangedSymbol) -> bool {
 fn reference_allowed(
     path: &str,
     line: &str,
-    symbol: &ChangedSymbol,
-    imported: &HashSet<(String, String)>,
+    target_file: &str,
+    target_name: &str,
+    target_language: &str,
+    imported: bool,
 ) -> bool {
-    if path == symbol.file {
-        return true;
-    }
-    let key = (symbol.file.clone(), symbol.name.clone());
-    if imported.contains(&key) {
+    if path == target_file || imported {
         return true;
     }
     let compact: String = line
         .chars()
         .filter(|character| !character.is_whitespace())
         .collect();
-    match symbol.language.as_str() {
+    match target_language {
         "rust" => {
-            let module = rust_module_path(&symbol.file);
+            let module = rust_module_path(target_file);
             if module.is_empty() {
-                compact.contains(&format!("::{}", symbol.name))
+                compact.contains(&format!("::{target_name}"))
             } else {
-                compact.contains(&format!("{module}::{name}", name = symbol.name))
+                compact.contains(&format!("{module}::{target_name}"))
             }
         }
         "typescript" | "javascript" | "web" | "python" => {
-            compact.contains(&format!(".{}", symbol.name))
+            compact.contains(&format!(".{target_name}"))
         }
         "go" => {
-            if Path::new(path).parent() == Path::new(&symbol.file).parent() {
+            if Path::new(path).parent() == Path::new(target_file).parent() {
                 return true;
             }
-            compact.contains(&format!(".{}", symbol.name))
+            compact.contains(&format!(".{target_name}"))
         }
         _ => false,
     }
-}
-
-fn definition_line(changed: &[ChangedSymbol], file: &str, name: &str) -> usize {
-    changed
-        .iter()
-        .find(|symbol| symbol.file == file && symbol.name == name)
-        .map(|symbol| symbol.line)
-        .unwrap_or(0)
 }
 
 fn package_label(path: &str, scopes: &[PackageScope]) -> String {
@@ -983,5 +1230,230 @@ diff --git a/crates/core/src/lib.rs b/crates/core/src/lib.rs
         );
         assert_eq!(impact.ambiguous, vec!["run"]);
         assert!(impact.reached.is_empty());
+    }
+
+    fn write(project: &tempfile::TempDir, path: &str, text: &str) {
+        let full = project.path().join(path);
+        fs::create_dir_all(full.parent().unwrap()).unwrap();
+        fs::write(full, text).unwrap();
+    }
+
+    fn analyze_files(
+        project: &Path,
+        files: &[&str],
+        changed: &[ChangedFile],
+        scopes: &[PackageScope],
+    ) -> SymbolImpact {
+        let files: Vec<String> = files.iter().map(|path| (*path).to_string()).collect();
+        let roots: Vec<String> = scopes.iter().map(|scope| scope.root.clone()).collect();
+        analyze(project, "HEAD", changed, scopes, &files, &roots)
+    }
+
+    #[test]
+    fn an_intermediate_declaration_carries_reach_to_a_test() {
+        let project = tempfile::tempdir().unwrap();
+        write(&project, "crates/core/src/lib.rs", "pub fn core() {}\n");
+        write(
+            &project,
+            "crates/middle/src/lib.rs",
+            "use demo_core::core;\npub fn wrapper() { core(); }\n",
+        );
+        write(
+            &project,
+            "crates/app/tests/transitive.rs",
+            "use demo_middle::wrapper;\n#[test]\nfn reached() { wrapper(); }\n",
+        );
+        let impact = analyze_files(
+            project.path(),
+            &[
+                "crates/core/src/lib.rs",
+                "crates/middle/src/lib.rs",
+                "crates/app/tests/transitive.rs",
+            ],
+            &[change("crates/core/src/lib.rs")],
+            &[
+                scope("demo-core", "crates/core"),
+                scope("demo-middle", "crates/middle"),
+                scope("demo-app", "crates/app"),
+            ],
+        );
+        let reach = impact
+            .reached
+            .iter()
+            .find(|reach| reach.symbol == "core")
+            .expect("core is reached");
+        let test = reach
+            .references
+            .iter()
+            .find(|reference| reference.path == "crates/app/tests/transitive.rs")
+            .expect("the test is reached through wrapper");
+        assert_eq!(test.kind, "test");
+        assert!(test.depth >= 2, "{test:?}");
+        assert!(test.via.iter().any(|name| name == "wrapper"), "{test:?}");
+        assert!(impact.max_depth >= 2);
+        assert!(impact.reached_symbols >= 2);
+        assert!(
+            !impact
+                .notes
+                .iter()
+                .any(|note| note.contains("stopped at depth"))
+        );
+    }
+
+    #[test]
+    fn a_cycle_terminates_and_does_not_duplicate_references() {
+        let project = tempfile::tempdir().unwrap();
+        write(&project, "crates/core/src/lib.rs", "pub fn core() {}\n");
+        write(
+            &project,
+            "crates/middle/src/lib.rs",
+            "use demo_core::core;\npub fn wrapper() { core(); cycle(); }\npub fn cycle() { wrapper(); }\n",
+        );
+        write(
+            &project,
+            "crates/app/tests/cycle.rs",
+            "use demo_middle::wrapper;\n#[test]\nfn reached() { wrapper(); }\n",
+        );
+        let impact = analyze_files(
+            project.path(),
+            &[
+                "crates/core/src/lib.rs",
+                "crates/middle/src/lib.rs",
+                "crates/app/tests/cycle.rs",
+            ],
+            &[change("crates/core/src/lib.rs")],
+            &[
+                scope("demo-core", "crates/core"),
+                scope("demo-middle", "crates/middle"),
+                scope("demo-app", "crates/app"),
+            ],
+        );
+        assert!(impact.cycles > 0);
+        assert!(
+            impact
+                .notes
+                .iter()
+                .any(|note| note.contains("cycle/revisit guard"))
+        );
+        let reach = &impact.reached[0];
+        let mut keys = BTreeSet::new();
+        for reference in &reach.references {
+            assert!(
+                keys.insert((
+                    reference.path.clone(),
+                    reference.line,
+                    reference.kind.clone()
+                )),
+                "duplicate reference: {reference:?}"
+            );
+        }
+        assert!(
+            reach
+                .references
+                .iter()
+                .any(|reference| reference.path == "crates/app/tests/cycle.rs")
+        );
+    }
+
+    #[test]
+    fn the_depth_cap_is_enforced_and_reported() {
+        let project = tempfile::tempdir().unwrap();
+        write(&project, "crates/core/src/lib.rs", "pub fn core() {}\n");
+        write(
+            &project,
+            "crates/core/src/one.rs",
+            "use demo_core::core;\npub fn one() { core(); }\n",
+        );
+        write(
+            &project,
+            "crates/core/src/two.rs",
+            "use demo_core::one::one;\npub fn two() { one(); }\n",
+        );
+        write(
+            &project,
+            "crates/core/src/three.rs",
+            "use demo_core::two::two;\npub fn three() { two(); }\n",
+        );
+        write(
+            &project,
+            "crates/core/src/four.rs",
+            "use demo_core::three::three;\npub fn four() { three(); }\n",
+        );
+        write(
+            &project,
+            "crates/core/src/five.rs",
+            "use demo_core::four::four;\npub fn five() { four(); }\n",
+        );
+        write(
+            &project,
+            "crates/core/tests/deep.rs",
+            "use demo_core::five::five;\n#[test]\nfn deep() { five(); }\n",
+        );
+        let files = [
+            "crates/core/src/lib.rs",
+            "crates/core/src/one.rs",
+            "crates/core/src/two.rs",
+            "crates/core/src/three.rs",
+            "crates/core/src/four.rs",
+            "crates/core/src/five.rs",
+            "crates/core/tests/deep.rs",
+        ];
+        let impact = analyze_files(
+            project.path(),
+            &files,
+            &[change("crates/core/src/lib.rs")],
+            &[scope("demo-core", "crates/core")],
+        );
+        assert_eq!(impact.depth_limit, MAX_REACH_DEPTH);
+        assert!(impact.max_depth <= MAX_REACH_DEPTH);
+        assert!(
+            impact
+                .notes
+                .iter()
+                .any(|note| note.contains("stopped at depth"))
+        );
+        assert!(
+            !impact.reached[0]
+                .references
+                .iter()
+                .any(|reference| reference.path == "crates/core/tests/deep.rs")
+        );
+    }
+
+    #[test]
+    fn an_unrelated_chain_adds_no_reference() {
+        let project = tempfile::tempdir().unwrap();
+        write(&project, "crates/core/src/lib.rs", "pub fn core() {}\n");
+        write(
+            &project,
+            "crates/middle/src/lib.rs",
+            "pub fn wrapper() { other(); }\npub fn other() {}\n",
+        );
+        write(
+            &project,
+            "crates/app/tests/unrelated.rs",
+            "use demo_middle::wrapper;\n#[test]\nfn unrelated() { wrapper(); }\n",
+        );
+        let impact = analyze_files(
+            project.path(),
+            &[
+                "crates/core/src/lib.rs",
+                "crates/middle/src/lib.rs",
+                "crates/app/tests/unrelated.rs",
+            ],
+            &[change("crates/core/src/lib.rs")],
+            &[
+                scope("demo-core", "crates/core"),
+                scope("demo-middle", "crates/middle"),
+                scope("demo-app", "crates/app"),
+            ],
+        );
+        assert!(impact.reached.is_empty());
+        assert!(
+            impact
+                .notes
+                .iter()
+                .any(|note| note.contains("no scanned reference"))
+        );
     }
 }

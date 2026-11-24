@@ -233,14 +233,18 @@ fn print_plan(plan: &ImpactPlan) {
         }
         if !plan.symbols.changed.is_empty() {
             println!(
-                "symbols  {}: {} changed item(s), {} reference(s)",
+                "symbols  {}: {} changed item(s), {} reference(s), reach depth {}/{}, {} declaration(s), {} cycle/revisit skip(s)",
                 plan.symbols.source,
                 plan.symbols.changed.len(),
                 plan.symbols
                     .reached
                     .iter()
                     .map(|reach| reach.references.len())
-                    .sum::<usize>()
+                    .sum::<usize>(),
+                plan.symbols.max_depth,
+                plan.symbols.depth_limit,
+                plan.symbols.reached_symbols,
+                plan.symbols.cycles,
             );
         }
     }
