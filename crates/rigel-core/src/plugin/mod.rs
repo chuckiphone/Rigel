@@ -1411,6 +1411,12 @@ mod tests {
                 .is_some_and(CatalogEntry::installable),
             "superpowers must be installable from the bundled skill set"
         );
+        assert!(
+            catalog
+                .get("untangle-codebase")
+                .is_some_and(CatalogEntry::installable),
+            "untangle-codebase must be installable from the bundled skill set"
+        );
     }
 
     #[test]

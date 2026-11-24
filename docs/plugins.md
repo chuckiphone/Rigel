@@ -196,7 +196,7 @@ Plugin output passes the same redaction filter as every other tool result.
 
 ## Built-in skills
 
-Nine `SKILL.md` bodies ship in `skills/builtin/` and are compiled into the binary. They are
+Ten `SKILL.md` bodies ship in `skills/builtin/` and are compiled into the binary. They are
 indexed at window launch and by `rigel skills builtin`, as `builtin:<slug>` rows, so the shelf,
 palette, `skills_search`, `skill_load` and a session pin work with no network:
 
@@ -211,6 +211,7 @@ palette, `skills_search`, `skill_load` and a session pin work with no network:
 | `cognee-evaluate` | Cognee, evaluate only | Apache-2.0 |
 | `blender-mcp` | Blender MCP | MIT |
 | `superpowers` | Cross-agent brainstorming, planning, TDD, debugging and review workflow | MIT |
+| `untangle-codebase` | Whole-codebase structural refactor: hidden links, needless links, surplus, special cases | MIT |
 
 ```bash
 rigel skills builtin                 # seed the index and list the ids
@@ -220,6 +221,16 @@ rigel skills builtin --install --to ./skills-store
 
 `--install` is explicit; launching the window never writes into a harness store. The copy is the
 same reviewed body that was indexed, and it replaces a file only when the bytes differ.
+
+Third-party downloads and every install pass NVIDIA SkillSpector's static gate first. The
+scanner is an external Python tool; install it once with
+`uv tool install git+https://github.com/NVIDIA/SkillSpector.git`, or set
+`RIGEL_SKILLSPECTOR_BIN` if uv's shim is not on PATH. A missing scanner, an unreadable report,
+an error exit, a score above 50 or a `DO_NOT_INSTALL` verdict refuses or filters the operation;
+`CAUTION` is allowed and recorded in the receipt. A repository's exact bodies are scanned
+together before any row is written, so one blocked skill is skipped without discarding its safe
+siblings. The gate uses `--no-llm`, so no skill body is sent to a model provider. See
+[skill-intelligence.md](skill-intelligence.md#pre-download-gate-nvidia-skillspector).
 
 ### Quality gate
 
@@ -231,10 +242,10 @@ for dir in skills/builtin/*/; do skillevaluator quality-check "$dir"; done
 ```
 
 All eight original skills pass the required checks with grade A: 90.0–96.2/100. `superpowers`
-was added after that sweep and follows the same frontmatter and body rules. The remaining findings are
-advisory rather than correctness problems — missing negative triggers, no troubleshooting
-section, and no examples on some entries. They are listed in the turn that added the skills; this
-file does not claim the findings are zero.
+and `untangle-codebase` were added after that sweep and follow the same frontmatter and body
+rules. The remaining findings are advisory rather than correctness problems — missing negative
+triggers, no troubleshooting section, and no examples on some entries. They are listed in the
+turn that added the skills; this file does not claim the findings are zero.
 
 The scan is static. It does not prove an installed third-party command is harmless, and it does
 not replace the command approval that runs when a skill tells the agent to execute something.

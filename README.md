@@ -44,7 +44,7 @@ closes to the tray, so a running session is not interrupted by losing the window
 | **Sessions** | A roster, a role-gutter transcript, streaming turns, an outline, bookmarks, templates, and a resume that reconciles the journal instead of replaying it. |
 | **Claims and merge** | Advisory claims with tombstones and a 24-hour expiry, a 250 ms attribution watcher, a three-way merge, and a CAS patch journal with one revert per patch. |
 | **Budget and safety** | Micro-dollar accounting per turn and per child, a preflight estimate, an 80% warning, and a $20/day project cap that refuses the next turn before it starts. |
-| **Skills and plugins** | An offline SQLite FTS5 index, SimHash duplicate clusters, six static capability rules with `file:line` evidence, nine built-in skills, and a 2,533-entry plugin catalogue with a capability broker and pinned installs. |
+| **Skills and plugins** | An offline SQLite FTS5 index, SimHash duplicate clusters, six static capability rules with `file:line` evidence, ten built-in skills, and a 2,534-entry plugin catalogue with a capability broker and pinned installs. |
 | **Memory and permissions** | Committed memory facts ranked by recency, use and pin; a project tool ceiling narrowed by role and per-agent overrides; ordered network rules and opt-in sandbox profiles. |
 | **Chat** | An agentchattr room shaped as a messaging app: bots with presence, one thread per bot or the whole room, `@name` routing, room attachments and a review card before anything sends. |
 | **Cloud and phone** | An opt-in Firebase project you own, shelf metadata with tombstones, one published session readable on an iPhone, and a read-only web reader. |
@@ -79,7 +79,7 @@ The long version of each, including where it stops, is in [docs/what-works.md](d
 - **A plugin marketplace with a boundary.** The embedded catalogue is searchable offline; a plugin
   is a validated `plugin.json` plus a short-lived child per tool call, every file grant is
   canonicalised against its declared roots, and a rewritten manifest is refused instead of widening
-  its grant. Nine built-in skills install into the harness stores.
+  its grant. Ten built-in skills install into the harness stores.
 - **A narrower agent, not a broader one.** Each roster row carries its own model, provider and
   effort; project permissions are intersected with role presets and per-agent overrides, and a
   spawned child can never inherit a tool its parent lacked. Memory facts expose the recency, use and
@@ -122,9 +122,10 @@ Or install only the CLI:
 
 ```bash
 cargo install --path crates/rigel-cli
+uv tool install git+https://github.com/NVIDIA/SkillSpector.git   # the skill security gate
 rigel skills index anthropics/skills --limit 20
 rigel skills search "pdf"
-rigel skills builtin --install          # the nine skills that ship with Rigel
+rigel skills builtin --install          # the ten skills that ship with Rigel
 rigel plugins browse                    # the curated catalogue
 rigel plugins install rigel-hello       # a plugin, pinned and capability-checked
 rigel handoff                           # a rules-preserving prompt for the next session
@@ -259,8 +260,9 @@ The gaps are part of the record:
   none of those CLIs is installed on the build machine; a live Claude subscription turn has not run.
 - **The keyboard exit test runs in the browser preview**, not against a packaged build; that
   real-build walk is the remaining proof.
-- The static safety scan is not a proof that a skill is harmless. `A` is unreachable from a static
-  scan and stays reserved.
+- The static safety scan and NVIDIA SkillSpector are not proof that a skill is harmless. `A` is
+  unreachable from a static scan and stays reserved. SkillSpector is an external Python tool:
+  a missing scanner fails closed until it is installed or `RIGEL_SKILLSPECTOR_BIN` points at it.
 - The merge reviewer is a model, not a proof. The patch journal and the worktree are what make a bad
   merge recoverable.
 

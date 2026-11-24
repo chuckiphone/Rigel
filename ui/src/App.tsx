@@ -673,7 +673,9 @@ export default function App() {
       setNotice(
         `${report.name} installed in ${report.paths.length} skill store${
           report.paths.length === 1 ? "" : "s"
-        }.${report.replaced ? " The previous copy was replaced." : ""}`,
+        } · SkillSpector ${report.scan.recommendation} ${report.scan.score}/100.${
+          report.replaced ? " The previous copy was replaced." : ""
+        }`,
       );
     } catch (problem) {
       setNotice(problem instanceof Error ? problem.message : String(problem));
@@ -899,7 +901,9 @@ ${task}`,
       setNotice(
         `${report.with_body} skills from ${report.repo ?? repo} · ${report.added} added · ${
           report.http_requests
-        } requests`,
+        } requests${report.scan ? ` · SkillSpector ${report.scan.recommendation} ${report.scan.score}/100` : ""}${
+          report.blocked ? ` · ${report.blocked} blocked` : ""
+        }`,
       );
       setRepoInput("");
       setReload((value) => value + 1);

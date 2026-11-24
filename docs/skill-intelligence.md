@@ -127,10 +127,11 @@ Ship a small, curated set so the app is useful before the user searches. Two are
 
 ### Bundled skills and the quality gate
 
-Eight skills now ship inside the binary as reviewed `SKILL.md` bodies, indexed as
+Ten skills now ship inside the binary as reviewed `SKILL.md` bodies, indexed as
 `builtin:<slug>` at window launch: SkillEvaluator, Headroom, AG-UI, mcptoon, llmfit, Semble,
-Cognee (evaluate only) and Blender MCP. Indexing writes only to the local shelf. Copying them
-into `~/.agents/skills` and `~/.claude/skills` is a separate `rigel skills builtin --install`.
+Cognee (evaluate only), Blender MCP, Superpowers and Untangle Codebase. Indexing writes only to
+the local shelf. Copying them into `~/.agents/skills` and `~/.claude/skills` is a separate
+`rigel skills builtin --install`.
 
 NVIDIA **SkillEvaluator** (Apache-2.0) was installed and run on the folder on 22 Nov 2026:
 
@@ -138,13 +139,72 @@ NVIDIA **SkillEvaluator** (Apache-2.0) was installed and run on the folder on 22
 for dir in skills/builtin/*/; do skillevaluator quality-check "$dir"; done
 ```
 
-All eight pass the required check with grade A, between **90.0 and 96.2 / 100**. The findings
-left are advisory: some descriptions could name when *not* to use the skill, and some entries
-lack a troubleshooting section or worked example. Two licence notes in the original shortlist
-were corrected by the pinned repositories: Headroom is Apache-2.0, not unverified.
+The original eight pass the required check with grade A, between **90.0 and 96.2 / 100**.
+Superpowers and Untangle Codebase were added after that sweep and follow the same frontmatter
+and body rules. The findings left are advisory: some descriptions could name when *not* to use
+the skill, and some entries lack a troubleshooting section or worked example. Two licence notes
+in the original shortlist were corrected by the pinned repositories: Headroom is Apache-2.0,
+not unverified.
 
 The static check is a floor, not a certificate. It does not execute a skill's commands, and the
 bundled bodies tell the agent to check a CLI's `--help` rather than trust a remembered flag.
+
+### Pre-download gate: NVIDIA SkillSpector
+
+Every third-party acquisition path now goes through NVIDIA
+[SkillSpector](https://github.com/NVIDIA/SkillSpector): `SkillIndex::index_repo`, `index_skill`
+(the skills.sh importer), the launch and five-minute source refresh, Settings → Skill shelf, and
+`rigel skills index`. A single-skill URL is preflighted before Rigel fetches it. A repository
+collection is preflighted before the walk too; because one aggregate verdict cannot tell two
+independent skills apart, Rigel then writes the exact fetched bodies into one disposable
+collection, scans it recursively, drops only the skills SkillSpector blocks, and ingests the
+rest. Nothing is written to the index or a blob store before that per-skill scan. Installation
+is gated again at `SkillIndex::install`, so a body indexed before the gate existed — or one
+copied into the index by a direct ingest — is still scanned before any harness store is touched.
+The install gate scans the exact `SKILL.md` bytes in a disposable directory and removes it
+before writing.
+
+The scanner runs its static, local pass:
+
+```bash
+skillspector scan <repo-or-directory> --no-llm --format json
+```
+
+`--no-llm` is deliberate: no skill body, repository content or prompt goes to a model provider,
+and no provider key is needed. The gate is fail-closed. A missing executable, a non-JSON report,
+a missing score or recommendation, a scanner error exit, omitted recursive results, a scanner
+report with incomplete coverage, `risk_assessment.score > 50`, a `HIGH`/`CRITICAL` severity, or
+`DO_NOT_INSTALL` stops or filters the operation. `CAUTION` is allowed and carried in the ingest
+or install receipt so the shelf can show it; `SAFE` is not described as a guarantee. A blocked
+single-skill target creates no source row and downloads no body. A blocked skill inside a
+collection writes no row or blob, is named on stderr and counted in the ingest receipt's
+`blocked` field, while safe siblings still index. A blocked install creates no harness directory.
+
+The preflight makes SkillSpector clone or read the target once; the exact-body pass is what
+enforces collections. This means a collection's `SKILL.md` bytes reach memory before their scan,
+but never SQLite, the blob directory or a harness store. Scanning every remote subdirectory
+separately before the walk would clone the whole repository once per skill, which is why the
+collection pass is one local recursive invocation. Rigel downloads and installs only
+`SKILL.md`, not a repository's bundled scripts, so those bodies are the installed artifact the
+collection pass can prove. A single-skill URL preflight also sees that directory's scripts; a
+collection's aggregate preflight sees the whole repository but is advisory, not the per-skill
+gate.
+
+Install the scanner once (Python 3.12+ and uv):
+
+```bash
+uv tool install git+https://github.com/NVIDIA/SkillSpector.git
+```
+
+If its shim is not on the app's PATH, set `RIGEL_SKILLSPECTOR_BIN` to the executable. Rigel
+does not install the Python tool for you. SkillSpector is Apache-2.0; its own dependency and
+vulnerability lookups are outside Rigel's network policy, and the gate is a static floor rather
+than a sandbox.
+
+On 24 Nov 2026, SkillSpector 2.13.7 scanned the ten bundled bodies through this path. Nine were
+`SAFE` (0–7/100); `superpowers` was `CAUTION` at 45/100 with three findings. The policy above
+allowed the caution verdict and the install receipt showed it; nothing was silently relabelled
+as safe. Those are scanner findings, not a claim that the built-in review was wrong.
 
 ---
 

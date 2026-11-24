@@ -22,7 +22,9 @@ is in [SECURITY.md](../SECURITY.md). A per-call receipt with purposes and retent
 - **OmniRoute.** The local router runs on loopback and forwards to whichever provider it is
   configured to use.
 - **Skills.** `rigel skills index` reads GitHub on demand; `rigel skills sync` reads SkillsMP and
-  SkillHub on demand.
+  SkillHub on demand. Before a body is accepted into the index or installed, the external NVIDIA
+  SkillSpector scanner runs locally with `--no-llm`, so no skill content goes to a model provider;
+  the scanner may resolve public repository and vulnerability data itself.
 - **Updates.** With the update switch on, Rigel requests the latest GitHub release manifest once at
   launch and on demand. Auto-install downloads a verified installer only when an update is offered;
   the installer is started only after its SHA-256 matches the signed manifest, and it restarts Rigel

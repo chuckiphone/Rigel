@@ -401,19 +401,13 @@ async fn install_skill(dir: &Path, entry: &CatalogEntry, as_json: bool) -> ExitC
         Ok(index) => index,
         Err(error) => return skills_failure(error, as_json),
     };
-    if !entry.skills.is_empty()
-        && let Err(error) = index.install_builtin().await
+    let installed = match index
+        .install_builtin_skills(&entry.skills, &skill_roots())
+        .await
     {
-        return skills_failure(error, as_json);
-    }
-    let mut installed = Vec::new();
-    for id in &entry.skills {
-        let qualified = format!("builtin:{id}");
-        match index.install(&qualified, &skill_roots()).await {
-            Ok(report) => installed.push(report),
-            Err(error) => return skills_failure(error, as_json),
-        }
-    }
+        Ok(reports) => reports,
+        Err(error) => return skills_failure(error, as_json),
+    };
     if as_json {
         println!(
             "{}",
@@ -426,7 +420,11 @@ async fn install_skill(dir: &Path, entry: &CatalogEntry, as_json: bool) -> ExitC
         println!("{} is a skill entry with no built-in body", entry.name);
     } else {
         for report in &installed {
-            println!("installed {} to:", report.name);
+            println!(
+                "installed {} (SkillSpector {}) to:",
+                report.name,
+                report.scan.summary()
+            );
             for path in &report.paths {
                 println!("  {}", path.display());
             }

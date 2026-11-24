@@ -1906,6 +1906,16 @@ export interface SkillInstallReport {
   directory: string;
   paths: string[];
   replaced: boolean;
+  scan: SkillScan;
+}
+
+/** SkillSpector's verdict, carried by every download and install receipt. */
+export interface SkillScan {
+  score: number;
+  severity: string;
+  recommendation: string;
+  findings: number;
+  scanner: string;
 }
 
 /** One row from the embedded MCP registry catalogue. */
@@ -2033,6 +2043,8 @@ export interface IngestReport {
   http_requests: number;
   truncated: boolean;
   clusters: number;
+  scan: SkillScan | null;
+  blocked: number;
 }
 
 /** What the shelf needs from a source. `mock.ts` implements the same shape for previews. */

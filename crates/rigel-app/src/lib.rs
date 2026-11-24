@@ -777,16 +777,11 @@ fn plugins_install(name: String) -> Result<serde_json::Value, String> {
         match entry.kind {
             rigel_core::plugin::CatalogKind::Skill => {
                 let index = SkillIndex::open(&dir).await.map_err(message)?;
-                index.install_builtin().await.map_err(message)?;
                 let roots = skill_roots()?;
-                let mut installed = Vec::new();
-                for id in &entry.skills {
-                    let report = index
-                        .install(&format!("builtin:{id}"), &roots)
-                        .await
-                        .map_err(message)?;
-                    installed.push(report);
-                }
+                let installed = index
+                    .install_builtin_skills(&entry.skills, &roots)
+                    .await
+                    .map_err(message)?;
                 Ok(serde_json::json!({
                     "ok": true, "kind": "skill", "name": entry.name,
                     "skills": installed

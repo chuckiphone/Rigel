@@ -11,9 +11,7 @@ use std::process::ExitCode;
 use std::time::Duration;
 
 use clap::{Parser, Subcommand};
-use rigel_core::{
-    SessionService, SkillIndex, SkillsError, Store, default_index_dir, skills::Source,
-};
+use rigel_core::{SessionService, SkillIndex, SkillsError, Store, default_index_dir};
 use serde_json::json;
 
 mod audit;
@@ -1000,43 +998,41 @@ async fn run_skills(dir: &Path, command: SkillCommand) -> ExitCode {
             } else {
                 rigel_core::SyncPolicy::normal()
             };
-            let source = match index.github().await {
-                Ok(source) => source.with_limit(limit),
-                Err(error) => return skills_failure(error, as_json),
-            };
-
-            match source.fetch_repo(&target, policy).await {
-                Ok(snapshot) => match index.ingest(&snapshot).await {
-                    Ok(report) => {
-                        if as_json {
-                            println!("{}", serde_json::to_string(&report).unwrap_or_default());
-                        } else {
+            match index.index_repo_with_limit(&target, policy, limit).await {
+                Ok(report) => {
+                    if as_json {
+                        println!("{}", serde_json::to_string(&report).unwrap_or_default());
+                    } else {
+                        println!(
+                            "{} skills from {}@{}  (+{} added, {} updated, {} unchanged)",
+                            report.with_body,
+                            report.repo.clone().unwrap_or_default(),
+                            report.branch.clone().unwrap_or_default(),
+                            report.added,
+                            report.updated,
+                            report.unchanged
+                        );
+                        println!(
+                            "  {} of {} found · {} requests · {} clusters",
+                            report.with_body, report.found, report.http_requests, report.clusters
+                        );
+                        if report.truncated {
                             println!(
-                                "{} skills from {}@{}  (+{} added, {} updated, {} unchanged)",
-                                report.with_body,
-                                report.repo.clone().unwrap_or_default(),
-                                report.branch.clone().unwrap_or_default(),
-                                report.added,
-                                report.updated,
-                                report.unchanged
+                                "  note: GitHub truncated the tree; some skills were not seen"
                             );
-                            println!(
-                                "  {} of {} found · {} requests · {} clusters",
-                                report.with_body,
-                                report.found,
-                                report.http_requests,
-                                report.clusters
-                            );
-                            if report.truncated {
-                                println!(
-                                    "  note: GitHub truncated the tree; some skills were not seen"
-                                );
-                            }
                         }
-                        ExitCode::SUCCESS
+                        if let Some(scan) = &report.scan {
+                            println!("  SkillSpector {}", scan.summary());
+                        }
+                        if report.blocked > 0 {
+                            println!(
+                                "  SkillSpector blocked {} skill(s); they were not indexed",
+                                report.blocked
+                            );
+                        }
                     }
-                    Err(error) => skills_failure(error, as_json),
-                },
+                    ExitCode::SUCCESS
+                }
                 Err(error) => skills_failure(error, as_json),
             }
         }
@@ -1311,7 +1307,11 @@ async fn run_skills(dir: &Path, command: SkillCommand) -> ExitCode {
                 );
             } else {
                 for report in &installed {
-                    println!("{} →", report.name);
+                    println!(
+                        "{} →  (SkillSpector {})",
+                        report.name,
+                        report.scan.summary()
+                    );
                     for path in &report.paths {
                         println!("  {}", path.display());
                     }

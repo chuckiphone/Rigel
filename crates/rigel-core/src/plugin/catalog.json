@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "updated": "2026-11-22",
+  "updated": "2026-11-24",
   "entries": [
     {
       "name": "skillevaluator",
@@ -178,6 +178,22 @@
       ],
       "install": "rigel skills builtin --install",
       "note": "Rigel-native adaptation of obra/superpowers, MIT. Installs into both ~/.agents/skills and ~/.claude/skills, so native Rigel, Claude Code, Codex, Cursor, Cline, Gemini CLI and Muse Code can read the same body."
+    },
+    {
+      "name": "untangle-codebase",
+      "title": "Untangle Codebase",
+      "kind": "skill",
+      "tier": "verified",
+      "category": "Workflow",
+      "description": "A whole-codebase refactor method: inventory hidden and needless links and special cases, redesign from first principles, then verify that behavior is unchanged.",
+      "license": "MIT",
+      "homepage": "https://buildwithclaude.com/skill/untangle-codebase",
+      "capabilities": [],
+      "skills": [
+        "untangle-codebase"
+      ],
+      "install": "rigel skills builtin --install",
+      "note": "Rigel adaptation of Maze's caldoai/skills untangle-codebase (MIT), found on Build with Claude. Ask before a broad refactor; never delete a meaningful test to make one pass."
     },
     {
       "name": "42crunch-api-security-testing",

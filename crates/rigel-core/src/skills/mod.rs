@@ -8,6 +8,7 @@
 //! |---|---|
 //! | [`frontmatter`] | reading `---` headers |
 //! | [`scan`] | static capability inventory and the grade |
+//! | [`scanner`] | NVIDIA SkillSpector pre-download and pre-install gate |
 //! | [`blob`] | bodies on disk, addressed by sha256 |
 //! | [`http`] | cached, conditional outbound requests |
 //! | [`source`] | the `Source` trait and its value types |
@@ -30,6 +31,7 @@ pub mod hub;
 pub mod index;
 pub mod run;
 pub mod scan;
+pub mod scanner;
 pub mod search;
 pub mod skillssh;
 pub mod source;
@@ -50,6 +52,7 @@ pub use index::{
     SourceRefresh, SweepReport, VariantRow, skill_dir_name,
 };
 pub use scan::{Capability, EvidenceLine, Severity};
+pub use scanner::{ScanVerdict, SkillScanner, SkillSpector};
 pub use search::{SearchHit, SearchOrder};
 pub use skillssh::{AuditVerdict, SkillsShPage};
 pub use source::{
@@ -97,6 +100,18 @@ pub enum SkillsError {
     #[error("skill {0} has no body in the local index")]
     NoBody(String),
 
+    #[error(
+        "SkillSpector blocked {target}: {recommendation} ({score}/100); no skill was downloaded or installed"
+    )]
+    ScannerBlocked {
+        target: String,
+        score: i64,
+        recommendation: String,
+    },
+
+    #[error("SkillSpector preflight failed: {0}")]
+    Scanner(String),
+
     #[error("{0}")]
     Offline(String),
 
@@ -114,7 +129,9 @@ impl SkillsError {
             SkillsError::NoSkillsFound(_)
             | SkillsError::Offline(_)
             | SkillsError::UnknownSource(_)
-            | SkillsError::Http(_) => 2,
+            | SkillsError::Http(_)
+            | SkillsError::ScannerBlocked { .. }
+            | SkillsError::Scanner(_) => 2,
             SkillsError::Unsupported(..) => 1,
             SkillsError::Storage(_)
             | SkillsError::Database(_)
@@ -154,6 +171,22 @@ fn civil_from_days(days: i64) -> (i64, u32, u32) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::Arc;
+
+    struct SafeScanner;
+
+    #[async_trait::async_trait]
+    impl SkillScanner for SafeScanner {
+        async fn scan(&self, _target: &str) -> Result<ScanVerdict, SkillsError> {
+            Ok(ScanVerdict {
+                score: 0,
+                severity: "LOW".into(),
+                recommendation: "SAFE".into(),
+                findings: 0,
+                scanner: "fake".into(),
+            })
+        }
+    }
 
     #[test]
     fn timestamps_render_as_utc_without_a_date_crate() {
@@ -181,7 +214,10 @@ mod tests {
 
         let data = tempfile::tempdir().unwrap();
         let stores = tempfile::tempdir().unwrap();
-        let index = SkillIndex::open(data.path()).await.unwrap();
+        let index = SkillIndex::open(data.path())
+            .await
+            .unwrap()
+            .with_scanner(Arc::new(SafeScanner));
         let body = "---\nname: PDF Tools\ndescription: test\n---\n\nRead the PDF.\n";
         let sha = index.blobs().put(body.as_bytes()).unwrap();
         let record = SkillRecord {
@@ -209,9 +245,31 @@ mod tests {
 
         assert_eq!(report.directory, "pdf-tools");
         assert_eq!(report.paths.len(), 2);
+        assert_eq!(report.scan.recommendation, "SAFE");
         for path in &report.paths {
             assert_eq!(fs::read_to_string(path).unwrap(), body);
         }
         assert!(index.installed(&record.id, &roots).await.unwrap());
+    }
+
+    #[tokio::test]
+    async fn a_catalogue_skill_set_seeds_and_installs_in_one_place() {
+        let data = tempfile::tempdir().unwrap();
+        let stores = tempfile::tempdir().unwrap();
+        let index = SkillIndex::open(data.path())
+            .await
+            .unwrap()
+            .with_scanner(Arc::new(SafeScanner));
+        let roots = [stores.path().join("agents")];
+
+        let reports = index
+            .install_builtin_skills(&["untangle-codebase".to_string()], &roots)
+            .await
+            .unwrap();
+
+        assert_eq!(reports.len(), 1);
+        assert_eq!(reports[0].scan.recommendation, "SAFE");
+        assert_eq!(reports[0].paths.len(), 1);
+        assert!(reports[0].paths[0].is_file());
     }
 }

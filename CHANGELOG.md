@@ -4,6 +4,13 @@ Every release, newest first. The heading is the version its `v*` tag publishes.
 
 ## 0.4.0-1 — 2026-11-24
 
+- feat(skills): gate every third-party repository walk and every install with NVIDIA
+  SkillSpector's static `--no-llm` scan; single-skill URLs are preflighted, repository bodies
+  are scanned as a collection before indexing and only blocked skills are dropped, missing
+  scanners/unreadable reports/error exits/incomplete coverage/scores above 50 fail closed, and
+  `CAUTION` is recorded in the receipt
+- feat(skills): add Untangle Codebase to the built-in shelf and catalogue, a Rigel adaptation of
+  caldoai/skills' MIT-licensed whole-codebase refactor method found on Build with Claude
 - feat(test): resolve changed items from the Git hunk and scan imported or module-qualified
   references, so `rigel impact` names the function/type/module behind a change and a test file
   that reaches it adds an exact target; package selection remains the floor, common names and

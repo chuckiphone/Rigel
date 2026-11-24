@@ -76,6 +76,11 @@ pub const BUILTIN_SKILLS: &[BuiltinSkill] = &[
         name: "superpowers",
         body: include_str!("../../../../skills/builtin/superpowers/SKILL.md"),
     },
+    BuiltinSkill {
+        slug: "untangle-codebase",
+        name: "untangle-codebase",
+        body: include_str!("../../../../skills/builtin/untangle-codebase/SKILL.md"),
+    },
 ];
 
 pub fn all() -> &'static [BuiltinSkill] {

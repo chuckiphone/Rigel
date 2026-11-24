@@ -2469,6 +2469,10 @@ export default function SettingsView({
             {indexReport.found} found · {indexReport.added} added · {indexReport.updated} updated ·{" "}
             {indexReport.unchanged} unchanged · {indexReport.http_requests} request(s)
             {indexReport.truncated ? " · truncated" : ""}
+            {indexReport.scan
+              ? ` · SkillSpector ${indexReport.scan.recommendation} ${indexReport.scan.score}/100`
+              : ""}
+            {indexReport.blocked ? ` · ${indexReport.blocked} blocked` : ""}
           </p>
         ) : null}
       </section>

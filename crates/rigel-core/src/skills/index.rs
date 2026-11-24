@@ -8,9 +8,10 @@
 //! SQLite and the blob directory, and take no `Source`. Only `index_repo` and the marketplace
 //! sync methods touch the network.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
 use sqlx::Row;
@@ -18,9 +19,12 @@ use sqlx::Row;
 use super::blob::BlobStore;
 use super::cluster;
 use super::evidence::{Evidence, EvidenceSummary, claims_from_description};
-use super::github::GitHubSource;
+use super::github::{GitHubSource, parse_repo_input};
 use super::hub::{SkillHubSource, SkillsMpSource};
 use super::scan::Capability;
+use super::scanner::{
+    CollectionScan, ScanVerdict, SkillScanner, SkillSpector, body_scan_dir, canonical_target,
+};
 use super::search::{SearchHit, SearchOrder, fts_query};
 use super::source::{
     RepoSnapshot, SkillRecord, Source, SourceState, SourceStatus, SyncPolicy, load_status,
@@ -34,6 +38,7 @@ const GITHUB_BASE: &str = "https://api.github.com";
 pub struct SkillIndex {
     store: Store,
     blobs: BlobStore,
+    scanner: Arc<dyn SkillScanner>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -49,6 +54,11 @@ pub struct IngestReport {
     pub http_requests: usize,
     pub truncated: bool,
     pub clusters: usize,
+    /// The worst accepted body verdict. `None` when a caller handed `ingest` an already-fetched
+    /// snapshot; blocked bodies never reach this report because they are not ingested.
+    pub scan: Option<ScanVerdict>,
+    /// Skills whose exact body SkillSpector blocked. They are not written to the index.
+    pub blocked: usize,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -77,6 +87,8 @@ pub struct InstallReport {
     pub paths: Vec<PathBuf>,
     /// True when an existing `SKILL.md` was replaced with a different body.
     pub replaced: bool,
+    /// The pre-install scan of the exact bytes written.
+    pub scan: ScanVerdict,
 }
 
 /// One `rigel skills sweep` — both marketplace walks, their row counts, and what the
@@ -133,6 +145,7 @@ impl SkillIndex {
         Ok(Self {
             store,
             blobs: BlobStore::new(data_dir),
+            scanner: Arc::new(SkillSpector),
         })
     }
 
@@ -140,7 +153,15 @@ impl SkillIndex {
         Self {
             store,
             blobs: BlobStore::new(data_dir),
+            scanner: Arc::new(SkillSpector),
         }
+    }
+
+    /// Replace the scanner. Production uses [`SkillSpector`]; tests inject a fake so the
+    /// gate's ordering can be asserted without installing Python or reaching GitHub.
+    pub fn with_scanner(mut self, scanner: Arc<dyn SkillScanner>) -> Self {
+        self.scanner = scanner;
+        self
     }
 
     pub fn store(&self) -> &Store {
@@ -178,7 +199,17 @@ impl SkillIndex {
         target: &str,
         policy: SyncPolicy,
     ) -> Result<IngestReport, SkillsError> {
-        self.walk_repo(target, policy, None).await
+        self.walk_repo(target, policy, None, None).await
+    }
+
+    /// The same walk with the CLI's per-repository body cap.
+    pub async fn index_repo_with_limit(
+        &self,
+        target: &str,
+        policy: SyncPolicy,
+        limit: usize,
+    ) -> Result<IngestReport, SkillsError> {
+        self.walk_repo(target, policy, None, Some(limit)).await
     }
 
     /// Index one skill by its directory name. The skills.sh import uses this so a page costs
@@ -189,7 +220,7 @@ impl SkillIndex {
         policy: SyncPolicy,
         slug: &str,
     ) -> Result<IngestReport, SkillsError> {
-        self.walk_repo(target, policy, Some(slug)).await
+        self.walk_repo(target, policy, Some(slug), None).await
     }
 
     async fn walk_repo(
@@ -197,13 +228,47 @@ impl SkillIndex {
         target: &str,
         policy: SyncPolicy,
         slug: Option<&str>,
+        limit: Option<usize>,
     ) -> Result<IngestReport, SkillsError> {
+        // The target preflight runs before `github()` constructs a source and before any
+        // metadata or body request. An explicit single-skill URL can be refused here. A base
+        // repository's aggregate report is not used to reject every skill: after the walk, each
+        // exact body is scanned independently and only blocked skills are dropped.
+        let explicit_skill = parse_repo_input(target)
+            .map(|repo| repo.git_ref.is_some() && repo.path.is_some())
+            .unwrap_or(false);
+        let preflight = self.scanner.scan(&canonical_target(target)).await?;
+        if preflight.blocked() && explicit_skill {
+            return Err(SkillsError::ScannerBlocked {
+                target: target.to_string(),
+                score: preflight.score,
+                recommendation: preflight.recommendation,
+            });
+        }
+        if preflight.blocked() {
+            eprintln!(
+                "rigel: repository preflight is {}; each exact SKILL.md body is scanned before indexing",
+                preflight.summary()
+            );
+        }
+
         let mut source = self.github().await?;
         if let Some(slug) = slug {
             source = source.with_slug(slug);
         }
+        if let Some(limit) = limit {
+            source = source.with_limit(limit);
+        }
         match source.fetch_repo(target, policy).await {
-            Ok(snapshot) => self.ingest(&snapshot).await,
+            Ok(mut snapshot) => {
+                let (scan, blocked) = self
+                    .gate_snapshot(&mut snapshot, explicit_skill.then_some(&preflight))
+                    .await?;
+                let mut report = self.ingest(&snapshot).await?;
+                report.scan = Some(scan);
+                report.blocked = blocked;
+                Ok(report)
+            }
             Err(error) => {
                 let _ = self
                     .set_source(
@@ -272,7 +337,56 @@ impl SkillIndex {
             http_requests: snapshot.http_requests,
             truncated: snapshot.truncated,
             clusters,
+            scan: None,
+            blocked: 0,
         })
+    }
+
+    /// Scan the exact bodies a repository walk produced, drop the ones SkillSpector blocks,
+    /// and return the worst verdict among those that remain. Writing the bodies to one temporary
+    /// collection makes this a single scanner invocation even for a 500-skill repository.
+    async fn gate_snapshot(
+        &self,
+        snapshot: &mut RepoSnapshot,
+        single_preflight: Option<&ScanVerdict>,
+    ) -> Result<(ScanVerdict, usize), SkillsError> {
+        if snapshot.skills.is_empty() {
+            return Err(SkillsError::NoSkillsFound(format!(
+                "no skill body was read from {}",
+                snapshot.repo
+            )));
+        }
+
+        if snapshot.skills.len() == 1
+            && let Some(preflight) = single_preflight
+        {
+            return Ok((preflight.clone(), 0));
+        }
+
+        let root = body_scan_dir();
+        fs::create_dir_all(&root)?;
+        let mut labels = Vec::with_capacity(snapshot.skills.len());
+        for (index, skill) in snapshot.skills.iter().enumerate() {
+            let label = format!("skill-{index:04}");
+            let folder = root.join(&label);
+            if let Err(error) = fs::create_dir_all(&folder)
+                .and_then(|()| fs::write(folder.join("SKILL.md"), &skill.body))
+            {
+                let _ = fs::remove_dir_all(&root);
+                return Err(error.into());
+            }
+            labels.push(label);
+        }
+
+        let target = root.to_string_lossy().into_owned();
+        let scan = self
+            .scanner
+            .scan_collection(&target, snapshot.skills.len())
+            .await;
+        let _ = fs::remove_dir_all(&root);
+        let scan = scan?;
+
+        apply_collection(snapshot, &scan)
     }
 
     /// The shared, published catalogue. Metadata only: rows carry no body, so a seeded skill is
@@ -401,12 +515,9 @@ impl SkillIndex {
 
     /// Upsert metadata rows that have no body yet — the marketplaces.
     pub async fn ingest_records(&self, records: &[SkillRecord]) -> Result<usize, SkillsError> {
-        for record in records {
-            self.write_skill(record).await?;
-            self.record_claims(record).await?;
-        }
+        let written = self.ingest_records_quiet(records).await?;
         self.recluster().await?;
-        Ok(records.len())
+        Ok(written)
     }
 
     /// Same upsert, without the per-call recluster. The sweep calls this once per page and
@@ -1093,6 +1204,14 @@ impl SkillIndex {
             .body(id)
             .await?
             .ok_or_else(|| SkillsError::NoBody(id.to_string()))?;
+        let scan = self.scan_body(&body).await?;
+        if scan.blocked() {
+            return Err(SkillsError::ScannerBlocked {
+                target: name.clone(),
+                score: scan.score,
+                recommendation: scan.recommendation,
+            });
+        }
         let directory = skill_dir_name(&name);
         let mut paths = Vec::with_capacity(roots.len());
         let mut replaced = false;
@@ -1122,7 +1241,23 @@ impl SkillIndex {
             directory,
             paths,
             replaced,
+            scan,
         })
+    }
+
+    /// Scan the exact `SKILL.md` bytes an install would write. SkillSpector reads a directory,
+    /// so the body gets a disposable one; it is removed before an install can write anything.
+    async fn scan_body(&self, body: &str) -> Result<ScanVerdict, SkillsError> {
+        let directory = body_scan_dir();
+        fs::create_dir_all(&directory)?;
+        let path = directory.join("SKILL.md");
+        let target = path.to_string_lossy().into_owned();
+        let outcome = match fs::write(&path, body) {
+            Ok(()) => self.scanner.scan(&target).await,
+            Err(error) => Err(error.into()),
+        };
+        let _ = fs::remove_dir_all(&directory);
+        outcome
     }
 
     /// Whether this row already has a `SKILL.md` in every supplied store.
@@ -1138,6 +1273,24 @@ impl SkillIndex {
         Ok(roots
             .iter()
             .all(|root| root.join(&directory).join("SKILL.md").is_file()))
+    }
+
+    /// Seed the compiled-in bodies and install a catalogue entry's skill ids. Both the CLI and
+    /// the window used to spell this order and the `builtin:` id convention themselves.
+    pub async fn install_builtin_skills(
+        &self,
+        ids: &[String],
+        roots: &[PathBuf],
+    ) -> Result<Vec<InstallReport>, SkillsError> {
+        if ids.is_empty() {
+            return Ok(Vec::new());
+        }
+        self.install_builtin().await?;
+        let mut reports = Vec::with_capacity(ids.len());
+        for id in ids {
+            reports.push(self.install(&format!("builtin:{id}"), roots).await?);
+        }
+        Ok(reports)
     }
 
     pub async fn status(&self) -> Result<Vec<SourceStatus>, SkillsError> {
@@ -1425,6 +1578,72 @@ fn broken_retry_after(failures: u32) -> i64 {
     BROKEN_RETRY_MS[step.min(BROKEN_RETRY_MS.len() - 1)]
 }
 
+fn worse(candidate: &ScanVerdict, current: Option<&ScanVerdict>) -> bool {
+    match current {
+        None => true,
+        Some(current) => {
+            candidate.score > current.score
+                || (candidate.score == current.score
+                    && candidate.severity_rank() > current.severity_rank())
+        }
+    }
+}
+
+/// Apply a per-skill collection report to the snapshot: keep allowed skills, drop blocked ones,
+/// and fail if the scanner did not answer for any body. Split from `gate_snapshot` so the
+/// filtering decision can be tested without a running Python process.
+fn apply_collection(
+    snapshot: &mut RepoSnapshot,
+    scan: &CollectionScan,
+) -> Result<(ScanVerdict, usize), SkillsError> {
+    let by_path: HashMap<&str, &super::scanner::ScannedSkill> = scan
+        .skills
+        .iter()
+        .map(|skill| (skill.path.as_str(), skill))
+        .collect();
+    let mut accepted = Vec::with_capacity(snapshot.skills.len());
+    let mut blocked = 0usize;
+    let mut worst_blocked: Option<ScanVerdict> = None;
+    let mut worst_accepted: Option<ScanVerdict> = None;
+
+    for (index, skill) in std::mem::take(&mut snapshot.skills).into_iter().enumerate() {
+        let label = format!("skill-{index:04}");
+        let Some(report) = by_path.get(label.as_str()) else {
+            return Err(SkillsError::Scanner(format!(
+                "SkillSpector did not return a verdict for {label}; no skill was written"
+            )));
+        };
+        if report.verdict.blocked() {
+            blocked += 1;
+            eprintln!(
+                "rigel: SkillSpector blocked {} ({}); not indexed",
+                skill.record.id,
+                report.verdict.summary()
+            );
+            if worse(&report.verdict, worst_blocked.as_ref()) {
+                worst_blocked = Some(report.verdict.clone());
+            }
+        } else {
+            if worse(&report.verdict, worst_accepted.as_ref()) {
+                worst_accepted = Some(report.verdict.clone());
+            }
+            accepted.push(skill);
+        }
+    }
+    snapshot.skills = accepted;
+
+    if let Some(verdict) = worst_accepted {
+        Ok((verdict, blocked))
+    } else {
+        let verdict = worst_blocked.unwrap_or_else(|| scan.aggregate.clone());
+        Err(SkillsError::ScannerBlocked {
+            target: snapshot.repo.clone(),
+            score: verdict.score,
+            recommendation: verdict.recommendation,
+        })
+    }
+}
+
 fn row_to_hit(row: &sqlx::sqlite::SqliteRow) -> SearchHit {
     SearchHit {
         id: row.get("id"),
@@ -1513,4 +1732,122 @@ struct PrototypeEntry {
     path: Option<String>,
     #[serde(rename = "savedAt", default)]
     saved_at: Option<i64>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::super::scanner::ScannedSkill;
+    use super::*;
+    use crate::skills::FetchedSkill;
+
+    fn verdict(score: i64, recommendation: &str, severity: &str) -> ScanVerdict {
+        ScanVerdict {
+            score,
+            severity: severity.to_string(),
+            recommendation: recommendation.to_string(),
+            findings: 1,
+            scanner: "fake".to_string(),
+        }
+    }
+
+    fn fetched(id: &str) -> FetchedSkill {
+        FetchedSkill {
+            record: SkillRecord {
+                id: id.to_string(),
+                name: id.to_string(),
+                description: "test".to_string(),
+                source: "github".to_string(),
+                repo: Some("acme/skills".to_string()),
+                path: Some(format!("{id}/SKILL.md")),
+                url: None,
+                body_sha: None,
+                grade: None,
+                grade_scope: None,
+                license: None,
+                stars: None,
+                installs: None,
+                tokens: None,
+                capabilities: Vec::new(),
+                simhash: None,
+            },
+            body: format!("---\nname: {id}\n---\n"),
+        }
+    }
+
+    fn snapshot() -> RepoSnapshot {
+        RepoSnapshot {
+            source: "github".to_string(),
+            repo: "acme/skills".to_string(),
+            branch: "main".to_string(),
+            stars: 1,
+            license: None,
+            truncated: false,
+            found: 3,
+            http_requests: 5,
+            skills: vec![fetched("safe"), fetched("bad"), fetched("caution")],
+        }
+    }
+
+    fn collection() -> CollectionScan {
+        CollectionScan {
+            aggregate: verdict(56, "DO_NOT_INSTALL", "HIGH"),
+            skills: vec![
+                ScannedSkill {
+                    name: "safe".into(),
+                    path: "skill-0000".into(),
+                    verdict: verdict(0, "SAFE", "LOW"),
+                },
+                ScannedSkill {
+                    name: "bad".into(),
+                    path: "skill-0001".into(),
+                    verdict: verdict(56, "DO_NOT_INSTALL", "HIGH"),
+                },
+                ScannedSkill {
+                    name: "caution".into(),
+                    path: "skill-0002".into(),
+                    verdict: verdict(45, "CAUTION", "MEDIUM"),
+                },
+            ],
+        }
+    }
+
+    #[test]
+    fn collection_gate_drops_only_the_blocked_skill() {
+        let mut snapshot = snapshot();
+        let (worst, blocked) = apply_collection(&mut snapshot, &collection()).unwrap();
+
+        assert_eq!(blocked, 1);
+        assert_eq!(worst.recommendation, "CAUTION");
+        assert_eq!(worst.score, 45);
+        let ids: Vec<&str> = snapshot
+            .skills
+            .iter()
+            .map(|skill| skill.record.id.as_str())
+            .collect();
+        assert_eq!(ids, vec!["safe", "caution"]);
+    }
+
+    #[test]
+    fn an_all_blocked_collection_returns_the_worst_refusal() {
+        let mut snapshot = snapshot();
+        let mut scan = collection();
+        for skill in &mut scan.skills {
+            skill.verdict = verdict(80, "DO_NOT_INSTALL", "CRITICAL");
+        }
+        let error = apply_collection(&mut snapshot, &scan).unwrap_err();
+        assert!(matches!(
+            error,
+            SkillsError::ScannerBlocked { score: 80, .. }
+        ));
+        assert!(snapshot.skills.is_empty());
+    }
+
+    #[test]
+    fn a_missing_per_skill_verdict_fails_closed() {
+        let mut snapshot = snapshot();
+        let mut scan = collection();
+        scan.skills.pop();
+        let error = apply_collection(&mut snapshot, &scan).unwrap_err();
+        assert!(matches!(error, SkillsError::Scanner(_)));
+    }
 }

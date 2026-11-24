@@ -359,6 +359,20 @@ async fn built_in_skills_are_indexed_once_and_searchable_offline() {
     let detail = index.get("builtin:llmfit").await.unwrap().unwrap();
     assert!(detail.skill.has_body);
 
+    let untangle = index.search("untangle a codebase", 5).await.unwrap();
+    assert!(
+        untangle
+            .iter()
+            .any(|hit| hit.id == "builtin:untangle-codebase" && hit.source == "builtin"),
+        "the bundled untangle-codebase row should be searchable: {untangle:?}"
+    );
+    let untangle = index
+        .get("builtin:untangle-codebase")
+        .await
+        .unwrap()
+        .expect("untangle-codebase is in the shelf");
+    assert!(untangle.skill.has_body);
+
     let before = index.count("").await.unwrap();
     let second = index.install_builtin().await.unwrap();
     assert_eq!(second.written, first.written);
