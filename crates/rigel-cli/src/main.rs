@@ -17,6 +17,7 @@ use rigel_core::{
 use serde_json::json;
 
 mod audit;
+mod backup;
 mod claims;
 mod cloud;
 mod doctor;
@@ -115,6 +116,12 @@ enum Command {
     Snapshot {
         #[command(subcommand)]
         command: SnapshotCommand,
+    },
+
+    /// Encrypted backups of the global data directory.
+    Backup {
+        #[command(subcommand)]
+        command: backup::BackupCommand,
     },
 
     /// Explain which provider and model a turn would use, and why.
@@ -603,6 +610,8 @@ async fn entry() -> ExitCode {
         Command::Keys { command } => phase3::run_keys(command).await,
 
         Command::Snapshot { command } => phase3::run_snapshot(command, dir),
+
+        Command::Backup { command } => backup::run(command, dir).await,
 
         Command::Audit { command } => audit::run(command).await,
 

@@ -4,6 +4,10 @@ Every release, newest first. The heading is the version its `v*` tag publishes.
 
 ## 0.4.0-1 — 2026-11-24
 
+- feat(backup): add encrypted local backups of the data directory (`rigel backup
+  create|verify|restore|rotate|drill`), with a SHA-256 manifest, a consistent SQLite snapshot,
+  tamper and wrong-key detection, staged restores, passphrase rotation and a scheduler-safe
+  restore drill ([backup](docs/backup.md))
 - feat(graph): add a read-only code graph of files, top-level symbols, resolved imports and name
   references, with focus, depth and a selected-node neighbour list ([codegraph](docs/codegraph.md))
 - feat(graph): keep the graph current with a background indexer that fingerprints the project,

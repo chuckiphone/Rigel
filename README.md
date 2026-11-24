@@ -268,6 +268,7 @@ The gaps are part of the record:
 - [docs/release-notes/0.3.0.md](docs/release-notes/0.3.0.md): the detailed 0.3.0 changelog, dependencies and upgrade notes
 - [docs/what-works.md](docs/what-works.md): every surface, its state and its evidence
 - [docs/updates.md](docs/updates.md): the signed launch check, the deferred self-replace, the switches and the exact log lines
+- [docs/backup.md](docs/backup.md): encrypted local backups, restore safety, key rotation and the scheduled restore drill
 - [docs/codegraph.md](docs/codegraph.md): the Graph surface, the background indexer, the free-agent concept pass, its bounds and what leaves the machine
 - [CONTRIBUTING.md](CONTRIBUTING.md): build, checks, layout and the rules for a schema change
 - [SECURITY.md](SECURITY.md): the threat model, every network call and what is not defended
