@@ -11,6 +11,12 @@
  *   node scripts/release-check.mjs            # the whole gate
  *   node scripts/release-check.mjs --list     # print the gates, run nothing
  *   node scripts/release-check.mjs --only versions [--root <dir>]
+ *
+ * Time budget: this is a full release gate, not a pre-commit hook. A warm tree takes about two
+ * to four minutes on the reference Windows machine; a cold build can take ten. Each gate gets a
+ * twenty-minute ceiling (override with RIGEL_RELEASE_GATE_TIMEOUT_MS) so a hung test process fails
+ * with a named gate instead of blocking the release forever. The earlier 30-second shell window
+ * was shorter than the gate by design, not a script hang.
  */
 
 import { readFileSync, existsSync } from "node:fs";
@@ -27,6 +33,11 @@ const ONLY = onlyIndex >= 0 ? args[onlyIndex + 1] : null;
 const LIST = args.includes("--list");
 
 const npm = process.platform === "win32" ? "npm.cmd" : "npm";
+const configuredTimeout = Number(process.env.RIGEL_RELEASE_GATE_TIMEOUT_MS);
+const GATE_TIMEOUT_MS =
+  Number.isFinite(configuredTimeout) && configuredTimeout > 0
+    ? configuredTimeout
+    : 20 * 60 * 1000;
 
 const gates = [
   { name: "versions", checklist: "Version is", command: null },
@@ -69,6 +80,7 @@ console.log(`  versions: ${versions.version} in all four places`);
 if (ONLY === "versions") process.exit(0);
 if (ONLY) fail(`unknown --only value: ${ONLY}`);
 
+const startedAll = Date.now();
 for (const gate of gates.slice(1)) {
   const started = Date.now();
   console.log(`\n▸ ${gate.name}: ${gate.checklist}`);
@@ -80,10 +92,21 @@ for (const gate of gates.slice(1)) {
     stdio: "inherit",
     shell: process.platform === "win32" && /\.cmd$/i.test(command),
     env: { ...process.env, CI: process.env.CI ?? "true" },
+    timeout: GATE_TIMEOUT_MS,
+    killSignal: "SIGTERM",
   });
-  if (result.error) fail(`${gate.name} could not start: ${result.error.message}`);
+  if (result.error) {
+    const limit = `${Math.round(GATE_TIMEOUT_MS / 1000)}s`;
+    fail(
+      result.error.code === "ETIMEDOUT"
+        ? `${gate.name} exceeded its ${limit} time budget; raise RIGEL_RELEASE_GATE_TIMEOUT_MS only after finding the slow step`
+        : `${gate.name} could not start: ${result.error.message}`,
+    );
+  }
   if (result.status !== 0) fail(`${gate.name} failed with exit code ${result.status}`);
   console.log(`  ${gate.name} ok in ${((Date.now() - started) / 1000).toFixed(1)}s`);
 }
 
-console.log("\nrelease-check: every gate passed");
+console.log(
+  `\nrelease-check: every gate passed in ${((Date.now() - startedAll) / 1000).toFixed(1)}s`,
+);

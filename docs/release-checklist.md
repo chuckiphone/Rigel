@@ -83,3 +83,11 @@ vulnerability on Windows. `npm --prefix ui audit --omit=dev` reports 0 vulnerabi
 ## Future releases
 
 Copy this section into a versioned file under `docs/release-notes/` and keep the same gates.
+
+### Gate runner
+
+`node scripts/release-check.mjs` runs the six gates above in order. Budget two to four minutes on
+a warm tree and up to ten on a cold build; each gate has a twenty-minute ceiling
+(`RIGEL_RELEASE_GATE_TIMEOUT_MS`) so a hung process fails under the gate's name instead of
+blocking the release indefinitely. A 30-second shell window is not a valid timeout for this
+command. `--list` prints the gates and `--only versions` checks the four version locations alone.
