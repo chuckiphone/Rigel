@@ -6,9 +6,10 @@ use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 use clap::Subcommand;
+use rigel_core::flakes;
 use rigel_core::proof;
 use rigel_core::testimpact::{self, ChangedFile, ImpactPlan, ImpactRun};
-use rigel_core::testrun::TestRun;
+use rigel_core::testrun::{self, TestPlan, TestRun};
 
 #[derive(Subcommand)]
 pub enum TestCommand {
@@ -44,6 +45,20 @@ pub enum TestCommand {
         proof: bool,
         #[arg(long)]
         json: bool,
+    },
+
+    /// Run one target several times and report tests whose outcome changed.
+    Flakes {
+        #[arg(long, value_name = "PATH", default_value = ".")]
+        project: PathBuf,
+        /// How many identical runs to compare (2–10).
+        #[arg(long, default_value_t = flakes::DEFAULT_RUNS, value_name = "N")]
+        runs: usize,
+        #[arg(long)]
+        json: bool,
+        /// The command after `--`; defaults to the project's detected suite.
+        #[arg(last = true, value_name = "COMMAND")]
+        command: Vec<String>,
     },
 }
 
@@ -128,6 +143,45 @@ pub async fn run(command: TestCommand) -> ExitCode {
                         ExitCode::SUCCESS
                     } else {
                         ExitCode::from(1)
+                    }
+                }
+                Err(error) => fail(&error.to_string(), json),
+            }
+        }
+        TestCommand::Flakes {
+            project,
+            runs,
+            json,
+            command,
+        } => {
+            let plan = if let Some((program, args)) = command.split_first() {
+                TestPlan {
+                    program: program.clone(),
+                    args: args.to_vec(),
+                    label: command.join(" "),
+                }
+            } else {
+                match testrun::detect(&project) {
+                    Some(plan) => plan,
+                    None => {
+                        return fail(
+                            "no test command found; pass one after `--` or add a manifest",
+                            json,
+                        );
+                    }
+                }
+            };
+            match flakes::hunt(&project, &plan, runs).await {
+                Ok(report) => {
+                    if json {
+                        print_json(&report);
+                    } else {
+                        print_flakes(&report);
+                    }
+                    if report.failed() {
+                        ExitCode::from(1)
+                    } else {
+                        ExitCode::SUCCESS
                     }
                 }
                 Err(error) => fail(&error.to_string(), json),
@@ -224,6 +278,51 @@ fn print_runs(report: &ImpactRun) {
             bundle.evidence.len(),
             if bundle.ok { "passed" } else { "failed" }
         );
+    }
+}
+
+fn print_flakes(report: &flakes::FlakeReport) {
+    println!("command  {}", report.command);
+    for (index, run) in report.runs.iter().enumerate() {
+        println!(
+            "run {:<3} {:<6} {} passed, {} failed, {} ms{}",
+            index + 1,
+            if run.ok { "ok" } else { "failed" },
+            run.passed,
+            run.failed,
+            run.duration_ms,
+            if run.timed_out { " (timed out)" } else { "" }
+        );
+    }
+    for test in &report.flaky {
+        if let Some(row) = report.tests.iter().find(|row| &row.name == test) {
+            println!(
+                "flaky    {} ({} passed, {} failed across {} run(s)) — propose quarantine",
+                test, row.passed, row.failed, row.runs
+            );
+        } else {
+            println!("flaky    {test} — propose quarantine");
+        }
+    }
+    for test in &report.unstable_set {
+        println!("unstable {test} — did not appear in every run");
+    }
+    if report.aggregate_flaky {
+        println!("flaky    run outcomes differed; no per-test result named the test");
+    }
+    if report.stable() {
+        println!(
+            "tests    stable across {} run(s){}",
+            report.total_runs,
+            if report.all_ok {
+                ""
+            } else {
+                "; the suite failed consistently"
+            }
+        );
+    }
+    for note in &report.notes {
+        println!("note     {note}");
     }
 }
 

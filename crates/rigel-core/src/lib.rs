@@ -19,6 +19,7 @@ pub mod comments;
 pub mod credentials;
 pub mod diagnostics;
 pub mod domain;
+pub mod flakes;
 pub mod forge;
 pub mod gravity;
 pub mod mcp;
@@ -89,6 +90,7 @@ pub use cloud::{
 };
 pub use comments::{CommentError, HunkComment, HunkComments};
 pub use domain::{AgentEvent, CostSource, EventSink, ItemKind, NullSink, Usage};
+pub use flakes::{FlakeError, FlakeReport, FlakeRun, TestOutcome};
 pub use memory::rank::{Fact, Factor, RankedFact, Score};
 pub use memory::{
     DenyMemory, MemoryApprover, MemoryDecision, MemoryError, MemoryFile, MemoryRequest,

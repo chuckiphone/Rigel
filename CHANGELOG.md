@@ -12,6 +12,9 @@ Every release, newest first. The heading is the version its `v*` tag publishes.
   check that names files changed after the run ([proof](docs/proof.md))
 - feat(audit): add `rigel audit export --format jsonl|csv` for intact approval chains, with
   offline JSONL verification through `rigel audit verify --file` ([audit](docs/audit.md))
+- feat(test): add `rigel test flakes`, a repeated-run hunter that compares per-test results and
+  names a test whose outcome changes, an unstable set, or an unattributed aggregate
+  disagreement ([flakes](docs/flakes.md))
 - feat(test): add `rigel test plan|run` to select impacted Cargo and JavaScript/TypeScript
   targets from changed files, report skipped paths and risk reasons, and run the full suite
   after selected targets only when manifests, broad changes or an incomplete mapping require it
