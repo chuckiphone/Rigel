@@ -4,6 +4,10 @@ Every release, newest first. The heading is the version its `v*` tag publishes.
 
 ## 0.4.0-1 — 2026-11-24
 
+- feat(test): add `rigel test plan|run` to select impacted Cargo and JavaScript/TypeScript
+  targets from changed files, report skipped paths and risk reasons, and run the full suite
+  after selected targets only when manifests, broad changes or an incomplete mapping require it
+  ([test selection](docs/test-selection.md))
 - feat(backup): add encrypted local backups of the data directory (`rigel backup
   create|verify|restore|rotate|drill`), with a SHA-256 manifest, a consistent SQLite snapshot,
   tamper and wrong-key detection, staged restores, passphrase rotation and a scheduler-safe

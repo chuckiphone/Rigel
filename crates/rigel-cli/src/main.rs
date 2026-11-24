@@ -30,6 +30,7 @@ mod phase3;
 mod plugins;
 mod route;
 mod serve;
+mod testing;
 mod tools;
 mod update;
 mod worktree;
@@ -122,6 +123,12 @@ enum Command {
     Backup {
         #[command(subcommand)]
         command: backup::BackupCommand,
+    },
+
+    /// Plan and run the tests a change can affect.
+    Test {
+        #[command(subcommand)]
+        command: testing::TestCommand,
     },
 
     /// Explain which provider and model a turn would use, and why.
@@ -612,6 +619,8 @@ async fn entry() -> ExitCode {
         Command::Snapshot { command } => phase3::run_snapshot(command, dir),
 
         Command::Backup { command } => backup::run(command, dir).await,
+
+        Command::Test { command } => testing::run(command).await,
 
         Command::Audit { command } => audit::run(command).await,
 

@@ -17,7 +17,7 @@ use tokio::process::Command;
 const RUN_TIMEOUT: Duration = Duration::from_secs(15 * 60);
 const MAX_OUTPUT: usize = 256 * 1024;
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct TestPlan {
     pub program: String,
     pub args: Vec<String>,
@@ -97,7 +97,27 @@ fn package_test(project: &Path) -> Option<TestPlan> {
     if project.join("bun.lock").is_file() || project.join("bun.lockb").is_file() {
         return Some(plan("bun", &["run", "test"]));
     }
-    Some(plan("npm", &["test"]))
+    let (program, args) = npm_command(&["test".to_string()]);
+    Some(TestPlan {
+        program,
+        args,
+        label: "npm test".into(),
+    })
+}
+
+/// Windows installs the Node package manager as a `.cmd` shim, which `CreateProcess` cannot run
+/// directly. Go through the command interpreter there; the label stays the human `npm` form.
+pub(crate) fn npm_command(args: &[String]) -> (String, Vec<String>) {
+    #[cfg(windows)]
+    {
+        let mut command = vec!["/C".to_string(), "npm".to_string()];
+        command.extend(args.iter().cloned());
+        ("cmd".to_string(), command)
+    }
+    #[cfg(not(windows))]
+    {
+        ("npm".to_string(), args.to_vec())
+    }
 }
 
 /// Run the detected command in the project root. A test runner that never exits is stopped at
@@ -107,7 +127,7 @@ pub async fn run(project: &Path) -> Result<TestRun, TestRunError> {
     run_plan(project, &plan).await
 }
 
-async fn run_plan(project: &Path, plan: &TestPlan) -> Result<TestRun, TestRunError> {
+pub(crate) async fn run_plan(project: &Path, plan: &TestPlan) -> Result<TestRun, TestRunError> {
     let mut command = Command::new(&plan.program);
     command
         .args(&plan.args)

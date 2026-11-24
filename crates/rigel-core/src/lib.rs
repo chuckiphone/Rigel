@@ -46,6 +46,7 @@ pub mod storage;
 pub mod store;
 pub mod swarm;
 pub mod templates;
+pub mod testimpact;
 pub mod testrun;
 pub mod toolchain;
 pub mod tree;
