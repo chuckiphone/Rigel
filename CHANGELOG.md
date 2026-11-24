@@ -27,6 +27,9 @@ Every release, newest first. The heading is the version its `v*` tag publishes.
   truncated or mismatched download instead of leaving it beside the data directory
 - feat(update): make `rigel doctor` report the channel, current version, manifest URL and the last
   check or install line, so the update receipt is one command rather than a log hunt
+- feat(update): keep the previous binary until the relaunched build reports its window up, then
+  roll back and restart it if the new build exits early or never reports; the bad version is
+  skipped for 24 hours so it cannot cause a swap/crash loop
 - feat(agent): add a keyless `llamacpp` door for a GGUF served by llama.cpp's `llama-server`, with
   a managed start, `/health` wait and PID-checked stop from Settings → Providers and
   `rigel local status|start|stop|setup` ([local models](docs/local-models.md))

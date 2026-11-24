@@ -28,9 +28,16 @@ fn sha(bytes: &[u8]) -> String {
     format!("{:x}", Sha256::digest(bytes))
 }
 
-/// A stub executable. The first one records its start and stays alive so the helper has something
-/// to wait for; the second records the relaunch and exits.
-fn build_stub(dir: &Path, name: &str, marker: &Path, sleep: bool) -> PathBuf {
+/// A stub executable. It records its start and, when asked, answers the helper's launch-health
+/// check. The old build stays alive so the helper has something to wait for; the replacement can
+/// either stay healthy through the window or exit immediately to exercise rollback.
+fn build_stub(
+    dir: &Path,
+    name: &str,
+    marker: &Path,
+    sleep_secs: Option<u64>,
+    healthy: bool,
+) -> PathBuf {
     let source = dir.join(format!("{name}.rs"));
     let exe = dir.join(if cfg!(windows) {
         format!("{name}.exe")
@@ -38,8 +45,14 @@ fn build_stub(dir: &Path, name: &str, marker: &Path, sleep: bool) -> PathBuf {
         name.to_string()
     });
     let marker = format!("{:?}", marker.to_string_lossy());
-    let body = if sleep {
-        "std::thread::sleep(std::time::Duration::from_secs(120));"
+    let body = sleep_secs
+        .map(|secs| format!("std::thread::sleep(std::time::Duration::from_secs({secs}));"))
+        .unwrap_or_default();
+    let health = if healthy {
+        r#"    if let Ok(path) = std::env::var("RIGEL_UPDATE_HEALTH") {
+        std::fs::write(path, format!("{} {}", std::process::id(), guard)).unwrap();
+    }
+"#
     } else {
         ""
     };
@@ -51,6 +64,7 @@ fn build_stub(dir: &Path, name: &str, marker: &Path, sleep: bool) -> PathBuf {
     let cwd = std::env::current_dir().unwrap().display().to_string();
     let guard = std::env::var("RIGEL_UPDATED_TO").unwrap_or_default();
     std::fs::write({marker}, format!("{{}}|{{}}|{{}}|{{}}", {name:?}, args, cwd, guard)).unwrap();
+{health}
     {body}
 }}
 "#
@@ -183,8 +197,8 @@ async fn a_newer_feed_replaces_the_running_binary_and_starts_the_new_build() {
 
     let old_marker = work.path().join("old.txt");
     let new_marker = work.path().join("new.txt");
-    let old_stub = build_stub(work.path(), "old", &old_marker, true);
-    let new_stub = build_stub(work.path(), "new", &new_marker, false);
+    let old_stub = build_stub(work.path(), "old", &old_marker, Some(120), false);
+    let new_stub = build_stub(work.path(), "new", &new_marker, Some(5), true);
 
     let target = app_dir.join(stub_name());
     fs::copy(&old_stub, &target).unwrap();
@@ -274,6 +288,10 @@ async fn a_newer_feed_replaces_the_running_binary_and_starts_the_new_build() {
         marker.ends_with("|9.9.9"),
         "the relaunch carries the applied version: {marker}"
     );
+    let status = helper
+        .wait()
+        .expect("the helper finishes the health window");
+    assert!(status.success(), "a healthy relaunch completes");
     assert_eq!(
         fs::read(&target).unwrap(),
         new_bytes,
@@ -283,11 +301,11 @@ async fn a_newer_feed_replaces_the_running_binary_and_starts_the_new_build() {
     let log = fs::read_to_string(data.path().join("updates/apply.log")).unwrap();
     assert!(log.contains("waiting for pid"), "log: {log}");
     assert!(log.contains("swapped"), "log: {log}");
+    assert!(log.contains("launched healthy"), "log: {log}");
     assert!(log.contains("started"), "log: {log}");
     println!("relaunched marker: {marker}");
     println!("apply log:\n{log}");
 
-    let _ = helper.wait();
     let requests = seen.lock().unwrap().clone();
     println!("feed requests: {requests:?}");
     assert_eq!(
@@ -298,11 +316,122 @@ async fn a_newer_feed_replaces_the_running_binary_and_starts_the_new_build() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn a_build_that_exits_before_it_is_healthy_is_rolled_back() {
+    let work = tempfile::tempdir().unwrap();
+    let app_dir = work.path().join("app");
+    let run_dir = work.path().join("run");
+    fs::create_dir_all(&app_dir).unwrap();
+    fs::create_dir_all(&run_dir).unwrap();
+
+    let old_marker = work.path().join("old.txt");
+    let new_marker = work.path().join("new.txt");
+    let old_stub = build_stub(work.path(), "old", &old_marker, Some(120), false);
+    let new_stub = build_stub(work.path(), "new", &new_marker, None, false);
+
+    let target = app_dir.join(stub_name());
+    fs::copy(&old_stub, &target).unwrap();
+    let old_bytes = fs::read(&target).unwrap();
+    let new_bytes = fs::read(&new_stub).unwrap();
+
+    let key = SigningKey::from_bytes(&[33u8; 32]);
+    let (listener, port) = bind();
+    let asset_url = format!("http://127.0.0.1:{port}/rigel-app.exe");
+    let signed = manifest("9.9.9", &asset_url, &sha(&new_bytes), &key);
+    let _seen = serve(
+        listener,
+        serde_json::to_string(&signed).unwrap(),
+        new_bytes.clone(),
+        "/rigel-app.exe".to_string(),
+    );
+    let feed = format!("http://127.0.0.1:{port}/latest.json");
+    let data = data_dir(&key, &feed);
+
+    let args = vec!["--profile".to_string(), "rollback".to_string()];
+    let mut child = Command::new(&target)
+        .args(&args)
+        .current_dir(&run_dir)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .expect("the old stub starts");
+    let pid = child.id();
+    assert!(
+        wait_for(&old_marker, Duration::from_secs(10)),
+        "the old build recorded its start"
+    );
+    fs::remove_file(&old_marker).unwrap();
+
+    let check = check_latest_at(data.path(), "0.3.0", &feed)
+        .await
+        .expect("the signed 9.9.9 manifest verifies");
+    let staged = stage_binary(
+        data.path(),
+        &check,
+        &target,
+        pid,
+        args.clone(),
+        Some(run_dir.clone()),
+    )
+    .await
+    .expect("the signed binary downloads")
+    .expect("a newer feed stages a binary");
+
+    let mut helper = Command::new(env!("CARGO_BIN_EXE_rigel-apply-update"))
+        .arg(HELPER_FLAG)
+        .arg(&staged.plan)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .expect("the helper starts");
+    assert!(
+        wait_for(
+            &data.path().join("updates/apply.log"),
+            Duration::from_secs(10)
+        ),
+        "the helper records its wait"
+    );
+    std::thread::sleep(Duration::from_millis(300));
+    child.kill().expect("the old build is stopped");
+    let _ = child.wait();
+
+    assert!(
+        wait_for(&old_marker, Duration::from_secs(20)),
+        "the previous build is restarted"
+    );
+    assert!(
+        new_marker.exists(),
+        "the replacement was launched before it was rolled back"
+    );
+    assert_eq!(
+        fs::read(&target).unwrap(),
+        old_bytes,
+        "the old binary is restored"
+    );
+    assert!(!PathBuf::from(format!("{}.old", target.display())).exists());
+    let status = helper.wait().expect("the helper finishes");
+    assert!(status.success(), "rollback is a completed outcome");
+    let log = fs::read_to_string(data.path().join("updates/apply.log")).unwrap();
+    assert!(log.contains("rolled back"), "log: {log}");
+    assert!(log.contains("restarted previous build"), "log: {log}");
+    assert!(
+        rigel_core::update::apply::rollback_blocked(data.path(), "9.9.9"),
+        "the failed version is blocked from an immediate retry"
+    );
+    assert!(
+        !rigel_core::update::apply::rollback_blocked(data.path(), "9.9.10"),
+        "a different release is not blocked"
+    );
+    println!("rollback apply log:\n{log}");
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn a_current_feed_downloads_nothing_and_leaves_the_binary_alone() {
     let work = tempfile::tempdir().unwrap();
     let target = work.path().join(stub_name());
     let marker = work.path().join("marker.txt");
-    let stub = build_stub(work.path(), "app", &marker, false);
+    let stub = build_stub(work.path(), "app", &marker, None, false);
     fs::copy(&stub, &target).unwrap();
     let before = fs::read(&target).unwrap();
 

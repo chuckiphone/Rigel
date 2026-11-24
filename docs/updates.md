@@ -43,12 +43,28 @@ That helper waits for the app's PID to disappear (up to five minutes), then:
 3. renames the running executable to `<exe>.old`;
 4. renames `<exe>.new` over the target;
 5. starts the target with the original arguments and working directory, and sets
-   `RIGEL_UPDATED_TO=<version>` for that one launch;
-6. removes the backup and the staged download.
+   `RIGEL_UPDATED_TO=<version>` and a private launch-health marker path for that one launch;
+6. keeps the backup until the new build reports its window is up, then removes the backup and
+   the staged download.
 
 If step 3, 4 or 5 fails, the backup is restored and the helper exits non-zero. The app is left
 runnable; a half-swapped install is never accepted. The one-launch `RIGEL_UPDATED_TO` guard means
 a manifest that is wrong about its own binary cannot cause a relaunch loop.
+
+### Launch health and rollback
+
+The helper does not trust a successful `spawn`. The relaunched app writes
+`<data-dir>/updates/apply.health` once setup has shown its window; the marker contains the child
+PID and the version. The helper waits up to 30 seconds for that marker. If the new build exits
+first, or never writes the marker, the helper kills it, restores `<exe>.old`, and starts the
+previous build with the original arguments and working directory. A normal quit after the marker
+is not a rollback.
+
+The rollback also writes `<data-dir>/updates/rollback.json` with the bad version and a timestamp.
+The launch check skips that exact version for 24 hours, so a broken release cannot cause a
+swap/crash loop; a different or newer release can still install immediately. The restored launch
+also carries the one-launch `RIGEL_UPDATED_TO` guard. Only the binary self-replace path has a
+launch to check; the installer path leaves the replacement to the signed installer.
 
 The same entry point runs on macOS and Linux: the helper is a plain process, the swap uses
 `rename`, and the executable bit is set on the new file. On those platforms the release feed
@@ -103,7 +119,9 @@ update failed: the download ended at 1024 of 4096 bytes
 ```
 apply 0.4.0: waiting for pid 21472
 apply 0.4.0: swapped C:\Users\you\AppData\Local\Rigel\rigel-app.exe
-apply 0.4.0: started C:\Users\you\AppData\Local\Rigel\rigel-app.exe
+apply 0.4.0: launched healthy; started C:\Users\you\AppData\Local\Rigel\rigel-app.exe
+apply 0.4.0: rolled back: the new build exited (exit code: 1)
+apply 0.4.0: restarted previous build C:\Users\you\AppData\Local\Rigel\rigel-app.exe
 apply 0.4.0: failed: the artifact is …, but the signed manifest says …
 ```
 

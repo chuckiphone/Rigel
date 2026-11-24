@@ -4408,6 +4408,16 @@ fn spawn_launch_update(app: tauri::AppHandle) {
                     return;
                 }
             };
+        if check.available && rigel_core::update::apply::rollback_blocked(&dir, &check.offered) {
+            rigel_core::update::log_line(
+                &dir,
+                &format!(
+                    "no update: {} was rolled back after a failed launch; retrying after 24h",
+                    check.offered
+                ),
+            );
+            return;
+        }
         if !check.available {
             rigel_core::update::log_line(&dir, &format!("up to date {current}"));
             return;
@@ -5118,6 +5128,10 @@ pub fn run() {
             if let Some(window) = app.get_webview_window("main") {
                 let _ = window.show();
             }
+            // A deferred update keeps the previous binary until this process proves it reached
+            // the UI. The helper set the marker path for this one launch; a normal launch is a
+            // no-op because no path is present.
+            rigel_core::update::apply::mark_healthy();
             Ok(())
         })
         .manage(AppRuntime {
