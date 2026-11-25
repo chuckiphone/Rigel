@@ -86,6 +86,13 @@ assert(
   "release.yml does not publish latest.json, NSIS, MSI and the binary together",
 );
 assert(
+  workflow.includes("node scripts/release-notes-body.mjs") &&
+    workflow.includes('$publishedNotes = Join-Path $env:RUNNER_TEMP "release-notes.md"') &&
+    workflow.includes("gh release edit $tag --notes-file $publishedNotes") &&
+    workflow.includes('@("--notes-file", $publishedNotes)'),
+  "release.yml does not publish release notes with tag-anchored doc links",
+);
+assert(
   workflow.includes('$version -match "-"') && workflow.includes("--prerelease"),
   "release.yml does not keep prerelease tags out of releases/latest",
 );

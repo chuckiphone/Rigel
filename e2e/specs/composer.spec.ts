@@ -52,6 +52,50 @@ async function stopTurn() {
   });
 }
 
+/**
+ * Wait for one scripted turn to close, answering whatever card it raises on the way.
+ *
+ * The queue test only needs the turn to finish, but a turn can raise its command card a moment
+ * after its prompt row paints, and a slow runner can deliver the final state late. A card whose
+ * answer did not land is published again by the polling fallback, so one optimistic click is
+ * not proof the turn resumed; keep answering until Stop disables. A timeout records the visible
+ * state so the next failure names what the window was showing.
+ */
+async function finishTurn(label: string, timeout = 45_000) {
+  const deadline = Date.now() + timeout;
+  let approved = 0;
+  while (Date.now() < deadline) {
+    const stop = await $('button[aria-label="Stop turn"]');
+    if (!(await stop.isEnabled())) {
+      if (approved === 0) {
+        throw new Error(`${label}: the turn closed without asking for the scripted command`);
+      }
+      return;
+    }
+    const card = await approvalCard();
+    if (approved < 4 && (await card.isExisting())) {
+      const allow = await card.$("button=Allow once");
+      if (await allow.isExisting()) {
+        await allow.click();
+        approved += 1;
+        await browser.pause(250);
+      }
+    }
+    await browser.pause(150);
+  }
+  const state = (await browser.execute(() => {
+    const stop = document.querySelector<HTMLButtonElement>('button[aria-label="Stop turn"]');
+    const queue = document.querySelector('button[aria-label^="Message queue"]');
+    return {
+      stopEnabled: stop ? !stop.disabled : null,
+      cards: document.querySelectorAll('section[aria-label="Approval required"]').length,
+      queue: queue?.getAttribute("aria-label") ?? null,
+      tail: (document.body.textContent ?? "").slice(-1_200),
+    };
+  })) as unknown;
+  throw new Error(`${label}: the turn did not finish; ${JSON.stringify(state)}`);
+}
+
 describe("the real composer queue", () => {
   it("queues against a running turn, drains once, and holds the line after Stop", async () => {
     await (await $('nav[aria-label="Primary"]')).waitForDisplayed({ timeout: 40_000 });
@@ -77,15 +121,7 @@ describe("the real composer queue", () => {
 
     // The queued prompt starts by itself after TurnFinished, exactly once.
     await waitForCount(QUEUED, 1);
-    await approveOne();
-    await browser.waitUntil(
-      async () => !(await (await $('button[aria-label="Stop turn"]')).isEnabled()),
-      {
-        timeout: 20_000,
-        interval: 150,
-        timeoutMsg: "the queued turn never finished",
-      },
-    );
+    await finishTurn("the queued turn");
 
     // Turn 3 waits on approval while a follow-up is queued. Stop must close it and hold the line.
     await sendPrompt("Stop test turn.");
@@ -113,15 +149,7 @@ describe("the real composer queue", () => {
     await (await queueMenu.$("button=Retry")).click();
     await queueButton.click();
     await waitForCount(HELD, 1);
-    await approveOne();
-    await browser.waitUntil(
-      async () => !(await (await $('button[aria-label="Stop turn"]')).isEnabled()),
-      {
-        timeout: 20_000,
-        interval: 150,
-        timeoutMsg: "the resumed queued turn never finished",
-      },
-    );
+    await finishTurn("the resumed queued turn");
 
     await openRail("Diff");
     await expect($("body")).toHaveText(expect.stringContaining("README.md"));
