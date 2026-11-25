@@ -942,8 +942,8 @@ export default function SettingsView({
     void refreshRoomHarnesses(true);
   };
 
-  // The room is probed only when its page is open. The answer is cached in Rust for a minute;
-  // Check again forces a fresh, bounded pass after an external sign-in.
+  // The room shows the configured list plus the last measured readiness; opening the page does
+  // not probe. Check again is the explicit, bounded fresh pass after an external sign-in.
   useEffect(() => {
     if (page !== "harnesses" || !project) return;
     let live = true;

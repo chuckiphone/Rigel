@@ -2,6 +2,26 @@
 
 Every release, newest first. The heading is the version its `v*` tag publishes.
 
+## 0.6.1 — 2026-11-25
+
+- fix(window): run Free mode's provider refresh and model probes on the async runtime instead of
+  blocking the window's main thread, which froze the app for the length of the scan
+- fix(chat): the two-second harness poll now reads the configured list and the last measured
+  readiness only; a fresh 45–90 second CLI probe pass runs only on an explicit re-check, so the
+  machine no longer probes continuously
+- fix(chat): every polled room command is async, so status, roster, messages and attachments
+  cannot stall the UI while a room request is in flight
+- fix(agent): name the absolute project root in the coordinator and subagent prompts; a
+  coordinator asked for its root no longer spends its step budget discovering it and failing
+- fix(permissions): the project/role/agent matrix lists every session's agents, not only the
+  session Settings has open, so Muse's coordinator receives a column and every custom-role tool
+  has an owner; custom roles are labeled by name instead of "Custom"
+- fix(skills): run SkillSpector with `CREATE_NO_WINDOW`, so a scan no longer opens an empty
+  console window
+- fix(approvals): write an answer through a completed temporary file and rename it into place,
+  and leave an unparseable answer in place; a poll can no longer consume a half-written file and
+  drop the click, and a failed answer un-marks the card so it can be retried
+
 ## 0.6.0 — 2026-11-25
 
 The first stable release since 0.1.7. It promotes the 0.4 line, which had only a Windows

@@ -842,6 +842,15 @@ export default function SessionView({
               ...gone,
             ]);
           }
+          // A question that is open again supersedes the refused row it left behind. The
+          // retry republishes the same id, and two cards for one question would offer two
+          // decisions for it, sharing one React key.
+          if (open.length > 0) {
+            setRefusedApprovals((rows) => {
+              const kept = rows.filter((row) => !ids.has(row.id));
+              return kept.length === rows.length ? rows : kept;
+            });
+          }
           if (open.length > approvalsSeen.current) {
             notify(
               "approval",
@@ -888,14 +897,17 @@ export default function SessionView({
     scope: ApprovalAnswer,
     options?: { skip?: boolean; note?: string },
   ) => {
-    // The row disappears as soon as it is answered, whatever the answer: a question that has
-    // been decided must never look open.
+    // The row disappears as soon as it is clicked, whatever the answer: a question that has
+    // been decided must never look open. The id counts as answered until the call says
+    // otherwise; a failed write leaves the question open on disk, so the poll brings its card
+    // back, and un-marking it keeps the refusal and Retry when its deadline passes.
     answeredApprovals.current.add(pending.id);
     setApprovals((open) => open.filter((row) => row.id !== pending.id));
     setRefusedApprovals((rows) => rows.filter((row) => row.id !== pending.id));
     try {
       await api.approvals.answer(pending.id, scope, options);
     } catch (problem) {
+      answeredApprovals.current.delete(pending.id);
       setError(problem instanceof Error ? problem.message : String(problem));
     }
   };

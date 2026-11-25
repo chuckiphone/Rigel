@@ -639,6 +639,18 @@ unavailable, say so; never claim a message was sent.",
     text
 }
 
+/// Name the absolute project root in every turn. The old wording said only "the current working
+/// directory", so a coordinator asked for its root had to discover it with extra tool calls; a
+/// 30-step live test spent its budget on that search and never answered.
+fn project_section(root: &std::path::Path) -> String {
+    let text = root.display().to_string();
+    let shown = text.strip_prefix(r"\\?\").unwrap_or(&text);
+    format!(
+        "\n\nProject root: {shown}. The current working directory is that directory; every \
+         project-relative path in a tool call resolves against it."
+    )
+}
+
 fn system_prompt_base(model_name: &str, can_spawn: bool) -> String {
     system_prompt_base_with(model_name, can_spawn, false)
 }
@@ -758,11 +770,13 @@ impl Coordinator {
 
     pub fn system_prompt_with(&self, chat: Option<&ChatContext>) -> String {
         let can_spawn = self.offers_subagents();
-        if can_spawn && self.depth > 0 {
+        let mut prompt = if can_spawn && self.depth > 0 {
             system_prompt_nested(&self.model_name, chat)
         } else {
             system_prompt_with_chat(&self.model_name, can_spawn, chat)
-        }
+        };
+        prompt.push_str(&project_section(&self.project_root));
+        prompt
     }
 
     /// The room name a native agent is given at spawn time. It is derived from the agent row,
@@ -4032,5 +4046,20 @@ mod tests {
             "the body hash is shortened for the prompt"
         );
         assert!(pinned_skills_section(&[]).is_empty());
+    }
+}
+
+#[cfg(test)]
+mod project_section_tests {
+    use super::*;
+
+    #[test]
+    fn the_prompt_names_the_project_root_without_the_verbatim_prefix() {
+        let section = project_section(std::path::Path::new(r"\\?\C:\work\rigel"));
+        assert!(
+            section.contains(r"Project root: C:\work\rigel."),
+            "{section}"
+        );
+        assert!(!section.contains(r"\\?\"), "{section}");
     }
 }

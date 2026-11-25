@@ -945,7 +945,7 @@ impl Api {
                 self.transition_swarm_job(id, SwarmJobTransition::Release)
             }
             ("POST", ["v1", "room", "start"]) => self.room_start().await,
-            ("GET", ["v1", "room", "harnesses"]) => self.room_harnesses(&request.query),
+            ("GET", ["v1", "room", "harnesses"]) => self.room_harnesses(&request.query).await,
             ("GET", ["v1", "room", "agents"]) => self.room_agents().await,
             ("GET", ["v1", "room", "watchdog"]) => self.room_watchdog(),
             ("POST", ["v1", "room", "watchdog"]) => self.room_watchdog_check(&request.body).await,
@@ -2879,16 +2879,25 @@ impl Api {
         }
     }
 
-    fn room_harnesses(&self, query: &HashMap<String, String>) -> Reply {
+    async fn room_harnesses(&self, query: &HashMap<String, String>) -> Reply {
         let project = self.project().to_string_lossy().into_owned();
         let force = query
             .get("force")
             .is_some_and(|value| value == "1" || value.eq_ignore_ascii_case("true"));
-        let harnesses = if force {
-            agentchat::configured_fresh(Some(&project))
-        } else {
-            agentchat::configured(Some(&project))
-        };
+        // Readiness runs real headless prompts against every configured CLI, so it takes tens of
+        // seconds per row. The default read now uses the configured list plus cached verdicts and
+        // never probes; only `force=1` asks for a fresh pass. The probe also runs on a blocking
+        // worker so a deliberate re-check cannot stall the control API's runtime.
+        let probe_project = project.clone();
+        let harnesses = tokio::task::spawn_blocking(move || {
+            if force {
+                agentchat::configured_fresh(Some(&probe_project))
+            } else {
+                agentchat::configured_cached(Some(&probe_project))
+            }
+        })
+        .await
+        .unwrap_or_default();
         Reply::ok(json!({
             "ok": true,
             "project": project,

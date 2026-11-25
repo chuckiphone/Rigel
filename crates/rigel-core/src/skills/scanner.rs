@@ -25,6 +25,7 @@ use serde_json::Value;
 use tokio::process::Command;
 
 use super::github::parse_repo_input;
+use crate::process;
 use crate::skills::SkillsError;
 
 /// The command in the error a user sees when the scanner is not installed.
@@ -362,6 +363,9 @@ impl SkillSpector {
         for argument in extra {
             command.arg(argument);
         }
+        // A packaged window is a GUI process, so a console-subsystem scanner would open its own
+        // console window for every scan. Keep the scan invisible; its output is piped anyway.
+        process::hide_tokio(&mut command);
         command
             .kill_on_drop(true)
             .output()
