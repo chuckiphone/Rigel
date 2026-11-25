@@ -1,6 +1,6 @@
 # Privacy
 
-Rigel is a local-first desktop app. This note describes what 0.1.7 actually does; the threat model
+Rigel is a local-first desktop app. This note describes what the current 0.4 line does; the threat model
 is in [SECURITY.md](../SECURITY.md). A per-call receipt with purposes and retention is in
 [cloud-privacy.md](cloud-privacy.md).
 
@@ -14,7 +14,7 @@ is in [SECURITY.md](../SECURITY.md). A per-call receipt with purposes and retent
 - `settings.toml`, `cloud.json` and `agentmail.json` hold preferences and non-secret configuration.
 - Provider keys, the Firebase refresh token, the App Check client token and the AgentMail key live
   in the OS keychain.
-- Rigel sends no telemetry, analytics or crash reports in 0.1.7. Diagnostics are assembled locally
+- Rigel sends no telemetry, analytics or crash reports. Diagnostics are assembled locally
   and leave only when you copy or export them.
 
 ## What leaves the machine
@@ -57,8 +57,9 @@ Firebase project you configured.
 - Keep Cloud off, sign out, or delete the local credentials.
 - Remove provider and harness keys from Settings.
 - Use **Export diagnostics** only when you choose to share the bundle.
-- Back up `.rigel/` yourself before deleting a project; 0.1.7 does not yet keep rolling database
-  backups.
+- Back up `.rigel/` before deleting a project. `rigel backup create` writes an encrypted local
+  archive and `rigel backup drill` checks that it restores; [backup](backup.md) covers rotation and
+  scheduling.
 
 ## Contact
 

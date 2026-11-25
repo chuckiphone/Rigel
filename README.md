@@ -15,13 +15,15 @@ coordinator, working the same project without silently overwriting each other.
 
 </div>
 
-**0.3.0 source release.** The Rust workspace, Tauri configuration and renderer all report 0.3.0.
-The local release gate on 2026-11-22 passed the renderer build and token lint, the docs and version
-checks, the 63-test Playwright suite, and the native Tauri window lane. The signed installer is not
-cut: this repository currently publishes source, not a signed binary or provenance receipt. The
+**0.4.0-2 pre-release.** The Rust workspace, Tauri configuration and renderer all report 0.4.0-2.
+The 2026-11-25 gate passed the renderer, docs, version, Playwright, native window, Rust,
+supply-chain and four desktop bundle jobs. Windows x64 gets an MSI, an NSIS installer, a detached
+executable and a signed update manifest on the
+[v0.4.0-2 release](https://github.com/chuckiphone/Rigel/releases/tag/v0.4.0-2). This is a
+pre-release, so the stable `releases/latest` feed stays on 0.1.7. macOS and Linux bundles build and
+validate in CI but are not published unsigned; macOS also needs notarisation. The
 [200-item roadmap](docs/roadmap-0.3.md) is still the honest list of what is finished, blocked and
-open; the blocked set needs a signing certificate, a clean Windows VM or GitHub-hosted release
-proof.
+open.
 
 ![The Rigel Paper: the day's work set as a broadsheet with a lead story, dispatches, an engraved plate and the day's numbers](screenshots/2026-paper.png)
 
@@ -101,11 +103,13 @@ including upgrade notes, dependencies and known gaps.
 
 ## Install
 
-The newest published build is [0.1.7](https://github.com/chuckiphone/Rigel/releases/tag/v0.1.7).
-0.3.0 is a source release. The 0.4.0-1 tag exists, but its release workflow stopped at the CI gate,
-so no 0.4 installer or signed update manifest has been published. Do not treat the tag as a
-release; the next 0.4 build must clear CI before it is tagged and published. The 0.1.7 Windows
-installer needs no Node, Python or Rust once it has run.
+The newest published build is [0.4.0-2](https://github.com/chuckiphone/Rigel/releases/tag/v0.4.0-2),
+a Windows x64 pre-release. It ships an NSIS installer, an MSI, a raw executable for the deferred
+self-replace, and a signed `latest.json`. 0.3.0 remains a source release, and the 0.4.0-1 tag never
+produced a release. Because 0.4.0-2 is a pre-release, `releases/latest` still points at
+[0.1.7](https://github.com/chuckiphone/Rigel/releases/tag/v0.1.7), the newest stable build. The
+Windows installer needs no Node, Python or Rust once it has run. The macOS and Linux bundles build
+in CI but are not published unsigned.
 
 To build the desktop app from source, build the renderer first: the Tauri shell embeds `ui/dist` at
 compile time. You need Rust 1.88+, Node 22.12+ and npm.
@@ -247,8 +251,9 @@ The gaps are part of the record:
 - **The roadmap is still open.** [docs/roadmap-0.3.md](docs/roadmap-0.3.md) lists each item with
   its artifact and its "done when". Blocked items need a signing identity, a clean Windows VM or
   GitHub-hosted release proof. No open item is described here as finished.
-- **The signed release is not cut.** 0.3.0 has no published installer, provenance or receipt; the
-  version agrees across the four build files, but signing credentials are not in this tree.
+- **0.3.0 has no installer.** It has no published installer, provenance or receipt of its own.
+  The version in this tree belongs to 0.4.0-2, whose Windows pre-release is published; macOS and
+  Linux installers remain unpublished pending signing.
 - **The VPS API is partial.** Health, auth, devices, sessions, published sessions and the relay are
   implemented; the cloud, files, LLM, contact and ad routes still live on Firebase or the bridge.
 - **The web reader still talks to Firebase.** The static site is hosted by Caddy, not the reader.
@@ -270,6 +275,8 @@ The gaps are part of the record:
 
 - [ARCHITECTURE.md](ARCHITECTURE.md): the pieces, the two databases, the write path and a turn
 - [docs/release-notes/0.3.0.md](docs/release-notes/0.3.0.md): the detailed 0.3.0 changelog, dependencies and upgrade notes
+- [docs/release-notes/0.4.0-2.md](docs/release-notes/0.4.0-2.md): the Windows 0.4.0-2 pre-release, its fixes and its limits
+- [docs/release-receipts/0.4.0-2.md](docs/release-receipts/0.4.0-2.md): the published assets, hashes and release checks
 - [docs/what-works.md](docs/what-works.md): every surface, its state and its evidence
 - [docs/updates.md](docs/updates.md): the signed launch check, the deferred self-replace, the switches and the exact log lines
 - [docs/backup.md](docs/backup.md): encrypted local backups, restore safety, key rotation and the scheduled restore drill

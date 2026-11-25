@@ -11,8 +11,8 @@ Every release, newest first. The heading is the version its `v*` tag publishes.
   no longer intercepts the Stop button
 - security(db): move the vendored SQLite binding to `libsqlite3-sys` 0.40 and SQLCipher 4.20.0 /
   SQLite 3.54.1 for RUSTSEC-2026-0502 / CVE-2026-119375
-- docs(release): correct the README and the 0.3.0/0.4.0-1 notes; only 0.1.x is published, 0.3.0 is
-  source-only, and 0.4.0-1 never produced a GitHub release
+- docs(release): correct the README and the 0.3.0/0.4.0-1 notes; 0.3.0 is source-only, 0.4.0-1
+  never produced a GitHub release, and 0.4.0-2 is published as a Windows pre-release
 
 ## 0.4.0-1 — 2026-11-24
 

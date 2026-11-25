@@ -1,6 +1,6 @@
 # Beta terms
 
-Rigel 0.1.7 is beta software. These are plain-language terms for the beta, not a substitute for
+Rigel is beta software. These are plain-language terms for the beta, not a substitute for
 legal advice or a negotiated contract. The source is provided under the repository's own license
 terms.
 
@@ -26,8 +26,8 @@ Cloud is optional and runs against a project you configure.
 ## Updates
 
 The update check and auto-install are on by default and can be turned off in Settings → Updates.
-0.1.7 installers are unsigned; Windows may show a SmartScreen warning. The update manifest is
-Ed25519-signed and every artifact has a published SHA-256.
+Rigel installers are unsigned; Windows may show a SmartScreen warning. The update manifest is
+Ed25519-signed and every published artifact has a SHA-256.
 
 ## Data and support
 
