@@ -2,6 +2,16 @@
 
 Every release, newest first. The heading is the version its `v*` tag publishes.
 
+## 0.4.0-2 — 2026-11-25
+
+- fix(release): move the `rigel-b` license resource to `licenses/rigel-b/` so it cannot create a
+  directory named like the sidecar executable; the macOS and Linux Tauri bundles stop failing with
+  `File exists (os error 17)`
+- fix(window): raise the account/settings pair above the composer so it no longer intercepts the
+  Stop button at narrower window widths
+- docs(release): correct the README and the 0.3.0/0.4.0-1 notes; only 0.1.x is published, 0.3.0 is
+  source-only, and 0.4.0-1 never produced a GitHub release
+
 ## 0.4.0-1 — 2026-11-24
 
 - feat(auth): add OIDC and SAML enterprise SSO to the self-hosted API, with domain discovery,

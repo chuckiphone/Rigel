@@ -101,11 +101,11 @@ including upgrade notes, dependencies and known gaps.
 
 ## Install
 
-The newest published build is [0.4.0-1](https://github.com/chuckiphone/Rigel/releases/tag/v0.4.0-1),
-a pre-release with the Graph surface and the refreshed free-model roster. Its Windows installer is
-attached to that release; because it is a pre-release it does not move the updater's stable
-`releases/latest` feed. 0.3.0 remains source-only. The Windows installer needs no Node, Python or
-Rust once it has run.
+The newest published build is [0.1.7](https://github.com/chuckiphone/Rigel/releases/tag/v0.1.7).
+0.3.0 is a source release. The 0.4.0-1 tag exists, but its release workflow stopped at the CI gate,
+so no 0.4 installer or signed update manifest has been published. Do not treat the tag as a
+release; the next 0.4 build must clear CI before it is tagged and published. The 0.1.7 Windows
+installer needs no Node, Python or Rust once it has run.
 
 To build the desktop app from source, build the renderer first: the Tauri shell embeds `ui/dist` at
 compile time. You need Rust 1.88+, Node 22.12+ and npm.
