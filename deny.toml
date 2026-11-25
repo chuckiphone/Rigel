@@ -36,6 +36,9 @@ allow = [
     "CDLA-Permissive-2.0",
     "OpenSSL",
     "bzip2-1.0.6",
+    # SQLCipher 4.20 carries SQLite's blessing and the libtomcrypt WTFPL notice.
+    "blessing",
+    "WTFPL",
 ]
 
 [bans]
