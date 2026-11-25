@@ -275,6 +275,7 @@ The gaps are part of the record:
 - [ARCHITECTURE.md](ARCHITECTURE.md): the pieces, the two databases, the write path and a turn
 - [docs/release-notes/0.3.0.md](docs/release-notes/0.3.0.md): the detailed 0.3.0 changelog, dependencies and upgrade notes
 - [docs/release-notes/0.6.0.md](docs/release-notes/0.6.0.md): the stable 0.6.0 release, its security work and its limits
+- [docs/release-receipts/0.6.0.md](docs/release-receipts/0.6.0.md): the 0.6.0 assets, hashes and checks
 - [docs/release-notes/0.4.0-2.md](docs/release-notes/0.4.0-2.md): the earlier Windows 0.4.0-2 pre-release
 - [docs/release-receipts/0.4.0-2.md](docs/release-receipts/0.4.0-2.md): the 0.4.0-2 assets, hashes and checks
 - [docs/what-works.md](docs/what-works.md): every surface, its state and its evidence
