@@ -2,6 +2,34 @@
 
 Every release, newest first. The heading is the version its `v*` tag publishes.
 
+## 0.6.0 — 2026-11-25
+
+The first stable release since 0.1.7. It promotes the 0.4 line, which had only a Windows
+pre-release, and the fixes that line needed. The 0.4.0-1 and 0.4.0-2 entries below are part of this
+release.
+
+- feat(auth): add OIDC and SAML enterprise SSO with domain discovery, PKCE/nonce checks, signed
+  assertions, replay protection, enforced SSO and a break-glass admin
+- security(db): add opt-in SQLCipher 4 encryption with a keychain or `RIGEL_DB_KEY` key, in-place
+  migration, fail-closed startup and `rigel db status|encrypt|decrypt|forget-key`
+- security(skills): verify Ed25519 publisher signatures and instruction digests before loading,
+  and gate third-party installs with NVIDIA SkillSpector; fail closed on scanner errors
+- security(serve,cloud,swarm): harden `Host` and bearer checks, pin cloud HS256, bound relay JSON
+  and mint swarm job ids as UUIDs
+- feat(audit): add Settings → Audit log filtering and exact-row JSONL/CSV export of the approval
+  chain
+- feat(backup): add encrypted local backups with `create`, `verify`, `restore`, `rotate` and
+  `drill`, a SHA-256 manifest and a consistent SQLite snapshot
+- feat(test): add `rigel impact`, `rigel test plan|run`, `rigel test flakes` and `rigel proof`
+  with a full-suite safety net and freshness checks
+- feat(agent): persist image parts with a turn and add NVIDIA NIM as a hosted provider
+- feat(update): keep the previous binary until the relaunched build reports its window, roll back a
+  build that never does and skip it for 24 hours
+- feat(doctor): report the update channel, version, manifest URL and last receipt
+- fix(startup): show the window only after the API answers
+- fix(release): move the `rigel-b` license to `licenses/rigel-b/`, reserve a narrow composer
+  gutter, and allow the SQLCipher bundle's SQLite blessing and libtomcrypt WTFPL notices
+
 ## 0.4.0-2 — 2026-11-25
 
 - fix(release): move the `rigel-b` license resource to `licenses/rigel-b/` so it cannot create a

@@ -3627,7 +3627,7 @@ dependencies = [
 
 [[package]]
 name = "rigel-adapters"
-version = "0.4.0-2"
+version = "0.6.0"
 dependencies = [
  "async-trait",
  "rigel-core",
@@ -3641,7 +3641,7 @@ dependencies = [
 
 [[package]]
 name = "rigel-app"
-version = "0.4.0-2"
+version = "0.6.0"
 dependencies = [
  "async-trait",
  "base64 0.23.1",
@@ -3664,7 +3664,7 @@ dependencies = [
 
 [[package]]
 name = "rigel-cli"
-version = "0.4.0-2"
+version = "0.6.0"
 dependencies = [
  "async-trait",
  "clap",
@@ -3685,7 +3685,7 @@ dependencies = [
 
 [[package]]
 name = "rigel-core"
-version = "0.4.0-2"
+version = "0.6.0"
 dependencies = [
  "age",
  "async-trait",
@@ -3713,7 +3713,7 @@ dependencies = [
 
 [[package]]
 name = "rigel-mcp"
-version = "0.4.0-2"
+version = "0.6.0"
 dependencies = [
  "async-trait",
  "rigel-core",

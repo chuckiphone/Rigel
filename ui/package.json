@@ -1,7 +1,7 @@
 {
   "name": "rigel-ui",
   "private": true,
-  "version": "0.4.0-2",
+  "version": "0.6.0",
   "type": "module",
   "scripts": {
     "dev": "vite",

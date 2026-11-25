@@ -138,7 +138,7 @@ as `last check: none recorded` rather than invented; the row turns into a warnin
 switch is on and the public key is missing.
 
 ```
-ok     updates                on · stable v0.1.7 · https://github.com/chuckiphone/Rigel/releases/latest/download/latest.json · last check: up to date 0.1.7
+ok     updates                on · stable v0.6.0 · https://github.com/chuckiphone/Rigel/releases/latest/download/latest.json · last check: up to date 0.6.0
 ```
 
 ## Proving it without publishing

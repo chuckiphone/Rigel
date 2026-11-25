@@ -1,6 +1,6 @@
 # Privacy
 
-Rigel is a local-first desktop app. This note describes what the current 0.4 line does; the threat model
+Rigel is a local-first desktop app. This note describes what the current 0.6 line does; the threat model
 is in [SECURITY.md](../SECURITY.md). A per-call receipt with purposes and retention is in
 [cloud-privacy.md](cloud-privacy.md).
 
