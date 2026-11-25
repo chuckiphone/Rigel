@@ -115,16 +115,20 @@ pub(crate) fn settings_set(
 /// shared pool reads differently from a 401 on a key). Saving goes through `settings_set`, which
 /// is the same path a manual pick uses, so the composer and the next turn cannot disagree.
 #[tauri::command]
-pub(crate) fn free_mode(app: tauri::AppHandle) -> Result<rigel_core::agent::FreeChoice, String> {
+pub(crate) async fn free_mode(
+    app: tauri::AppHandle,
+) -> Result<rigel_core::agent::FreeChoice, String> {
+    // This command genuinely spends minutes refreshing provider rosters and probing candidates.
+    // A synchronous command runs on the window's main thread, so `block_on` here froze the UI for
+    // the whole scan; an async command runs on the runtime instead and the button can show its
+    // "scanning" state while the window stays responsive.
     let current = load_settings().provider.trim().to_lowercase();
-    let choice = tauri::async_runtime::block_on(async {
-        tokio::time::timeout(
-            std::time::Duration::from_secs(285),
-            rigel_core::agent::freemode::pick(&current, &credentials::KeychainCredentialStore),
-        )
-        .await
-        .map_err(|_| "Free mode reached its five-minute limit; no model was changed".to_string())?
-    })?;
+    let choice = tokio::time::timeout(
+        std::time::Duration::from_secs(285),
+        rigel_core::agent::freemode::pick(&current, &credentials::KeychainCredentialStore),
+    )
+    .await
+    .map_err(|_| "Free mode reached its five-minute limit; no model was changed".to_string())??;
     let mut settings = load_settings();
     settings.provider = choice.provider.clone();
     settings.model = choice.model.clone();

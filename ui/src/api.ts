@@ -586,6 +586,8 @@ export interface PermissionRole {
 
 export interface PermissionAgent {
   id: string;
+  /** The session that owns this agent, so an override can be saved from any open session. */
+  session: string | null;
   role: string | null;
   role_title: string | null;
   /** Explicit narrowing below the role; null means the role alone decides. */
@@ -685,6 +687,7 @@ function previewPermissionMatrix(): PermissionMatrix {
     );
     return {
       id: agent.id,
+      session: agent.session_id,
       role: agent.role ?? null,
       role_title: role?.title ?? null,
       tool_overrides: overrides,

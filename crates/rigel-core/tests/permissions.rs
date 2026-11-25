@@ -378,6 +378,7 @@ async fn an_agent_override_is_stored_and_reported_without_widening() {
         tmp.path(),
         &[AgentPermissionRow {
             id: agent.id.clone(),
+            session: Some(session.id.clone()),
             role: agent.role.clone(),
             tool_overrides: narrowed.tool_overrides.clone(),
         }],

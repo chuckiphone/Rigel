@@ -210,6 +210,7 @@ impl ProjectPermissions {
                 };
                 AgentGrant {
                     id: agent.id.clone(),
+                    session: agent.session.clone(),
                     role: agent.role.clone(),
                     role_title: preset.map(|preset| preset.title.to_string()),
                     tool_overrides: agent.tool_overrides.clone(),
@@ -290,6 +291,9 @@ pub fn canonical_tools(names: &[String]) -> Result<Vec<String>, PermissionError>
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AgentPermissionRow {
     pub id: String,
+    /// The session that owns the agent. The window needs it to save an override for an agent
+    /// that is not in the session currently open in Settings.
+    pub session: Option<String>,
     pub role: Option<String>,
     /// `None` means the role is the only filter; `Some(empty)` denies every tool to this agent.
     pub tool_overrides: Option<Vec<String>>,
@@ -311,6 +315,7 @@ pub struct RoleGrant {
 #[derive(Debug, Clone, Serialize)]
 pub struct AgentGrant {
     pub id: String,
+    pub session: Option<String>,
     pub role: Option<String>,
     pub role_title: Option<String>,
     /// The agent's explicit narrowing, or `None` when its role alone decides.
@@ -347,6 +352,7 @@ mod tests {
     fn row(id: &str, role: Option<&str>, overrides: Option<&[&str]>) -> AgentPermissionRow {
         AgentPermissionRow {
             id: id.to_string(),
+            session: Some(format!("session-{id}")),
             role: role.map(str::to_string),
             tool_overrides: overrides
                 .map(|tools| tools.iter().map(|tool| tool.to_string()).collect()),

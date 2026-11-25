@@ -2854,11 +2854,42 @@ pub async fn start_agent(project_root: Option<&str>, name: &str) -> Result<Strin
 }
 
 /// The harnesses this checkout configures, for the roster's per-agent Start buttons. Empty when
-/// there is no checkout; the Chat tab explains that case separately.
+/// there is no checkout; the Chat tab explains that case separately. This is the *probing* read:
+/// only an explicit re-check should call it directly.
 pub fn configured(project_root: Option<&str>) -> Vec<ChatHarness> {
     dir_for(project_root)
         .map(|dir| probed_harnesses(&dir))
         .unwrap_or_default()
+}
+
+/// The last readiness verdict measured for this checkout, regardless of age. Polling uses it so
+/// a cached answer stays visible until an explicit re-check replaces it; it never probes.
+fn cached_readiness_latest(dir: &Path) -> Option<Vec<ChatHarness>> {
+    let cache = readiness_cache().lock().ok()?;
+    cache.get(dir).map(|(_, rows)| rows.clone())
+}
+
+/// The configured harnesses without spending a single model request: the cheap PATH/key view,
+/// with the last measured readiness laid over it by name. This is what the Chat tab's two-second
+/// poll, Settings' initial load and the control API's default read use. Without it, every cache
+/// expiry launched a fresh 45–90 second probe pass for every harness, so the machine was almost
+/// always probing. [`configured_fresh`] remains the one path that actually probes.
+pub fn configured_cached(project_root: Option<&str>) -> Vec<ChatHarness> {
+    dir_for(project_root)
+        .map(|dir| configured_cached_in(&dir))
+        .unwrap_or_default()
+}
+
+fn configured_cached_in(dir: &Path) -> Vec<ChatHarness> {
+    let mut rows = harnesses(dir);
+    if let Some(cached) = cached_readiness_latest(dir) {
+        for row in &mut rows {
+            if let Some(known) = cached.iter().find(|candidate| candidate.name == row.name) {
+                *row = known.clone();
+            }
+        }
+    }
+    rows
 }
 
 /// Re-probe the room after a setup change. The readiness cache is deliberately short, but a
@@ -3496,6 +3527,44 @@ command = "qwen"
         assert!(text.contains("[server]\nport = 8300"));
         // A second call is a no-op, so a poll loop does not touch the file.
         assert!(!rewrite_agent_cwd(&config, project).expect("rewrite again"));
+
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn the_cached_roster_never_probes_and_keeps_the_last_verdict() {
+        let root = std::env::temp_dir().join(format!(
+            "rigel-cached-roster-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        std::fs::create_dir_all(&root).expect("temp dir");
+        std::fs::write(
+            root.join("config.toml"),
+            "[agents.fake-cli]\ncommand = \"rigel-no-such-harness\"\nlabel = \"Fake\"\n",
+        )
+        .expect("config");
+
+        // A checkout with no verdict yet still names its harnesses from the cheap PATH view.
+        let initial = configured_cached_in(&root);
+        assert_eq!(initial.len(), 1);
+        assert_eq!(initial[0].status, HarnessStatus::Missing);
+
+        // An explicit re-check records a verdict; passive reads must show it without probing.
+        let mut measured = initial.clone();
+        measured[0].status = HarnessStatus::Usable;
+        measured[0].ready = true;
+        measured[0].evidence = "cached from an explicit re-check".to_string();
+        remember_readiness(
+            &root,
+            &measured,
+            READINESS_GENERATION.load(std::sync::atomic::Ordering::SeqCst),
+        );
+
+        let cached = configured_cached_in(&root);
+        assert_eq!(cached.len(), 1);
+        assert_eq!(cached[0].status, HarnessStatus::Usable);
+        assert_eq!(cached[0].evidence, "cached from an explicit re-check");
 
         std::fs::remove_dir_all(&root).ok();
     }

@@ -560,8 +560,22 @@ impl ApprovalBus {
             note: note.filter(|note| !note.trim().is_empty()),
         };
         let text = serde_json::to_string(&answered).map_err(|error| error.to_string())?;
-        std::fs::write(dir.join(format!("{id}.json")), text)
+        // The asker polls this file while it is written. Writing in place truncates it first,
+        // so a poll can read an empty file and, before `take_answer` learned to leave it alone,
+        // lose the click. A completed temporary file renamed into place is either absent or a
+        // whole answer, never half of one.
+        let target = dir.join(format!("{id}.json"));
+        let temp = dir.join(format!("{id}.{}.tmp", new_request_id()));
+        std::fs::write(&temp, text)
             .map_err(|error| format!("could not write the answer: {error}"))?;
+        if std::fs::rename(&temp, &target).is_err() {
+            // A reader can hold the target open on Windows; drop it and try once more.
+            let _ = std::fs::remove_file(&target);
+            if let Err(error) = std::fs::rename(&temp, &target) {
+                let _ = std::fs::remove_file(&temp);
+                return Err(format!("could not write the answer: {error}"));
+            }
+        }
         let _ = std::fs::remove_file(self.pending_dir().join(format!("{id}.json")));
         Ok(())
     }
@@ -617,11 +631,18 @@ impl ApprovalBus {
         rows
     }
 
+    /// Take the answer to `id`, if a complete one has been written.
+    ///
+    /// A file that cannot be read as an answer is left in place. A read that lands mid-write
+    /// is not a decision, and consuming it would lose the click: the asker would keep waiting
+    /// ten minutes while the card returned on the next poll. The next completed answer
+    /// replaces the file and is taken normally.
     fn take_answer(&self, id: &str) -> Option<AnsweredApproval> {
         let path = self.answered_dir().join(format!("{id}.json"));
         let text = std::fs::read_to_string(&path).ok()?;
+        let answered = serde_json::from_str(&text).ok()?;
         let _ = std::fs::remove_file(path);
-        serde_json::from_str(&text).ok()
+        Some(answered)
     }
 }
 
@@ -901,6 +922,77 @@ mod tests {
         }
         bus.answer(&open[0].id, None).unwrap();
         assert!(handle.await.unwrap().is_err());
+    }
+
+    #[tokio::test]
+    async fn an_unreadable_answer_is_not_consumed_and_a_later_click_still_lands() {
+        // The answer file was written in place before this fix, so a poll could open it after
+        // the truncate and read an empty file. `take_answer` removed it even when it did not
+        // parse, which dropped the click: the asker kept waiting for the full deadline and the
+        // card came back on the next poll.
+        let dir = tempfile::tempdir().unwrap();
+        let bus = ApprovalBus::new(dir.path());
+        let asker = bus.clone();
+        let handle = tokio::spawn(async move {
+            asker
+                .ask(
+                    PendingApproval::now("command", "command:cargo test", "cargo test"),
+                    std::time::Duration::from_secs(5),
+                )
+                .await
+        });
+        let mut open = Vec::new();
+        for _ in 0..50 {
+            open = bus.pending();
+            if !open.is_empty() {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        }
+        let id = open[0].id.clone();
+        let answer = dir
+            .path()
+            .join("approvals")
+            .join("answered")
+            .join(format!("{id}.json"));
+        std::fs::create_dir_all(answer.parent().unwrap()).unwrap();
+        std::fs::write(&answer, "").unwrap();
+
+        tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+        assert!(
+            answer.exists(),
+            "an unreadable answer must stay on disk instead of being swallowed"
+        );
+        assert!(
+            !handle.is_finished(),
+            "an empty file is not a decision, so the asker is still waiting"
+        );
+
+        bus.answer(&id, Some(ApprovalScope::Once)).unwrap();
+        assert_eq!(handle.await.unwrap(), Ok(ApprovalScope::Once));
+        assert!(!answer.exists(), "a taken answer is removed");
+    }
+
+    #[test]
+    fn answering_leaves_one_complete_file_and_no_temporary_one() {
+        let dir = tempfile::tempdir().unwrap();
+        let bus = ApprovalBus::new(dir.path());
+        let pending = PendingApproval::now("command", "command:cargo test", "cargo test");
+        bus.publish(&pending).unwrap();
+        bus.answer(&pending.id, Some(ApprovalScope::Session))
+            .unwrap();
+
+        let left = std::fs::read_dir(dir.path().join("approvals").join("answered"))
+            .unwrap()
+            .flatten()
+            .map(|entry| entry.file_name().to_string_lossy().into_owned())
+            .collect::<Vec<_>>();
+        assert_eq!(
+            left,
+            vec![format!("{}.json", pending.id)],
+            "the answer lands as one finished file, with no temp file beside it"
+        );
+        assert!(bus.pending().is_empty(), "answering closes the question");
     }
 
     #[tokio::test]

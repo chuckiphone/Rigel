@@ -608,14 +608,23 @@ async fn project_permissions(
     let service = SessionService::open(std::path::Path::new(&project))
         .await
         .map_err(message)?;
-    let agents = match session.as_deref() {
-        Some(session) => service.agents(session).await.map_err(message)?,
-        None => Vec::new(),
-    };
+    // The matrix is a project-wide ceiling, so it lists every session's agents, not only the one
+    // Settings happened to have open. Muse's coordinator lives in its own session; omitting that
+    // session made its column disappear and left tools that only a custom role covers (MCP, web,
+    // mail) looking unassigned. The active session sorts first where it exists.
+    let mut sessions = service.list().await.map_err(message)?;
+    if let Some(active) = session.as_deref() {
+        sessions.sort_by_key(|candidate| candidate.id != active);
+    }
+    let mut agents = Vec::new();
+    for candidate in &sessions {
+        agents.extend(service.agents(&candidate.id).await.map_err(message)?);
+    }
     let rows: Vec<rigel_core::AgentPermissionRow> = agents
         .into_iter()
         .map(|agent| rigel_core::AgentPermissionRow {
             id: agent.id,
+            session: Some(agent.session_id),
             role: agent.role,
             tool_overrides: agent.tool_overrides,
         })

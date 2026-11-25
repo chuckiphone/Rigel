@@ -72,6 +72,9 @@ export default function PermissionsEditor({
 
   const roleFor = (role: string | null) =>
     role === null ? undefined : matrix?.roles.find((candidate) => candidate.id === role);
+  /** A custom role has no preset title; its own name reads better than "Custom". */
+  const roleName = (role: string | null) =>
+    role ? role.charAt(0).toUpperCase() + role.slice(1) : "Custom";
   /** The role's own allowance. A custom role (no preset) starts from every tool. */
   const roleTools = (role: string | null) => roleFor(role)?.requested ?? matrix?.all_tools ?? [];
   const overrideFor = (agentId: string) => overrides[agentId] ?? null;
@@ -111,7 +114,7 @@ export default function PermissionsEditor({
       for (const agent of changedAgents) {
         next = await api.permissionsSetAgent(
           project,
-          session ?? "",
+          agent.session ?? session ?? "",
           agent.id,
           overrideFor(agent.id),
         );
@@ -194,7 +197,7 @@ export default function PermissionsEditor({
                 ))}
                 {matrix.agents.map((agent) => (
                   <th scope="col" key={agent.id} title={`${agent.id} · ${agent.source}`}>
-                    <span>{agent.role_title ?? "Custom"}</span>
+                    <span>{agent.role_title ?? roleName(agent.role)}</span>
                     <small>
                       {agent.id.slice(0, 8)}
                       {overrideFor(agent.id) ? " · narrowed" : ""}
