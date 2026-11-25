@@ -79,9 +79,10 @@ features = [
 default-features = false
 
 [dependencies.libsqlite3-sys]
-# Local patch for RUSTSEC-2026-0459: use the libsqlite3-sys that bundles SQLite 3.54.1.
-# Upstream made the same bound change on main; no sqlx-sqlite source changed.
-version = "0.39.1"
+# Local patch for RUSTSEC-2026-0459 and RUSTSEC-2026-0502: use the libsqlite3-sys that
+# bundles SQLCipher 4.20.0 / SQLite 3.54.1. Upstream made the same bound change on main; no
+# sqlx-sqlite source changed.
+version = "0.40"
 features = [
     "pkg-config",
     "vcpkg",

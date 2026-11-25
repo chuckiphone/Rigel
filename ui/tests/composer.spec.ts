@@ -28,6 +28,16 @@ test("composer history recalls a sent prompt and a snippet fills its placeholder
   await expect(composer).toHaveValue(/for the rollback path\./);
 });
 
+test("the account cluster does not cover Stop at the minimum window width", async ({ page }) => {
+  await page.setViewportSize({ width: 1024, height: 768 });
+  await page.goto("/?live=1");
+  await page.getByRole("button", { name: "Session", exact: true }).click();
+
+  const stop = page.getByRole("button", { name: "Stop turn" });
+  await expect(stop).toBeEnabled();
+  await stop.click({ trial: true });
+});
+
 test("the composer exposes Build, Plan, Mission and Skills with context, queue and stop", async ({
   page,
 }) => {

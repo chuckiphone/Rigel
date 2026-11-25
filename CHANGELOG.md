@@ -7,8 +7,10 @@ Every release, newest first. The heading is the version its `v*` tag publishes.
 - fix(release): move the `rigel-b` license resource to `licenses/rigel-b/` so it cannot create a
   directory named like the sidecar executable; the macOS and Linux Tauri bundles stop failing with
   `File exists (os error 17)`
-- fix(window): raise the account/settings pair above the composer so it no longer intercepts the
-  Stop button at narrower window widths
+- fix(window): reserve a right-hand composer gutter at narrow widths so the account/settings pair
+  no longer intercepts the Stop button
+- security(db): move the vendored SQLite binding to `libsqlite3-sys` 0.40 and SQLCipher 4.20.0 /
+  SQLite 3.54.1 for RUSTSEC-2026-0502 / CVE-2026-119375
 - docs(release): correct the README and the 0.3.0/0.4.0-1 notes; only 0.1.x is published, 0.3.0 is
   source-only, and 0.4.0-1 never produced a GitHub release
 

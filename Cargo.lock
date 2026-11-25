@@ -2480,7 +2480,7 @@ dependencies = [
 
 [[package]]
 name = "libsqlite3-sys"
-version = "0.39.1"
+version = "0.40.0"
 dependencies = [
  "cc",
  "pkg-config",
@@ -3627,7 +3627,7 @@ dependencies = [
 
 [[package]]
 name = "rigel-adapters"
-version = "0.4.0-1"
+version = "0.4.0-2"
 dependencies = [
  "async-trait",
  "rigel-core",
@@ -3641,7 +3641,7 @@ dependencies = [
 
 [[package]]
 name = "rigel-app"
-version = "0.4.0-1"
+version = "0.4.0-2"
 dependencies = [
  "async-trait",
  "base64 0.23.1",
@@ -3664,7 +3664,7 @@ dependencies = [
 
 [[package]]
 name = "rigel-cli"
-version = "0.4.0-1"
+version = "0.4.0-2"
 dependencies = [
  "async-trait",
  "clap",
@@ -3685,7 +3685,7 @@ dependencies = [
 
 [[package]]
 name = "rigel-core"
-version = "0.4.0-1"
+version = "0.4.0-2"
 dependencies = [
  "age",
  "async-trait",
@@ -3713,7 +3713,7 @@ dependencies = [
 
 [[package]]
 name = "rigel-mcp"
-version = "0.4.0-1"
+version = "0.4.0-2"
 dependencies = [
  "async-trait",
  "rigel-core",
@@ -4386,9 +4386,9 @@ dependencies = [
 
 [[package]]
 name = "sqlcipher-src"
-version = "419.0.6+sqlcipher-4.19.0-sqlite-3.53.4-libtomcrypt-1.18.2"
+version = "420.0.0+sqlcipher-4.20.0-sqlite-3.54.1-libtomcrypt-1.18.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ab732d48ebf2a1449e94d071b26544f99845834c75c3c210e927ace097b49aa4"
+checksum = "fd6b5280ed2593d07b2816ec531821c15c306903bcca224716f1fbcc2bbfedfe"
 
 [[package]]
 name = "sqlx"

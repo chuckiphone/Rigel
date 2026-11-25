@@ -331,13 +331,11 @@ input[type="checkbox"] {
 }
 
 /* The bottom-right utility pair lives outside the rail. column-reverse places Settings above
-   Account while the DOM keeps Account first, so Tab reaches Account then Settings. It sits above
-   the composer: the composer's Send/Stop controls occupy the same corner at narrower widths, and
-   a fixed overlay there intercepted real clicks. */
+   Account while the DOM keeps Account first, so Tab reaches Account then Settings. */
 .utility-cluster {
   position: fixed;
   right: 28px;
-  bottom: 148px;
+  bottom: 40px;
   z-index: 35;
   display: flex;
   flex-direction: column-reverse;
@@ -2939,6 +2937,14 @@ input[type="checkbox"] {
   gap: 8px;
   align-items: flex-end;
   padding: 10px 0 6px;
+}
+
+/* At the minimum window width the fixed account/settings pair shares the composer's bottom-right
+   corner. Keep the composer's Send and Stop controls out from under it. */
+@media (max-width: 1180px) {
+  .composer {
+    padding-right: 56px;
+  }
 }
 
 .composer-field {
