@@ -864,7 +864,27 @@ fn strip_verbatim(path: &Path) -> PathBuf {
 }
 
 fn within(path: &Path, parent: &Path) -> bool {
-    path.starts_with(parent)
+    if path.starts_with(parent) {
+        return true;
+    }
+    // Windows can spell one directory two ways (an 8.3 short name, a junction, or a different
+    // case). Canonicalize the nearest existing ancestor so an aliased destination is still
+    // recognised as inside the source.
+    resolve_existing(path).is_some_and(|path| path.starts_with(parent))
+}
+
+fn resolve_existing(path: &Path) -> Option<PathBuf> {
+    let mut missing = Vec::new();
+    let mut current = path;
+    while !current.exists() {
+        missing.push(current.file_name()?.to_os_string());
+        current = current.parent()?;
+    }
+    let mut resolved = current.canonicalize().ok()?;
+    for part in missing.iter().rev() {
+        resolved.push(part);
+    }
+    Some(strip_verbatim(&resolved))
 }
 
 fn sibling_temp(destination: &Path) -> PathBuf {

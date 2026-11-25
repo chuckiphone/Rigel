@@ -115,7 +115,11 @@ test("open, send, approve and diff with Tab and Enter only", async ({ page }) =>
   const composerStops = await tabTo(page, placeholder("Ask the agent"));
   await page.keyboard.type("Keyboard-only turn");
   await page.keyboard.press("Enter");
-  await expect(page.getByRole("region", { name: "Prompt refinement" })).toBeVisible();
+  const review = page.getByRole("region", { name: "Prompt refinement" });
+  await expect(review).toBeVisible();
+  // While the refinement request is in flight every review action is disabled and therefore
+  // skipped by Tab. Wait for the card to finish before looking for its controls.
+  await expect(review).toHaveAttribute("aria-busy", "false");
   const reviewStops = await tabTo(page, text("Send original"));
   await page.keyboard.press("Enter");
 
