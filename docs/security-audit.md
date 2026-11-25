@@ -85,11 +85,17 @@ disposition is more honest than marking a not-applicable check as "passed":
 
 | Items | Disposition |
 |---|---|
-| 3, 4, 5, 6, 12, 15, 18, 20, 48, 57, 58, 62, 63, 67 | **Not applicable today.** No SAML, OAuth/social login, GraphQL, TOTP, Postgres RLS, CBC cookies, XML auth parser, account usernames, payments, Apple relay addresses, or public files/upload route. Roles are read from the database, never from a request body. Room deletion is vendor state, not a Rigel read path. |
+| 3, 4, 5, 6, 12, 15, 18, 20, 48, 57, 58, 62, 63, 67 | **Not applicable today.** No GraphQL, TOTP, Postgres RLS, CBC cookies, account usernames, payments, Apple relay addresses, or public files/upload route. Roles are read from the database, never from a request body. Room deletion is vendor state, not a Rigel read path. |
 | 1, 10, 11, 19, 26 | **Deployment or vendor evidence needed.** Rigel's own server is HTTP/1.1 with no cache; Tailscale Serve's HTTP/2, cache and ACL configuration is not in this repository. The API never trusts `X-Forwarded-For`; its limiter keys on the TCP peer. The room WebSocket is hosted by the vendor agentchattr sidecar. |
-| 2, 7, 16, 17, 32, 37, 38, 40, 41, 42, 46, 49, 50, 51, 64, 65, 66 | **Source-reviewed; no exploitable boundary found.** Rust `regex` is linear-time; no XML parser is used for untrusted input; no JS deep merge of untrusted objects; React escapes displayed text; API bodies/fields are capped; the cloud error handler hides detail in production and local errors go to an authenticated caller; uploads are local to the operator; mail-domain SPF/DKIM/DMARC is external; shipped client code contains no secret. The UI-only resize/theme/RTL/timezone checks belong to the UI test lane, not a security boundary. |
+| 2, 7, 16, 17, 32, 37, 38, 40, 41, 42, 46, 49, 50, 51, 64, 65, 66 | **Source-reviewed; no exploitable boundary found.** Rust `regex` is linear-time; the local coordinator API uses no XML parser for untrusted input (the self-hosted SSO parser is called out below); no JS deep merge of untrusted objects; React escapes displayed text; API bodies/fields are capped; the cloud error handler hides detail in production and local errors go to an authenticated caller; uploads are local to the operator; mail-domain SPF/DKIM/DMARC is external; shipped client code contains no secret. The UI-only resize/theme/RTL/timezone checks belong to the UI test lane, not a security boundary. |
 | 8, 9, 13, 14, 21, 22, 23, 24, 25, 27, 28, 29, 30, 31, 33, 34, 35, 45, 52, 55, 56, 59, 60, 61 | **Covered or fixed above.** |
 | 36, 39, 43, 44, 47, 53, 54 | **Hardening backlog, not a demonstrated boundary failure.** Double-submit/idempotency, delete-then-recreate, permission denial and cross-session refresh are product-state checks. The API has request timeouts and atomic writes; the relay caps payloads and has idempotency keys. |
+
+**SSO added after this scan (2026-11-24).** The self-hosted API now has OIDC and SAML login,
+including a server-side XML signature parser for SAML. Those paths are not represented by the 67
+checks above; their state, PKCE/nonce, signed-assertion, `InResponseTo`, replay and domain checks
+are documented in [sso.md](sso.md) and exercised by `server/test/sso.test.js`. A full security
+review of the new dependency chain is still required before the 0.6 production gate.
 
 ## Secret scan
 

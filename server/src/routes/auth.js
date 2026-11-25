@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { isBreakGlassAdmin, providerForEmail } from '../sso.js';
 import {
   bearer,
   clientIp,
@@ -16,7 +17,7 @@ const REFRESH_COOKIE = 'rigel_refresh';
 const VERIFY_HOURS = 24;
 const RESET_MINUTES = 60;
 
-function parseCookies(header) {
+export function parseCookies(header) {
   const result = {};
   for (const part of String(header ?? '').split(';')) {
     const index = part.indexOf('=');
@@ -30,7 +31,7 @@ function wantsNative(request) {
   return request.headers['x-rigel-native'] === '1';
 }
 
-function setRefreshCookie(reply, config, token) {
+export function setRefreshCookie(reply, config, token) {
   const maxAge = config.refreshDays * 86_400;
   const secure = config.production ? '; Secure' : '';
   reply.header(
@@ -39,7 +40,7 @@ function setRefreshCookie(reply, config, token) {
   );
 }
 
-function clearRefreshCookie(reply, config) {
+export function clearRefreshCookie(reply, config) {
   const secure = config.production ? '; Secure' : '';
   reply.header(
     'set-cookie',
@@ -47,7 +48,7 @@ function clearRefreshCookie(reply, config) {
   );
 }
 
-function publicUser(user) {
+export function publicUser(user) {
   return {
     id: user.id,
     email: user.email,
@@ -59,7 +60,7 @@ function publicUser(user) {
   };
 }
 
-async function createSession(app, request, user) {
+export async function createSession(app, request, user) {
   const { config } = app;
   const id = randomUUID();
   const refresh = randomToken(48);
@@ -90,7 +91,7 @@ async function createSession(app, request, user) {
   };
 }
 
-function sessionResponse(user, session, native) {
+export function sessionResponse(user, session, native) {
   return {
     access_token: session.accessToken,
     token_type: 'Bearer',
@@ -110,7 +111,7 @@ async function createToken(app, userId, kind, lifetimeMs) {
   return raw;
 }
 
-async function audit(app, userId, action, detail = {}) {
+export async function audit(app, userId, action, detail = {}) {
   await app.db
     .query('INSERT INTO audit_log (id, user_id, action, detail) VALUES ($1, $2, $3, $4::jsonb)', [
       randomUUID(),
@@ -133,6 +134,10 @@ export async function registerAuthRoutes(app) {
       if (!validEmail(email)) return reply.code(400).send({ error: 'invalid_email' });
       if (!validPassword(password)) {
         return reply.code(400).send({ error: 'weak_password', message: 'Use at least 10 characters.' });
+      }
+      const ssoProvider = providerForEmail(config.sso, email);
+      if (ssoProvider?.enforce) {
+        return reply.code(403).send({ error: 'sso_required', provider_id: ssoProvider.id });
       }
       const passwordHash = await hashPassword(password);
       let user;
@@ -181,6 +186,13 @@ export async function registerAuthRoutes(app) {
         [email],
       );
       const user = rows[0];
+      const ssoProvider = providerForEmail(config.sso, email);
+      const breakGlass = Boolean(
+        user && ssoProvider?.enforce && isBreakGlassAdmin(config.sso, user),
+      );
+      if (ssoProvider?.enforce && !breakGlass) {
+        return reply.code(403).send({ error: 'sso_required', provider_id: ssoProvider.id });
+      }
       if (!user) {
         await verifyPassword(password, 'scrypt$32768$8$1$AAAAAAAAAAAAAAAAAAAAAA$AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA');
         return reply.code(401).send({ error: 'invalid_credentials' });
@@ -201,7 +213,7 @@ export async function registerAuthRoutes(app) {
       const session = await createSession(app, request, user);
       const native = wantsNative(request);
       if (!native) setRefreshCookie(reply, config, session.refreshToken);
-      await audit(app, user.id, 'login', { native });
+      await audit(app, user.id, 'login', { native, break_glass: breakGlass });
       return sessionResponse(user, session, native);
     },
   );

@@ -4,6 +4,12 @@ Every release, newest first. The heading is the version its `v*` tag publishes.
 
 ## 0.4.0-1 — 2026-11-24
 
+- feat(auth): add OIDC and SAML enterprise SSO to the self-hosted API, with domain discovery,
+  PKCE and nonce checks, signed SAML assertions and replay protection, enforced SSO for a
+  configured domain, and a listed break-glass admin that must already hold the admin role.
+  Provider configuration and the redirect/ACS URLs are in [sso](docs/sso.md);
+  `server/test/sso.test.js` runs a real HTTP OIDC provider and a signed SAML IdP through the
+  login round trips and their failure paths (no live tenant was contacted)
 - feat(audit): add Settings → Audit log, a read-only filtered view of the approval ledger by
   project, session, agent, turn, decision and free text; the filter round-trips through the
   settings hash and **Export filtered CSV** writes exactly the matched rows with a leading

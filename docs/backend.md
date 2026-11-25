@@ -53,6 +53,14 @@ Two environment variables override the saved choice for a headless run:
 When an override is active, Settings says so and shows the URL requests actually use. The saved
 choice remains on disk for the next launch without the variable.
 
+## Enterprise SSO
+
+The self-hosted API can accept OIDC or SAML browser logins, enforce SSO for a domain and keep a
+listed break-glass admin on password login. Provider configuration, redirect/ACS URLs and the
+security checks are in [sso.md](sso.md). The OIDC and signed-SAML round trips plus their failure
+paths are exercised by `server/test/sso.test.js` against local providers; a real tenant login is
+still required during deployment.
+
 ## Server-side security assumptions
 
 The hosted and self-hosted server share the same code, so the same boundaries apply:

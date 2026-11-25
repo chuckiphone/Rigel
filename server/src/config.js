@@ -1,3 +1,5 @@
+import { loadSso } from './sso.js';
+
 const REQUIRED_IN_PRODUCTION = ['DATABASE_URL', 'JWT_SECRET', 'APP_URL', 'API_URL'];
 
 function integer(value, fallback) {
@@ -72,6 +74,7 @@ export function loadConfig(env = process.env) {
       throw new Error('Rigel and Muse relay tokens must be different');
     }
   }
+  config.sso = loadSso(env, { production, apiUrl: config.apiUrl });
   return config;
 }
 
@@ -85,6 +88,19 @@ export function publicConfig(config) {
       provider: config.llmProvider,
       models: config.llmModels,
     },
-    auth: { email_verification: true, password_reset: true },
+    auth: {
+      email_verification: true,
+      password_reset: true,
+      sso: {
+        enabled: Boolean(config.sso?.enabled),
+        providers: (config.sso?.providers ?? []).map((provider) => ({
+          id: provider.id,
+          type: provider.type,
+          label: provider.label,
+          domains: [...provider.domains],
+          enforced: provider.enforce,
+        })),
+      },
+    },
   };
 }

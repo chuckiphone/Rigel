@@ -65,6 +65,11 @@ Fill in the optional external values when they are available:
 - `LLM_BASE_URL`, `LLM_API_KEY`, `LLM_MODELS` for the gateway.
 - `GRAVITY_API_KEY` and `GRAVITY_PRODUCTION` for the ad bridge.
 - `TURNSTILE_SECRET`, `ENROLL_TOKEN`, `REQUIRE_DEVICE` when device enrollment is enabled.
+- `SSO_PROVIDERS`, `SSO_SP_CERT`, `SSO_SP_KEY` and `SSO_BREAK_GLASS_ADMINS` for enterprise
+  OIDC or SAML login. Configure the provider redirect URI
+  `https://api.askrigel.com/v1/auth/sso/oidc/callback`, or give the IdP administrator
+  `https://api.askrigel.com/v1/auth/sso/saml/metadata`; the full JSON shape and the
+  break-glass rules are in [`docs/sso.md`](../docs/sso.md).
 
 Never commit `deploy/.env.production`. The root `.gitignore` ignores `.env.*`.
 

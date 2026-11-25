@@ -290,6 +290,7 @@ The gaps are part of the record:
 - [docs/roblox.md](docs/roblox.md): Roblox Studio MCP, 3D assets, animations and sound effects
 - [docs/design.md](docs/design.md): surface jobs, the token contract and the responsive breakpoints
 - [docs/api.md](docs/api.md): `rigel serve`, bearer auth, OpenAPI and the endpoint table
+- [docs/sso.md](docs/sso.md): OIDC and SAML login, domain discovery, enforced SSO, break-glass admins and the tested failure paths
 - [docs/plugins.md](docs/plugins.md): the plugin manifest, protocol, capability boundary and catalogue
 - [docs/harness-parity.md](docs/harness-parity.md): the generated, test-enforced approvals/streaming/usage/resume/tools table
 - [docs/threat-model.md](docs/threat-model.md): five threats and what is, and is not, defended

@@ -17,6 +17,7 @@ export function createPool(connectionString, options = {}) {
 const MIGRATIONS = [
   [1, '001_init'],
   [2, '002_relay'],
+  [3, '003_sso'],
 ];
 
 export async function migrate(pool) {

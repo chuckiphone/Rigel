@@ -1,10 +1,12 @@
 import Fastify from 'fastify';
 import cors from '@fastify/cors';
+import formbody from '@fastify/formbody';
 import rateLimit from '@fastify/rate-limit';
 import { publicConfig } from './config.js';
 import { bearer, verifyAccessToken } from './security.js';
 import { registerAuthRoutes } from './routes/auth.js';
 import { registerRelayRoutes } from './routes/relay.js';
+import { registerSsoRoutes } from './routes/sso.js';
 
 export async function buildApp({ config, pool, mailer, logger = true, fetchImpl = fetch }) {
   const app = Fastify({
@@ -32,6 +34,7 @@ export async function buildApp({ config, pool, mailer, logger = true, fetchImpl 
     timeWindow: '1 minute',
     allowList: [],
   });
+  await app.register(formbody);
 
   app.decorate('config', config);
   app.decorate('db', pool);
@@ -105,6 +108,7 @@ export async function buildApp({ config, pool, mailer, logger = true, fetchImpl 
   app.get('/v1/meta', async () => publicConfig(config));
 
   await registerAuthRoutes(app);
+  await registerSsoRoutes(app);
   if (config.relayTokens?.rigel && config.relayTokens?.muse) {
     await registerRelayRoutes(app);
   }
