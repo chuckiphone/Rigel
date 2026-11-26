@@ -24,6 +24,7 @@
 pub mod blob;
 pub mod builtin;
 pub mod cluster;
+pub mod contract;
 pub mod evidence;
 pub mod frontmatter;
 pub mod github;
@@ -45,6 +46,7 @@ pub use crate::storage::StorageError;
 pub use blob::BlobStore;
 pub use builtin::{BUILTIN_SKILLS, BuiltinSkill};
 pub use cluster::{HAMMING_THRESHOLD, simhash};
+pub use contract::{ArgSpec, Contract, ContractError, EnvSpec, ScriptContract};
 pub use evidence::{Evidence, EvidenceSummary};
 pub use github::GitHubSource;
 pub use http::{Fetched, Http, HttpError};
