@@ -50,7 +50,30 @@ pub fn plan(project: &Path) -> Vec<Repair> {
         }
     }
 
+    // Orphan blobs: files in .rigel/blobs whose name is not a valid sha256 hash.
+    let blobs = rigel.join("blobs");
+    if blobs.exists() {
+        if let Ok(entries) = std::fs::read_dir(&blobs) {
+            for entry in entries.flatten() {
+                if !entry.file_type().map(|t| t.is_file()).unwrap_or(false) {
+                    continue;
+                }
+                let name = entry.file_name().to_string_lossy().to_string();
+                if !is_sha256(&name) {
+                    repairs.push(Repair {
+                        id: "orphan-blob".to_string(),
+                        detail: format!("remove {}", entry.path().display()),
+                    });
+                }
+            }
+        }
+    }
+
     repairs
+}
+
+fn is_sha256(name: &str) -> bool {
+    name.len() == 64 && name.chars().all(|c| c.is_ascii_hexdigit())
 }
 
 /// Apply the planned repairs. Returns the number applied.
@@ -69,14 +92,39 @@ pub async fn apply(project: &Path, repairs: &[Repair]) -> usize {
                 }
             }
             "uncheckpointed-wal" => {
-                let wal = rigel.join("rigel.db-wal");
-                let shm = rigel.join("rigel.db-shm");
-                let _ = std::fs::remove_file(&wal);
-                let _ = std::fs::remove_file(&shm);
-                applied += 1;
+                let db = rigel.join("rigel.db");
+                if db.exists() {
+                    // Run a real SQLite checkpoint instead of deleting -wal/-shm.
+                    let url = format!("sqlite://{}", db.display());
+                    if let Ok(pool) = sqlx::sqlite::SqlitePoolOptions::new()
+                        .max_connections(1)
+                        .connect(&url)
+                        .await
+                    {
+                        let _ = sqlx::query("PRAGMA wal_checkpoint(TRUNCATE)")
+                            .execute(&pool)
+                            .await;
+                        pool.close().await;
+                        applied += 1;
+                    }
+                } else {
+                    // No database yet: the sidecar is stale and safe to remove.
+                    let wal = rigel.join("rigel.db-wal");
+                    let shm = rigel.join("rigel.db-shm");
+                    let _ = std::fs::remove_file(&wal);
+                    let _ = std::fs::remove_file(&shm);
+                    applied += 1;
+                }
             }
             "stale-journal" => {
                 // detail contains the path after "remove "
+                if let Some(path) = repair.detail.strip_prefix("remove ") {
+                    if std::fs::remove_file(path).is_ok() {
+                        applied += 1;
+                    }
+                }
+            }
+            "orphan-blob" => {
                 if let Some(path) = repair.detail.strip_prefix("remove ") {
                     if std::fs::remove_file(path).is_ok() {
                         applied += 1;
