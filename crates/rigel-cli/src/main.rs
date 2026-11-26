@@ -62,6 +62,9 @@ enum Command {
         support_bundle: Option<PathBuf>,
         #[arg(long)]
         json: bool,
+        /// Apply the repairs the report lists, instead of only reporting them.
+        #[arg(long)]
+        fix: bool,
     },
 
     /// Create or migrate a project's session database.
@@ -586,7 +589,14 @@ async fn entry() -> ExitCode {
             project,
             support_bundle,
             json: as_json,
-        } => doctor::run(&project, &dir, as_json, support_bundle.as_deref()).await,
+            fix,
+        } => {
+            if fix {
+                doctor::fix::run(&project).await
+            } else {
+                doctor::run(&project, &dir, as_json, support_bundle.as_deref()).await
+            }
+        }
 
         Command::Migrate { project } => match Store::open_project(&project).await {
             Ok(store) => {
