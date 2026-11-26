@@ -5710,6 +5710,122 @@ button[aria-label^="Unpin "] {
   font-size: 18px;
 }
 
+/* Cost dashboard (roadmap 136): exact totals, a cap meter and one ledger. */
+.cost-dashboard {
+  margin-top: 10px;
+  padding: 10px 12px;
+  border: 1px solid var(--hairline);
+  border-radius: 6px;
+  background: var(--surface);
+}
+
+.cost-head {
+  display: flex;
+  align-items: end;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.cost-head .eyebrow {
+  display: block;
+  color: var(--faint);
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.cost-total {
+  display: block;
+  color: var(--text);
+  font-family: var(--mono);
+  font-size: 20px;
+}
+
+.cost-actions {
+  display: flex;
+  gap: 6px;
+}
+
+.cost-cap {
+  margin: 10px 0;
+}
+
+.cost-cap-track {
+  height: 6px;
+  margin-top: 4px;
+  border: 1px solid var(--hairline);
+  border-radius: 999px;
+  background: var(--well);
+  overflow: hidden;
+}
+
+.cost-cap-fill {
+  height: 100%;
+  background: var(--accent);
+}
+
+.cost-reconcile {
+  margin: 8px 0;
+  font-size: 11px;
+}
+
+.cost-reconcile.ok {
+  color: var(--verified);
+}
+
+.cost-reconcile.bad {
+  color: var(--danger-text);
+}
+
+.cost-groups {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 10px;
+}
+
+.cost-group h4,
+.cost-ledger caption {
+  margin: 0 0 4px;
+  color: var(--muted);
+  font-size: 11px;
+  text-align: left;
+}
+
+.cost-group ul {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.cost-group li {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  gap: 6px;
+  padding: 2px 0;
+  border-bottom: 1px solid var(--hairline);
+  font-size: 11px;
+}
+
+.cost-label {
+  overflow-wrap: anywhere;
+}
+
+.cost-ledger {
+  width: 100%;
+  margin-top: 10px;
+  border-collapse: collapse;
+  font-size: 11px;
+}
+
+.cost-ledger th,
+.cost-ledger td {
+  padding: 3px 6px;
+  border-bottom: 1px solid var(--hairline);
+  text-align: left;
+}
+
 .harness-row .needs-key {
   color: var(--accent-text);
 }
