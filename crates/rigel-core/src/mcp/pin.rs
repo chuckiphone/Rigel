@@ -39,12 +39,22 @@ pub enum PinError {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Catalog {
     pub server_version: String,
+    /// The protocol version the server negotiated during `initialize`.
+    pub protocol_version: String,
     /// Canonical registry order: sorted by tool name.
     pub tools: Vec<Value>,
 }
 
 impl Catalog {
     pub fn new(server_version: impl Into<String>, tools: Vec<Value>) -> Result<Self, PinError> {
+        Self::with_protocol("unknown", server_version, tools)
+    }
+
+    pub fn with_protocol(
+        protocol_version: impl Into<String>,
+        server_version: impl Into<String>,
+        tools: Vec<Value>,
+    ) -> Result<Self, PinError> {
         let mut by_name = BTreeMap::new();
         for tool in tools {
             let name = tool
@@ -61,6 +71,7 @@ impl Catalog {
         }
         Ok(Self {
             server_version: server_version.into(),
+            protocol_version: protocol_version.into(),
             tools: by_name.into_values().collect(),
         })
     }

@@ -30,6 +30,7 @@ mod phase3;
 mod plugins;
 mod proof;
 mod route;
+mod rules;
 mod serve;
 mod stats;
 mod testing;
@@ -174,6 +175,12 @@ enum Command {
     Route {
         #[command(subcommand)]
         command: route::RouteCommand,
+    },
+
+    /// Explain which project rule wins and why.
+    Rules {
+        #[command(subcommand)]
+        command: rules::RulesCommand,
     },
 
     /// The project network policy: show it, explain a URL, or save a validated policy.
@@ -641,6 +648,8 @@ async fn entry() -> ExitCode {
         }
 
         Command::Route { command } => route::run(command),
+
+        Command::Rules { command } => rules::run(command),
 
         Command::Network { command } => network::run(command).await,
 

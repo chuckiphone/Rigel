@@ -24,12 +24,14 @@
 pub mod blob;
 pub mod builtin;
 pub mod cluster;
+pub mod contract;
 pub mod evidence;
 pub mod frontmatter;
 pub mod github;
 pub mod http;
 pub mod hub;
 pub mod index;
+pub mod rank;
 pub mod run;
 pub mod scan;
 pub mod scanner;
@@ -45,6 +47,7 @@ pub use crate::storage::StorageError;
 pub use blob::BlobStore;
 pub use builtin::{BUILTIN_SKILLS, BuiltinSkill};
 pub use cluster::{HAMMING_THRESHOLD, simhash};
+pub use contract::{ArgSpec, Contract, ContractError, EnvSpec, ScriptContract};
 pub use evidence::{Evidence, EvidenceSummary};
 pub use github::GitHubSource;
 pub use http::{Fetched, Http, HttpError};
@@ -52,6 +55,11 @@ pub use hub::{SkillHubSource, SkillsMpSource};
 pub use index::{
     ImportReport, IndexStats, IngestReport, InstallReport, RefreshReport, SkillDetail, SkillIndex,
     SourceRefresh, SweepReport, VariantRow, skill_dir_name,
+};
+pub use rank::{
+    EVIDENCE_WEIGHT, FIT_WEIGHT, FRESHNESS_HALF_LIFE_MS, FRESHNESS_WEIGHT, INSTALL_HISTORY_WEIGHT,
+    RankFactors, RankResult, RankedSkill, SkillRanking, SkillScore, rank, rank_skills, score,
+    score_skill,
 };
 pub use scan::{Capability, EvidenceLine, Severity};
 pub use scanner::{CollectionScan, ScanVerdict, ScannedSkill, SkillScanner, SkillSpector};
