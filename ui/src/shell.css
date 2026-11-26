@@ -1073,6 +1073,7 @@ input[type="checkbox"] {
 }
 
 .model-row {
+  position: relative;
   display: flex;
   align-items: center;
   gap: 8px;
@@ -1137,6 +1138,70 @@ input[type="checkbox"] {
   background: rgba(233, 162, 59, 0.12);
   box-shadow: inset 2px 0 var(--accent);
   color: var(--accent-text);
+}
+
+/* Item 134: the free filter and the honest price/latency hints. Every colour here is a token. */
+.model-filter-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.model-filter-row .fine {
+  margin: 0;
+  white-space: nowrap;
+}
+
+.model-free-only.on {
+  border-color: var(--verified);
+  color: var(--verified);
+}
+
+.model-hints {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 2px;
+  color: var(--faint);
+  font-size: 10px;
+}
+
+.model-hint {
+  white-space: nowrap;
+}
+
+.model-group-label {
+  margin: 6px 0 2px;
+  color: var(--faint);
+  font-size: 10px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+/* The resolved pair stays in the accessibility tree through aria-describedby; hover and keyboard
+   focus reveal the same text as a small in-row tooltip. */
+.model-pair {
+  position: absolute;
+  right: 6px;
+  top: 50%;
+  z-index: 2;
+  padding: 2px 6px;
+  border: 1px solid var(--hairline);
+  border-radius: 4px;
+  background: var(--surface);
+  color: var(--text);
+  font-family: var(--mono);
+  font-size: 10px;
+  white-space: nowrap;
+  opacity: 0;
+  pointer-events: none;
+  transform: translateY(-50%);
+}
+
+.model-row:hover .model-pair,
+.model-row:focus .model-pair,
+.model-row:focus-visible .model-pair {
+  opacity: 1;
 }
 
 /* Only the footer note, which is a direct child; the chat filter's count keeps its auto margin. */
