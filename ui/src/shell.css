@@ -2273,6 +2273,51 @@ input[type="checkbox"] {
   padding: 14px 0 18px;
 }
 
+/* Transcript virtualisation (roadmap 186): only the visible window is in the DOM. */
+.virtual-preview {
+  display: flex;
+  flex-direction: column;
+  min-height: 220px;
+  margin-bottom: 10px;
+  padding: 8px 10px;
+  border: 1px solid var(--hairline);
+  border-radius: 6px;
+  background: var(--surface);
+}
+
+.virtual-preview-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+
+.virtual-transcript {
+  flex: 1;
+  min-height: 160px;
+  max-height: 320px;
+  overflow-y: auto;
+}
+
+.virtual-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 0 6px;
+  border-bottom: 1px solid var(--hairline);
+}
+
+.virtual-row-body {
+  display: flex;
+  gap: 10px;
+  font-size: 12px;
+}
+
+.virtual-spacer {
+  flex: 0 0 auto;
+}
+
 /* D149: a minimap of the turn, not a second sidebar. Marks are sized for the rail, and the
    active turn's group keeps full opacity while the rest stay quiet. */
 .turn-outline {
