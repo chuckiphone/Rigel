@@ -1928,6 +1928,7 @@ pub fn run() {
             commands::sessions::session_delete,
             commands::sessions::bookmark_list,
             commands::sessions::bookmark_toggle,
+            commands::sessions::bookmark_note,
             commands::sessions::patch_provenance,
             commands::sessions::template_list,
             commands::sessions::template_save,
