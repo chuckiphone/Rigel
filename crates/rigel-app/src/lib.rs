@@ -56,8 +56,10 @@ mod commands;
 mod concord;
 mod control;
 mod mcp_catalog;
+pub mod notify;
 mod relay;
 mod terminal;
+mod tray;
 mod tray_status;
 pub mod webview;
 pub use claude::mcp_mode;
@@ -319,6 +321,31 @@ impl Default for Settings {
             gravity_ads: false,
             gravity_test_ads: true,
         }
+    }
+}
+
+impl Settings {
+    /// The persisted notification switches and Q283 quiet window as the routing module's settings.
+    pub fn notification_settings(&self) -> notify::NotificationSettings {
+        notify::NotificationSettings {
+            notify_approval: self.notify_approval,
+            notify_turn_done: self.notify_turn_done,
+            notify_turn_failed: self.notify_turn_failed,
+            quiet_hours_start: self.quiet_hours_start.clone(),
+            quiet_hours_end: self.quiet_hours_end.clone(),
+        }
+    }
+
+    /// The D90 + Q283 routing decision for one notification event. A watched turn never notifies,
+    /// a turn inside the quiet window never notifies, and an event whose switch is off never
+    /// notifies; the transcript keeps every event either way.
+    pub fn should_notify(
+        &self,
+        kind: notify::NotifyKind,
+        watching: bool,
+        now_minutes: i32,
+    ) -> bool {
+        notify::should_notify(kind, &self.notification_settings(), watching, now_minutes)
     }
 }
 
