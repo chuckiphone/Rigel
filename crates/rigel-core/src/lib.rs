@@ -29,6 +29,7 @@ pub mod mcp;
 pub mod memory;
 pub mod merge;
 pub mod migrate;
+pub mod net;
 pub mod patches;
 pub mod permissions;
 pub mod pins;
