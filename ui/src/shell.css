@@ -6826,6 +6826,60 @@ html[data-density="compact"] .hunk-comments {
   font-size: 11px;
 }
 
+/* claim dashboard (roadmap 95): counts, holder and heartbeat age in one ledger view */
+
+.claims-dashboard {
+  padding: 10px 12px;
+  border: 1px solid var(--hairline);
+  border-radius: 8px;
+}
+
+.claims-stats {
+  margin: 6px 0 8px;
+}
+
+.claims-notice {
+  margin: 0 0 8px;
+  color: var(--accent-text);
+  font-size: 11px;
+}
+
+.claim-dashboard-row {
+  flex-wrap: wrap;
+}
+
+.claim-heartbeat {
+  min-width: 56px;
+  text-align: right;
+}
+
+.release-form {
+  display: flex;
+  flex: 1 1 100%;
+  align-items: end;
+  gap: 8px;
+  padding: 6px 0 2px;
+}
+
+.release-form label {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 4px;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.release-form input {
+  width: 100%;
+  padding: 5px 7px;
+  border: 1px solid var(--hairline);
+  border-radius: 6px;
+  background: var(--well);
+  color: var(--text);
+  font: inherit;
+}
+
 /* merge queue (roadmap 46): one writer per path, with the holder named before the waiter */
 
 .merge-queue {

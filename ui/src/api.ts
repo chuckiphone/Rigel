@@ -3023,6 +3023,20 @@ export const api = {
     return call<CoordinationView>("claim_list", { project });
   },
 
+  /**
+   * Roadmap 95: release one agent's claim on the named paths. The UI only calls this after an
+   * explicit confirmation with a reason; the core keeps the released row as a tombstone.
+   */
+  async claimRelease(
+    project: string,
+    agent: string,
+    paths: string[],
+    reason: string,
+  ): Promise<string[]> {
+    if (!isTauri()) return [];
+    return call<string[]>("claim_release", { project, agent, paths, reason });
+  },
+
   /** Live write lanes, holder and waiters; polled with the claims and reviews. */
   async mergeQueue(project: string): Promise<MergeQueueView> {
     if (!isTauri()) return { entries: [] };

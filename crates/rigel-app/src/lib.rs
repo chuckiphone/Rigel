@@ -1916,6 +1916,7 @@ pub fn run() {
             commands::turns::watch_project,
             commands::swarm::swarm_enqueue,
             commands::coordination::claim_list,
+            commands::coordination::claim_release,
             commands::audit::audit_query,
             commands::audit::audit_export,
             commands::coordination::merge_queue,

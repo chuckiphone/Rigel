@@ -28,6 +28,7 @@ import {
   type WritableAgentView,
   type WritableDiffView,
 } from "./api";
+import ClaimsDashboard from "./claims";
 import {
   ConflictEditor,
   conflictDecisions,
@@ -1208,37 +1209,17 @@ Open this pull request from ${plan.branch} into ${plan.base} with gh?`,
         <p className="empty">No conflicts. That is the normal state, not a guarantee.</p>
       )}
 
-      <section className="claims-block">
-        <h3>Claims</h3>
-        {view.claims.length === 0 ? (
-          <p className="empty">No agent has claimed a file yet.</p>
-        ) : (
-          <ul className="claim-list">
-            {view.claims.map((claim) => (
-              <li key={claim.id} className={claim.stale ? "claim-row stale" : "claim-row"}>
-                <span className="mono claim-path">{claim.path}</span>
-                <span className="claim-owner">
-                  {claim.agent} <span className="faint">({claim.harness})</span>
-                </span>
-                <span className={`pill ${claim.stale ? "failed" : "running"}`}>
-                  {claim.stale ? "stale" : "claimed"}
-                </span>
-                <span className="faint mono">{ago(claim.heartbeat_at)}</span>
-              </li>
-            ))}
-          </ul>
-        )}
-        {view.unverified_changes.length > 0 ? (
-          <p className="unverified">
-            {view.unverified_changes.length} claimed file
-            {view.unverified_changes.length === 1 ? " has" : "s have"} changed since the claim
-            {view.unverified_changes.some((change) => change.ambiguous)
-              ? ", and more than one agent was running for at least one of them"
-              : ""}
-            .
-          </p>
-        ) : null}
-      </section>
+      <ClaimsDashboard claims={view.claims} project={project} />
+      {view.unverified_changes.length > 0 ? (
+        <p className="unverified">
+          {view.unverified_changes.length} claimed file
+          {view.unverified_changes.length === 1 ? " has" : "s have"} changed since the claim
+          {view.unverified_changes.some((change) => change.ambiguous)
+            ? ", and more than one agent was running for at least one of them"
+            : ""}
+          .
+        </p>
+      ) : null}
 
       <section className="merge-queue" aria-label="Merge queue">
         <h3>Merge queue</h3>
