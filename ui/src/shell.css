@@ -1237,6 +1237,56 @@ input[type="checkbox"] {
   font-size: 12px;
 }
 
+/* Async state kit (roadmap 138): one token palette for all five states. */
+.async-state {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 6px 0;
+  padding: 8px 10px;
+  border: 1px solid var(--hairline);
+  border-radius: 6px;
+  background: var(--surface);
+}
+
+.async-live {
+  flex: 1;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.async-state.error .async-live,
+.async-state.retry .async-live {
+  color: var(--danger-text);
+}
+
+.async-state.success .async-live {
+  color: var(--verified);
+}
+
+.async-spinner {
+  flex: 0 0 auto;
+  width: 10px;
+  height: 10px;
+  border: 2px solid var(--faint);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+}
+
+.async-preview {
+  margin-bottom: 10px;
+  padding: 8px 10px;
+  border: 1px solid var(--hairline);
+  border-radius: 6px;
+}
+
+.async-preview [role="group"] {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-bottom: 6px;
+}
+
 /* Six facts: three columns at the default width gives two even rows instead of a four-plus-two
    grid with two empty cells. */
 .facts {

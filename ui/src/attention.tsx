@@ -14,6 +14,7 @@
 import { useCallback, useEffect, useState } from "react";
 
 import { api, isTauri, when, type Attention } from "./api";
+import AsyncState from "./async-state";
 import { useMenu } from "./menu";
 
 export interface AttentionJump {
@@ -114,14 +115,10 @@ export default function AttentionView({
         </button>
       </header>
 
-      {error ? (
-        <p className="notice" role="status">
-          {error}
-        </p>
-      ) : null}
+      {error ? <AsyncState state="error" label={error} /> : null}
 
       {loading ? (
-        <p className="empty">Reading the ledger…</p>
+        <AsyncState state="loading" label="Reading the ledger…" />
       ) : !view || view.groups.length === 0 ? (
         <section className="onboarding">
           <h3>Nothing waiting</h3>
