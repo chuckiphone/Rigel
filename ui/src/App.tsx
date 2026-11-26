@@ -33,6 +33,7 @@ import { RigelMark } from "./mark";
 import { useMenu } from "./menu";
 import { PreviewSkillSource } from "./mock";
 import DiffView from "./diff";
+import FocusChip, { shellClass } from "./focus-mode";
 import HomeView from "./home";
 import AccountView from "./account";
 import McpShelf, { ShelfTabs, type ShelfKind } from "./mcps";
@@ -1169,11 +1170,7 @@ ${task}`,
 
   return (
     <div
-      className={`shell${native ? " chrome" : ""}${view === "session" ? " session" : ""}${
-        view === "settings" || view === "account" ? " settings" : ""
-      }${view === "diff" ? " diff" : ""}${view === "home" ? " home" : ""}${
-        view === "shelf" ? " shelf" : ""
-      }${view === "chat" ? " chat" : ""}${focusMode ? " focus" : ""}`}
+      className={shellClass({ native, view, focus: focusMode })}
       style={
         {
           "--list-w": `${panes.list}px`,
@@ -2002,14 +1999,11 @@ ${task}`,
               : "sample"}
         </span>
         <span className="grow" />
-        <button
-          className="chip focus-chip"
-          onClick={() => setFocusMode((on) => !on)}
-          aria-pressed={focusMode}
-          title={`Hide the rail, list and inspector (${formatShortcut(shortcuts.focus)})`}
-        >
-          {focusMode ? "Exit focus" : "Focus"} · {formatShortcut(shortcuts.focus)}
-        </button>
+        <FocusChip
+          focus={focusMode}
+          shortcut={formatShortcut(shortcuts.focus)}
+          onToggle={() => setFocusMode((on) => !on)}
+        />
         <button className="chip" onClick={() => setAboutOpen(true)} title="About Rigel">
           About
         </button>
