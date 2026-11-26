@@ -49,6 +49,7 @@ import SessionFilters, {
 import MarkdownText from "./markdown";
 import McpResult from "./mcp-result";
 import { MemoryInspector } from "./inspector/memory";
+import { RequestInspector, RequestInspectorPreview, fromUsage } from "./inspector/request";
 import { StepCost } from "./inspector/step-cost";
 import { Recovery } from "./recovery";
 import { SubagentGraphView } from "./subagent-graph";
@@ -495,6 +496,8 @@ export default function SessionView({
   // Preview-only 10,000-row fixture for the virtual transcript; the native window never shows it.
   const virtualPreview =
     !tauri && new URLSearchParams(window.location.search).get("virtual") === "1";
+  const requestPreview =
+    !tauri && new URLSearchParams(window.location.search).get("request") === "1";
   const contextMenu = useMenu();
   const [session, setSession] = useState<Session | null>(() => (tauri ? null : previewSession));
   const [recovery, setRecovery] = useState<RecoveryOffer | null>(() =>
@@ -4001,6 +4004,7 @@ export default function SessionView({
                 </button>
               ))}
             </div>
+            {requestPreview ? <RequestInspectorPreview enabled /> : null}
             {virtualPreview ? <VirtualTranscriptPreview enabled /> : null}
             <div className="transcript-shell">
             <div className="transcripts" ref={transcriptRef} onScroll={trackOutline}>
@@ -5562,7 +5566,10 @@ function TurnCard({
       <details className="step-details">
         <summary>step details</summary>
         {entry.items.find((item) => item.kind === "usage") ? (
-          <StepCost body={entry.items.find((item) => item.kind === "usage")!.body} />
+          <>
+            <StepCost body={entry.items.find((item) => item.kind === "usage")!.body} />
+            <RequestInspector inspection={fromUsage(entry.items.find((item) => item.kind === "usage")!.body)} />
+          </>
         ) : null}
         {usage ? (
           <dl>
