@@ -28,10 +28,12 @@ import {
 import AttentionView, { type AttentionJump } from "./attention";
 import BootSequence from "./boot";
 import ChatView from "./agentchat";
+import AboutDialog from "./about";
 import { RigelMark } from "./mark";
 import { useMenu } from "./menu";
 import { PreviewSkillSource } from "./mock";
 import DiffView from "./diff";
+import FocusChip, { shellClass } from "./focus-mode";
 import HomeView from "./home";
 import AccountView from "./account";
 import McpShelf, { ShelfTabs, type ShelfKind } from "./mcps";
@@ -44,7 +46,6 @@ import { applyDisplay, sourceLabel } from "./display";
 import { installReceiptText, scanReceiptText } from "./skill-scan";
 import { applyContrast, applyTheme, themePreference } from "./theme";
 import Titlebar from "./titlebar";
-import { APP_VERSION } from "./version";
 import {
   formatShortcut,
   loadShortcuts,
@@ -1169,11 +1170,7 @@ ${task}`,
 
   return (
     <div
-      className={`shell${native ? " chrome" : ""}${view === "session" ? " session" : ""}${
-        view === "settings" || view === "account" ? " settings" : ""
-      }${view === "diff" ? " diff" : ""}${view === "home" ? " home" : ""}${
-        view === "shelf" ? " shelf" : ""
-      }${view === "chat" ? " chat" : ""}${focusMode ? " focus" : ""}`}
+      className={shellClass({ native, view, focus: focusMode })}
       style={
         {
           "--list-w": `${panes.list}px`,
@@ -2002,14 +1999,11 @@ ${task}`,
               : "sample"}
         </span>
         <span className="grow" />
-        <button
-          className="chip focus-chip"
-          onClick={() => setFocusMode((on) => !on)}
-          aria-pressed={focusMode}
-          title={`Hide the rail, list and inspector (${formatShortcut(shortcuts.focus)})`}
-        >
-          {focusMode ? "Exit focus" : "Focus"} · {formatShortcut(shortcuts.focus)}
-        </button>
+        <FocusChip
+          focus={focusMode}
+          shortcut={formatShortcut(shortcuts.focus)}
+          onToggle={() => setFocusMode((on) => !on)}
+        />
         <button className="chip" onClick={() => setAboutOpen(true)} title="About Rigel">
           About
         </button>
@@ -2027,53 +2021,8 @@ ${task}`,
         </span>
       </footer>
 
-      {/* Q295: release notes and licences, separate from Settings. */}
-      {aboutOpen ? (
-        <div
-          className="about-backdrop"
-          role="presentation"
-          onClick={() => setAboutOpen(false)}
-        >
-          <section
-            className="about-card"
-            role="dialog"
-            aria-modal="true"
-            aria-labelledby="about-title"
-            onClick={(event) => event.stopPropagation()}
-          >
-            <div className="about-head">
-              <RigelMark size={24} />
-              <div>
-                <h2 id="about-title">Rigel</h2>
-                <p className="fine">A local-first agent workbench for Windows.</p>
-              </div>
-              <span className="pill">{APP_VERSION}</span>
-            </div>
-            <dl className="about-facts">
-              <div>
-                <dt>Version</dt>
-                <dd>{APP_VERSION} · current source release</dd>
-              </div>
-              <div>
-                <dt>Data</dt>
-                <dd>Sessions live under .rigel/ in the project; the skill index under AppData.</dd>
-              </div>
-              <div>
-                <dt>Licence</dt>
-                <dd>MIT or Apache-2.0, at your option.</dd>
-              </div>
-            </dl>
-            <p className="fine">
-              No telemetry. Diagnostics stay local until you copy or export them.
-            </p>
-            <div className="settings-actions">
-              <button className="primary" onClick={() => setAboutOpen(false)}>
-                Close
-              </button>
-            </div>
-          </section>
-        </div>
-      ) : null}
+      {/* Q295 / roadmap 124: release notes, build stamp and licences, separate from Settings. */}
+      <AboutDialog open={aboutOpen} onClose={() => setAboutOpen(false)} />
     </div>
   );
 }

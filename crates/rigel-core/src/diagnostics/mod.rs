@@ -226,6 +226,7 @@ pub fn session_bundle(
     agents: &[crate::session::Agent],
     turns: &[TurnTranscript],
     patches: &[crate::patches::Patch],
+    bookmarks: &[crate::session::Bookmark],
     secrets: &[Secret],
 ) -> (String, String) {
     let value = serde_json::json!({
@@ -233,6 +234,7 @@ pub fn session_bundle(
         "agents": agents,
         "turns": turns,
         "patches": patches,
+        "bookmarks": bookmarks,
         "exported_at": now_ms(),
     });
     let json = serde_json::to_string_pretty(&redact_value(&value, secrets)).unwrap_or_default();
@@ -288,6 +290,21 @@ pub fn session_bundle(
         }
         out.push('\n');
     }
+
+    out.push_str("## Bookmarks\n\n");
+    let redacted_bookmarks: Vec<crate::session::Bookmark> = bookmarks
+        .iter()
+        .map(|bookmark| crate::session::Bookmark {
+            label: redact_text(&bookmark.label, secrets),
+            note: bookmark
+                .note
+                .as_deref()
+                .map(|note| redact_text(note, secrets)),
+            ..bookmark.clone()
+        })
+        .collect();
+    out.push_str(&crate::session::bookmark_lines(&redacted_bookmarks));
+    out.push('\n');
 
     out.push_str("## Patches\n\n");
     for patch in patches {
@@ -365,15 +382,34 @@ mod tests {
             pinned_at: None,
             archived_at: None,
         };
-        let (markdown, json) =
-            session_bundle(&session, &[], &[], &[], &[Secret::new("sk-session-key")]);
+        let bookmarks = [crate::session::Bookmark {
+            id: "b-1".to_string(),
+            session_id: session.id.clone(),
+            kind: "item".to_string(),
+            target_id: "item-1".to_string(),
+            label: "keep this line".to_string(),
+            note: Some("secret is sk-session-key, ask before sharing".to_string()),
+            created_at: 2,
+        }];
+        let (markdown, json) = session_bundle(
+            &session,
+            &[],
+            &[],
+            &[],
+            &bookmarks,
+            &[Secret::new("sk-session-key")],
+        );
         assert!(markdown.contains("# Session"));
         assert!(markdown.contains("## Agents"));
         assert!(markdown.contains("## Turns"));
+        assert!(markdown.contains("## Bookmarks"));
+        assert!(markdown.contains("keep this line"));
+        assert!(markdown.contains("note: secret is <redacted>, ask before sharing"));
         assert!(markdown.contains("## Patches"));
         assert!(!markdown.contains("sk-session-key"));
         assert!(!json.contains("sk-session-key"));
         assert!(json.contains("\"session\""));
+        assert!(json.contains("\"bookmarks\""));
     }
 
     #[test]

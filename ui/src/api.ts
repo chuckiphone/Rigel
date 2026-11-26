@@ -10,6 +10,7 @@
  */
 
 import { previewAgents, previewApprovals, previewMemoryFacts } from "./sessionMock";
+import { ABOUT_LICENCES } from "./about-licences";
 
 export interface Session {
   id: string;
@@ -45,6 +46,8 @@ export interface Bookmark {
   kind: "item" | "hunk";
   target_id: string;
   label: string;
+  /** Roadmap 103: an optional one-line note the session list and Markdown export carry. */
+  note?: string | null;
   created_at: number;
 }
 
@@ -319,6 +322,27 @@ export function defaultSettings(): Settings {
   };
 }
 
+/** Roadmap 124: the local facts behind the About dialog. Nothing here identifies the machine. */
+export interface AboutInfo {
+  version: string;
+  commit: string;
+  licences: string[];
+  components: number;
+  update_channel: string;
+  privacy: string;
+}
+
+/** The browser has no build stamp; it says so instead of inventing one. */
+export const PREVIEW_ABOUT: AboutInfo = {
+  version: "preview",
+  commit: "preview-build",
+  licences: [...ABOUT_LICENCES.expressions],
+  components: ABOUT_LICENCES.components,
+  update_channel: "signed GitHub releases/latest · preview is read-only",
+  privacy:
+    "No telemetry. Sessions and diagnostics stay on this machine until you copy or export them.",
+};
+
 /** The update switch, this build's version and whether a publisher key is present. */
 export interface UpdateStatus {
   current: string;
@@ -493,6 +517,22 @@ export interface DiagnosticsBundle {
   path: string;
   body: string;
 }
+
+/** Roadmap 116: the redacted local crash tail the reporter previews. */
+export interface CrashReport {
+  path: string;
+  text: string;
+}
+
+/** Browser preview: a shaped fake key proves the reporter redacts before it shows anything. */
+export const PREVIEW_CRASH: CrashReport = {
+  path: "crash.log",
+  text: [
+    "2026-11-25 09:14:02 panic in coordinator: turn 7 died while calling the model",
+    "request header Authorization: Bearer sk-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+    "state: paused turn 7 kept its messages and remaining budget",
+  ].join("\n"),
+};
 
 /** D97: the exact title and body a pull request would use. */
 export interface PullRequestPlan {
@@ -768,6 +808,8 @@ export interface SpendReport {
   by_session: SpendRow[];
   by_agent: SpendRow[];
   by_day: SpendRow[];
+  /** Roadmap 136: recorded cost grouped by the model the agent used. */
+  by_model: SpendRow[];
 }
 
 /** Live state of the local OmniRoute router. `origin` is where it listens. */
@@ -2674,6 +2716,17 @@ export const api = {
     return call<Bookmark | null>("bookmark_toggle", { project, session, kind, targetId, label });
   },
 
+  /** Roadmap 103: write one bookmark's note, or clear it with `null`. */
+  async setBookmarkNote(
+    project: string,
+    session: string,
+    id: string,
+    note: string | null,
+  ): Promise<boolean> {
+    if (!isTauri()) return false;
+    return call<boolean>("bookmark_note", { project, session, id, note });
+  },
+
   /** D147: skills, sessions, turns and patches in one read. Capped per section in the core. */
   async searchAll(
     project: string | null,
@@ -3023,6 +3076,20 @@ export const api = {
     return call<CoordinationView>("claim_list", { project });
   },
 
+  /**
+   * Roadmap 95: release one agent's claim on the named paths. The UI only calls this after an
+   * explicit confirmation with a reason; the core keeps the released row as a tombstone.
+   */
+  async claimRelease(
+    project: string,
+    agent: string,
+    paths: string[],
+    reason: string,
+  ): Promise<string[]> {
+    if (!isTauri()) return [];
+    return call<string[]>("claim_release", { project, agent, paths, reason });
+  },
+
   /** Live write lanes, holder and waiters; polled with the claims and reviews. */
   async mergeQueue(project: string): Promise<MergeQueueView> {
     if (!isTauri()) return { entries: [] };
@@ -3370,6 +3437,18 @@ export const api = {
   async concordReply(messageId: string, content: string): Promise<ConcordReply> {
     if (!isTauri()) throw new Error("Concord replies go through the desktop app.");
     return call<ConcordReply>("concord_reply", { message_id: messageId, content });
+  },
+
+  /** Roadmap 116: read the already-redacted crash tail from app data; no bundle is written. */
+  async crashReport(): Promise<CrashReport> {
+    if (!isTauri()) return PREVIEW_CRASH;
+    return call<CrashReport>("crash_report");
+  },
+
+  /** Roadmap 124: build stamp, version, SBOM licences and the update/privacy summary. */
+  async aboutInfo(): Promise<AboutInfo> {
+    if (!isTauri()) return PREVIEW_ABOUT;
+    return call<AboutInfo>("about_info");
   },
 
   async updateStatus(): Promise<UpdateStatus> {

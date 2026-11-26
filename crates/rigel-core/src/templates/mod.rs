@@ -176,3 +176,10 @@ impl SessionTemplates {
         })
     }
 }
+
+pub mod model;
+pub mod skill_pins;
+
+pub use skill_pins::{SkillPin, SkillPins, TemplateSkillPin};
+
+pub use model::{FieldDiff, TemplateAgentSection, TemplateModel, TemplateVariable, diff};

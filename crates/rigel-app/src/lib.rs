@@ -56,8 +56,10 @@ mod commands;
 mod concord;
 mod control;
 mod mcp_catalog;
+pub mod notify;
 mod relay;
 mod terminal;
+mod tray;
 mod tray_status;
 pub mod webview;
 pub use claude::mcp_mode;
@@ -319,6 +321,31 @@ impl Default for Settings {
             gravity_ads: false,
             gravity_test_ads: true,
         }
+    }
+}
+
+impl Settings {
+    /// The persisted notification switches and Q283 quiet window as the routing module's settings.
+    pub fn notification_settings(&self) -> notify::NotificationSettings {
+        notify::NotificationSettings {
+            notify_approval: self.notify_approval,
+            notify_turn_done: self.notify_turn_done,
+            notify_turn_failed: self.notify_turn_failed,
+            quiet_hours_start: self.quiet_hours_start.clone(),
+            quiet_hours_end: self.quiet_hours_end.clone(),
+        }
+    }
+
+    /// The D90 + Q283 routing decision for one notification event. A watched turn never notifies,
+    /// a turn inside the quiet window never notifies, and an event whose switch is off never
+    /// notifies; the transcript keeps every event either way.
+    pub fn should_notify(
+        &self,
+        kind: notify::NotifyKind,
+        watching: bool,
+        now_minutes: i32,
+    ) -> bool {
+        notify::should_notify(kind, &self.notification_settings(), watching, now_minutes)
     }
 }
 
@@ -590,6 +617,14 @@ pub struct PaletteResults {
 pub struct DiagnosticsBundle {
     pub path: String,
     pub body: String,
+}
+
+/// Roadmap 116: the newest local crash records, already redacted before they were written by the
+/// core's crash hook. The renderer builds one preview from this and the build facts in About.
+#[derive(Debug, Clone, Serialize)]
+pub struct CrashReport {
+    pub path: String,
+    pub text: String,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -1205,6 +1240,53 @@ const REFINE_PROVIDER: &str = credentials::OMNIROUTE;
 const REFINE_MODEL: &str = "antigravity/gemini-3.8-flash-tiered";
 
 /* -------------------------------- settings ------------------------------- */
+
+/// Roadmap 124: everything the About dialog needs, read from the build itself. No network call
+/// and no machine-identifying value; the licences come from the generated SBOM list.
+#[derive(Debug, Clone, Serialize)]
+pub struct AboutInfo {
+    pub version: String,
+    pub commit: String,
+    pub licences: Vec<String>,
+    pub components: usize,
+    pub update_channel: String,
+    pub privacy: String,
+}
+
+#[derive(Deserialize)]
+struct AboutLicenceSource {
+    components: usize,
+    expressions: Vec<String>,
+}
+
+fn about_snapshot() -> AboutInfo {
+    // One generated file feeds both sides: TypeScript reads the exported constant, Rust reads
+    // the JSON object inside it. The generator owns this shape and `make-about-licences` tests it.
+    let raw = include_str!("../../../ui/src/about-licences.ts");
+    let start = raw
+        .find('{')
+        .expect("the generated licence list has an object");
+    let end = raw
+        .rfind("} as const;")
+        .expect("the generated licence list ends with a typed constant");
+    let source: AboutLicenceSource = serde_json::from_str(&raw[start..end + 1])
+        .expect("the generated About licence list must be valid JSON");
+    let update = rigel_core::update::load_settings(&index_dir());
+    AboutInfo {
+        version: env!("CARGO_PKG_VERSION").to_string(),
+        commit: env!("RIGEL_BUILD_COMMIT").to_string(),
+        licences: source.expressions,
+        components: source.components,
+        update_channel: format!(
+            "signed GitHub releases/latest · checks {} · automatic install {}",
+            if update.enabled { "on" } else { "off" },
+            if update.auto_install { "on" } else { "off" },
+        ),
+        privacy:
+            "No telemetry. Sessions and diagnostics stay on this machine until you copy or export them."
+                .to_string(),
+    }
+}
 
 #[derive(Debug, Clone, Serialize)]
 pub struct UpdateStatus {
@@ -1873,6 +1955,7 @@ pub fn run() {
             commands::sessions::session_delete,
             commands::sessions::bookmark_list,
             commands::sessions::bookmark_toggle,
+            commands::sessions::bookmark_note,
             commands::sessions::patch_provenance,
             commands::sessions::template_list,
             commands::sessions::template_save,
@@ -1888,6 +1971,7 @@ pub fn run() {
             commands::sessions::session_recovery,
             commands::sessions::turn_discard,
             commands::workspace::diagnostics_export,
+            commands::workspace::crash_report,
             commands::workspace::session_export,
             commands::workspace::tests_run,
             commands::workspace::rules_sources,
@@ -1916,6 +2000,8 @@ pub fn run() {
             commands::turns::watch_project,
             commands::swarm::swarm_enqueue,
             commands::coordination::claim_list,
+            commands::coordination::claim_release,
+            commands::settings::about_info,
             commands::audit::audit_query,
             commands::audit::audit_export,
             commands::coordination::merge_queue,
@@ -2077,6 +2163,21 @@ mod tests {
         session_skill_pin, session_skill_pins, session_skill_review, session_start, template_save,
     };
     use crate::commands::workspace::attachment_import;
+
+    #[test]
+    fn about_names_the_build_commit_and_the_sbom_licence_list() {
+        let info = about_snapshot();
+        assert_eq!(info.commit, env!("RIGEL_BUILD_COMMIT"));
+        assert_eq!(info.version, env!("CARGO_PKG_VERSION"));
+        assert!(info.components > 0);
+        assert!(info.licences.contains(&"MIT".to_string()));
+        assert!(info.licences.contains(&"Apache-2.0".to_string()));
+        assert!(
+            info.update_channel
+                .contains("signed GitHub releases/latest")
+        );
+        assert!(info.privacy.contains("No telemetry"));
+    }
 
     #[test]
     fn the_refiner_is_the_cheap_antigravity_model_on_the_local_router() {

@@ -15,6 +15,9 @@ use crate::domain::Usage;
 use crate::migrate::now_ms;
 use crate::storage::{StorageError, Store};
 
+mod bookmarks;
+pub use bookmarks::{Bookmark, bookmark_lines};
+
 /// `items` row as SQLite returns it: id, turn, seq, kind, status, body, created_at, raw.
 type ItemRow = (String, String, i64, String, String, String, i64, String);
 
@@ -97,18 +100,6 @@ pub struct Agent {
     pub claims_held: i64,
     /// Q267: held claims whose heartbeat is older than [`crate::claims::STALE_AFTER`].
     pub claims_stale: i64,
-}
-
-/// D150: a kept line. `label` is the snapshot the inspector draws; `target_id` is what a jump
-/// resolves against (`item-…` in the transcript, `hunk-…` in Diff).
-#[derive(Debug, Clone, Serialize)]
-pub struct Bookmark {
-    pub id: String,
-    pub session_id: String,
-    pub kind: String,
-    pub target_id: String,
-    pub label: String,
-    pub created_at: i64,
 }
 
 /// D140: one skill pinned to a session at the body hash it first loaded. The hash is the
@@ -486,96 +477,6 @@ impl SessionService {
             .execute(&self.pool)
             .await?;
         Ok(())
-    }
-
-    /// D150: newest first. A star is a note to the reader, so the list is read like one.
-    pub async fn bookmarks(&self, session_id: &str) -> Result<Vec<Bookmark>, SessionError> {
-        let rows: Vec<(String, String, String, String, String, i64)> = sqlx::query_as(
-            "SELECT id, session_id, kind, target_id, label, created_at
-             FROM bookmarks WHERE session_id = ? ORDER BY created_at DESC, id DESC",
-        )
-        .bind(session_id)
-        .fetch_all(&self.pool)
-        .await?;
-
-        Ok(rows
-            .into_iter()
-            .map(
-                |(id, session_id, kind, target_id, label, created_at)| Bookmark {
-                    id,
-                    session_id,
-                    kind,
-                    target_id,
-                    label,
-                    created_at,
-                },
-            )
-            .collect())
-    }
-
-    /// D150: starring twice clears the star. `Some` means the star is now on, `None` means off.
-    /// The label keeps one line and 160 characters; the target is the row the jump resolves.
-    pub async fn toggle_bookmark(
-        &self,
-        session_id: &str,
-        kind: &str,
-        target_id: &str,
-        label: &str,
-    ) -> Result<Option<Bookmark>, SessionError> {
-        if !matches!(kind, "item" | "hunk") {
-            return Err(SessionError::InvalidBookmarkKind(kind.to_string()));
-        }
-        // A star on a missing session would fail the foreign key with a database error; name
-        // the real problem instead.
-        self.get(session_id).await?;
-
-        let existing: Option<String> = sqlx::query_scalar(
-            "SELECT id FROM bookmarks WHERE session_id = ? AND kind = ? AND target_id = ?",
-        )
-        .bind(session_id)
-        .bind(kind)
-        .bind(target_id)
-        .fetch_optional(&self.pool)
-        .await?;
-
-        if let Some(id) = existing {
-            sqlx::query("DELETE FROM bookmarks WHERE id = ?")
-                .bind(id)
-                .execute(&self.pool)
-                .await?;
-            return Ok(None);
-        }
-
-        let label = label
-            .lines()
-            .next()
-            .unwrap_or("")
-            .trim()
-            .chars()
-            .take(160)
-            .collect::<String>();
-        let bookmark = Bookmark {
-            id: Uuid::new_v4().to_string(),
-            session_id: session_id.to_string(),
-            kind: kind.to_string(),
-            target_id: target_id.to_string(),
-            label,
-            created_at: now_ms(),
-        };
-        sqlx::query(
-            "INSERT INTO bookmarks (id, session_id, kind, target_id, label, created_at)
-             VALUES (?, ?, ?, ?, ?, ?)",
-        )
-        .bind(&bookmark.id)
-        .bind(&bookmark.session_id)
-        .bind(&bookmark.kind)
-        .bind(&bookmark.target_id)
-        .bind(&bookmark.label)
-        .bind(bookmark.created_at)
-        .execute(&self.pool)
-        .await?;
-
-        Ok(Some(bookmark))
     }
 
     pub async fn end(&self, id: &str) -> Result<Session, SessionError> {
@@ -1999,3 +1900,7 @@ fn session_from_row(row: SessionRow) -> Result<Session, SessionError> {
         archived_at: row.12,
     })
 }
+
+pub mod safe_mode;
+
+pub use safe_mode::{Mode, SafeModeError, SafeModeState, TurnMode};

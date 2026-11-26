@@ -144,9 +144,39 @@ const items: Item[] = [
     body: {
       tool: "read_file",
       arguments: { path: "crates/rigel-core/tests/resume.rs" },
-      result: { path: "crates/rigel-core/tests/resume.rs", bytes: 4_210 },
+      result: {
+        content: [
+          {
+            type: "text",
+            text: "4,210 bytes read from crates/rigel-core/tests/resume.rs",
+          },
+          {
+            type: "image",
+            mimeType: "image/png",
+            data: "data:image/png;base64,iVBORw0KGgo=",
+          },
+          {
+            type: "resource",
+            resource: { text: "line 12: assert_eq!(tree, hash)" },
+          },
+        ],
+        structuredContent: { path: "crates/rigel-core/tests/resume.rs", bytes: 4_210 },
+      },
     },
     created_at: ago(12),
+  },
+  {
+    id: "item-preview-mcp-long",
+    turn_id: turnOne.id,
+    seq: 21,
+    kind: "mcp_call",
+    status: "ok",
+    body: {
+      tool: "search_repo",
+      arguments: { query: "resume" },
+      result: { content: [{ type: "text", text: "match ".repeat(500) }] },
+    },
+    created_at: ago(11),
   },
   {
     id: "item-preview-3",
@@ -156,7 +186,21 @@ const items: Item[] = [
     status: "complete",
     body: {
       role: "assistant",
-      text: "Cause: `Store::write` fsyncs the file but the test hashes the tree before the parent directory entry is durable. On Windows that ordering is observable. I did not change any file — say the word and I will patch the test to hash after the rename.",
+      text: [
+        "## Cause",
+        "",
+        "`Store::write` fsyncs the file but the parent directory entry may still be stale. On Windows that ordering is observable.",
+        "",
+        "```rust",
+        "fn checkpoint() -> u64 {",
+        "    let hash = tree_hash(); // the entry may lag the file",
+        "    hash",
+        "}",
+        "```",
+        "",
+        "A model answer can even say <script>alert(1)</script> and it stays plain text.",
+        "I did not change any file — say the word and I will patch the test to hash after the rename.",
+      ].join("\n"),
     },
     created_at: ago(11),
   },

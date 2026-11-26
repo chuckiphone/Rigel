@@ -30,7 +30,9 @@ mod phase3;
 mod plugins;
 mod proof;
 mod route;
+mod rules;
 mod serve;
+mod stats;
 mod testing;
 mod tools;
 mod update;
@@ -59,6 +61,17 @@ enum Command {
         /// Also write a support archive (versions, schema, redacted settings and logs).
         #[arg(long, value_name = "FILE")]
         support_bundle: Option<PathBuf>,
+        #[arg(long)]
+        json: bool,
+        /// Apply the repairs the report lists, instead of only reporting them.
+        #[arg(long)]
+        fix: bool,
+    },
+
+    /// Local turn metrics: latency, tokens, retries and cache hits. No network call.
+    Stats {
+        #[arg(long, value_name = "PATH", default_value = ".")]
+        project: PathBuf,
         #[arg(long)]
         json: bool,
     },
@@ -165,6 +178,12 @@ enum Command {
     Route {
         #[command(subcommand)]
         command: route::RouteCommand,
+    },
+
+    /// Explain which project rule wins and why.
+    Rules {
+        #[command(subcommand)]
+        command: rules::RulesCommand,
     },
 
     /// The project network policy: show it, explain a URL, or save a validated policy.
@@ -579,7 +598,19 @@ async fn entry() -> ExitCode {
             project,
             support_bundle,
             json: as_json,
-        } => doctor::run(&project, &dir, as_json, support_bundle.as_deref()).await,
+            fix,
+        } => {
+            if fix {
+                doctor::fix::run(&project).await
+            } else {
+                doctor::run(&project, &dir, as_json, support_bundle.as_deref()).await
+            }
+        }
+
+        Command::Stats {
+            project,
+            json: as_json,
+        } => stats::run(&project, as_json).await,
 
         Command::Migrate { project } => match Store::open_project(&project).await {
             Ok(store) => {
@@ -627,6 +658,8 @@ async fn entry() -> ExitCode {
         }
 
         Command::Route { command } => route::run(command),
+
+        Command::Rules { command } => rules::run(command),
 
         Command::Network { command } => network::run(command).await,
 

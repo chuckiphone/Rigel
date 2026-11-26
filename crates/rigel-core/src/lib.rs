@@ -6,11 +6,13 @@
 
 pub mod agent;
 pub mod agentmail;
+pub mod attachments;
 pub mod attention;
 pub mod attribute;
 pub mod audit;
 pub mod backend;
 pub mod backup;
+pub mod blobs;
 pub mod budget;
 pub mod claims;
 pub mod cloud;
@@ -19,6 +21,7 @@ pub mod comments;
 pub mod credentials;
 pub mod diagnostics;
 pub mod domain;
+pub mod export;
 pub mod flakes;
 pub mod forge;
 pub mod gravity;
@@ -26,6 +29,7 @@ pub mod mcp;
 pub mod memory;
 pub mod merge;
 pub mod migrate;
+pub mod net;
 pub mod patches;
 pub mod permissions;
 pub mod pins;
@@ -70,10 +74,12 @@ pub use agentmail::{
     Mail, MailConfig, MailError, MailStatus, MessageBody, MessageSummary, SentMail, ThreadSummary,
     ThreadView,
 };
+pub use attachments::{Attachment, AttachmentError, AttachmentStore};
 pub use attention::{Attention, AttentionGroup, AttentionItem};
 pub use attribute::{Attributed, ConflictWatcher, Observed, POLL_INTERVAL, Watcher};
 pub use audit::{ApprovalInput, ApprovalRecord, ChainError, CommandProvenance, VerifyReport};
 pub use backend::{BackendConfig, BackendStatus};
+pub use blobs::{BlobError, BlobStore};
 pub use budget::{
     BudgetError, BudgetOutcome, BudgetService, BudgetSnapshot, DEFAULT_DAILY_CAP_MICROS,
     DEFAULT_WRITABLE_AGENTS, DailyStatus, InterruptSink, ReconcileReport, SafetySettings,
@@ -91,6 +97,9 @@ pub use cloud::{
 };
 pub use comments::{CommentError, HunkComment, HunkComments};
 pub use domain::{AgentEvent, CostSource, EventSink, ItemKind, NullSink, Usage};
+pub use export::markdown::{
+    ExportFormat, ExportManifest, ExportResult, OmittedItem, export_json, export_markdown,
+};
 pub use flakes::{FlakeError, FlakeReport, FlakeRun, TestOutcome};
 pub use memory::rank::{Fact, Factor, RankedFact, Score};
 pub use memory::{
@@ -125,6 +134,7 @@ pub use sandbox::{
     JobLimits, LinuxNamespacePolicy, Sandbox, SandboxError, SandboxExecPolicy, SandboxProfile,
 };
 pub use search::{MAX_HITS, PatchHit, SessionHit, TurnHit, WorkspaceHits};
+pub use session::safe_mode::{Mode as SafeMode, SafeModeError, SafeModeState, TurnMode};
 pub use session::{
     Agent, Bookmark, Checkpoint, Item, RecoveryOffer, Session, SessionError, SessionService,
     SessionStatus, SkillPin, SubagentGraph, TeamAgent, Tombstone, Turn, TurnTranscript,
@@ -141,7 +151,12 @@ pub use snapshot::{
 pub use snapshot::{GcPolicy, GcRemoved, GcReport};
 pub use storage::{StorageError, Store, default_index_dir};
 pub use store::cipher::{CipherError, DatabaseState, DbKey};
+pub use store::event_log::{Event, EventLog};
 pub use symbolimpact::{ChangedSymbol, PackageScope, SymbolImpact, SymbolReach, SymbolReference};
+pub use templates::model::{
+    FieldDiff, TemplateAgentSection, TemplateModel, TemplateVariable, diff,
+};
+pub use templates::skill_pins::{SkillPins, TemplateSkillPin};
 pub use templates::{
     MAX_TEMPLATES, SessionTemplate, SessionTemplates, TemplateAgent, TemplateError, TemplateSkill,
 };

@@ -1073,6 +1073,7 @@ input[type="checkbox"] {
 }
 
 .model-row {
+  position: relative;
   display: flex;
   align-items: center;
   gap: 8px;
@@ -1137,6 +1138,70 @@ input[type="checkbox"] {
   background: rgba(233, 162, 59, 0.12);
   box-shadow: inset 2px 0 var(--accent);
   color: var(--accent-text);
+}
+
+/* Item 134: the free filter and the honest price/latency hints. Every colour here is a token. */
+.model-filter-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.model-filter-row .fine {
+  margin: 0;
+  white-space: nowrap;
+}
+
+.model-free-only.on {
+  border-color: var(--verified);
+  color: var(--verified);
+}
+
+.model-hints {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 2px;
+  color: var(--faint);
+  font-size: 10px;
+}
+
+.model-hint {
+  white-space: nowrap;
+}
+
+.model-group-label {
+  margin: 6px 0 2px;
+  color: var(--faint);
+  font-size: 10px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+/* The resolved pair stays in the accessibility tree through aria-describedby; hover and keyboard
+   focus reveal the same text as a small in-row tooltip. */
+.model-pair {
+  position: absolute;
+  right: 6px;
+  top: 50%;
+  z-index: 2;
+  padding: 2px 6px;
+  border: 1px solid var(--hairline);
+  border-radius: 4px;
+  background: var(--surface);
+  color: var(--text);
+  font-family: var(--mono);
+  font-size: 10px;
+  white-space: nowrap;
+  opacity: 0;
+  pointer-events: none;
+  transform: translateY(-50%);
+}
+
+.model-row:hover .model-pair,
+.model-row:focus .model-pair,
+.model-row:focus-visible .model-pair {
+  opacity: 1;
 }
 
 /* Only the footer note, which is a direct child; the chat filter's count keeps its auto margin. */
@@ -1235,6 +1300,56 @@ input[type="checkbox"] {
   background: var(--surface);
   color: var(--muted);
   font-size: 12px;
+}
+
+/* Async state kit (roadmap 138): one token palette for all five states. */
+.async-state {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 6px 0;
+  padding: 8px 10px;
+  border: 1px solid var(--hairline);
+  border-radius: 6px;
+  background: var(--surface);
+}
+
+.async-live {
+  flex: 1;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.async-state.error .async-live,
+.async-state.retry .async-live {
+  color: var(--danger-text);
+}
+
+.async-state.success .async-live {
+  color: var(--verified);
+}
+
+.async-spinner {
+  flex: 0 0 auto;
+  width: 10px;
+  height: 10px;
+  border: 2px solid var(--faint);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+}
+
+.async-preview {
+  margin-bottom: 10px;
+  padding: 8px 10px;
+  border: 1px solid var(--hairline);
+  border-radius: 6px;
+}
+
+.async-preview [role="group"] {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-bottom: 6px;
 }
 
 /* Six facts: three columns at the default width gives two even rows instead of a four-plus-two
@@ -1638,6 +1753,51 @@ input[type="checkbox"] {
   display: flex;
   flex-wrap: wrap;
   gap: 4px;
+}
+
+/* Tags and saved filters (roadmap 102): colourless text chips, never a colour code. */
+.session-filters-block {
+  display: grid;
+  gap: 6px;
+  padding-top: 6px;
+  border-top: 1px solid var(--hairline);
+}
+
+.filter-add {
+  display: flex;
+  gap: 4px;
+}
+
+.filter-add input {
+  flex: 1;
+  min-width: 0;
+  padding: 4px 6px;
+  border: 1px solid var(--hairline);
+  border-radius: 6px;
+  background: var(--well);
+  color: var(--text);
+  font: inherit;
+}
+
+.filter-tags,
+.filter-saved {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.filter-tag {
+  padding: 3px 7px;
+  border: 1px solid var(--hairline);
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--muted);
+  font-family: var(--mono);
+  font-size: 11px;
+}
+
+.filter-tag.known {
+  color: var(--text);
 }
 
 .session-list-pane,
@@ -2228,6 +2388,51 @@ input[type="checkbox"] {
   padding: 14px 0 18px;
 }
 
+/* Transcript virtualisation (roadmap 186): only the visible window is in the DOM. */
+.virtual-preview {
+  display: flex;
+  flex-direction: column;
+  min-height: 220px;
+  margin-bottom: 10px;
+  padding: 8px 10px;
+  border: 1px solid var(--hairline);
+  border-radius: 6px;
+  background: var(--surface);
+}
+
+.virtual-preview-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+
+.virtual-transcript {
+  flex: 1;
+  min-height: 160px;
+  max-height: 320px;
+  overflow-y: auto;
+}
+
+.virtual-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 0 6px;
+  border-bottom: 1px solid var(--hairline);
+}
+
+.virtual-row-body {
+  display: flex;
+  gap: 10px;
+  font-size: 12px;
+}
+
+.virtual-spacer {
+  flex: 0 0 auto;
+}
+
 /* D149: a minimap of the turn, not a second sidebar. Marks are sized for the rail, and the
    active turn's group keeps full opacity while the rest stay quiet. */
 .turn-outline {
@@ -2575,6 +2780,108 @@ input[type="checkbox"] {
   background: none;
 }
 
+/* Request inspector (roadmap 119): one struct on screen and in the copied JSON. */
+.request-inspector {
+  margin: 8px 0;
+  padding: 10px 12px;
+  border: 1px solid var(--hairline);
+  border-radius: 6px;
+  background: var(--surface);
+}
+
+.request-inspector-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.request-inspector h3,
+.request-inspector h4 {
+  margin: 0 0 6px;
+  font-size: 12px;
+}
+
+.request-route {
+  margin: 6px 0;
+  color: var(--accent-text);
+  font-size: 11px;
+  overflow-wrap: anywhere;
+}
+
+.request-stats {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 8px;
+  margin: 0 0 8px;
+}
+
+.request-stats dt {
+  color: var(--faint);
+  font-family: var(--mono);
+  font-size: 10px;
+  text-transform: uppercase;
+}
+
+.request-stats dd {
+  margin: 2px 0 0;
+  color: var(--muted);
+  font-family: var(--mono);
+  font-size: 11px;
+}
+
+.request-bodies {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 8px;
+}
+
+.request-inspector pre {
+  max-height: 200px;
+  overflow: auto;
+  margin: 0 0 8px;
+  padding: 8px 10px;
+  border: 1px solid var(--hairline);
+  border-radius: 6px;
+  background: var(--well);
+  color: var(--text);
+  font-family: var(--mono);
+  font-size: 11px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.request-headers {
+  margin-top: 8px;
+}
+
+.request-headers dl {
+  margin: 4px 0 0;
+}
+
+.request-headers dl > div {
+  display: flex;
+  gap: 8px;
+  padding: 2px 0;
+  border-bottom: 1px solid var(--hairline);
+  font-size: 11px;
+}
+
+.request-headers dt {
+  flex: 0 0 140px;
+  color: var(--muted);
+}
+
+.request-headers dd {
+  margin: 0;
+  color: var(--text);
+  overflow-wrap: anywhere;
+}
+
+.request-headers .redacted dd {
+  color: var(--faint);
+}
+
 .pill {
   padding: 0 5px;
   border: 1px solid var(--hairline);
@@ -2627,6 +2934,105 @@ input[type="checkbox"] {
   color: var(--text);
   font-size: 13px;
   line-height: 1.6;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+/* CSP-safe markdown (roadmap 112): text nodes and tokens only, never injected HTML. */
+.markdown {
+  position: relative;
+}
+
+.markdown-raw-toggle {
+  margin-bottom: 6px;
+}
+
+.markdown-heading {
+  margin: 10px 0 4px;
+  font-size: 13px;
+}
+
+.markdown-paragraph {
+  margin: 4px 0;
+}
+
+.markdown-list {
+  margin: 4px 0;
+  padding-left: 18px;
+}
+
+.markdown-inline-code {
+  padding: 1px 3px;
+  border: 1px solid var(--hairline);
+  border-radius: 4px;
+  background: var(--well);
+  font-family: var(--mono);
+  font-size: 12px;
+}
+
+.markdown-code {
+  margin: 8px 0;
+  border: 1px solid var(--hairline);
+  border-radius: 6px;
+  background: var(--well);
+}
+
+.markdown-code-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 4px 8px;
+  border-bottom: 1px solid var(--hairline);
+}
+
+.markdown-language {
+  color: var(--faint);
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.markdown-code-body {
+  overflow-x: auto;
+  margin: 0;
+  padding: 8px;
+  font-family: var(--mono);
+  font-size: 11px;
+  line-height: 1.5;
+  white-space: pre;
+}
+
+.markdown-tok-keyword {
+  color: var(--accent-text);
+}
+
+.markdown-tok-string {
+  color: var(--verified);
+}
+
+.markdown-tok-number {
+  color: var(--accent-text);
+}
+
+.markdown-tok-comment {
+  color: var(--faint);
+}
+
+.markdown-tok-punctuation {
+  color: var(--muted);
+}
+
+.markdown-raw-body {
+  max-height: 220px;
+  overflow: auto;
+  margin: 0;
+  padding: 8px;
+  border: 1px solid var(--hairline);
+  border-radius: 6px;
+  background: var(--well);
+  font-family: var(--mono);
+  font-size: 11px;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
@@ -2708,6 +3114,95 @@ input[type="checkbox"] {
 
 .tool-line.bad .tool-status {
   color: var(--danger);
+}
+
+/* MCP result rows (roadmap 145): typed, capped, with the exact body one click away. */
+.mcp-result {
+  margin: 4px 0;
+  padding: 8px 10px;
+  border: 1px solid var(--hairline);
+  border-radius: 6px;
+  background: var(--surface);
+}
+
+.mcp-result-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+
+.mcp-row-count {
+  color: var(--faint);
+  font-size: 11px;
+}
+
+.mcp-result-head .chip {
+  margin-left: auto;
+}
+
+.mcp-rows {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.mcp-row {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 3px 0;
+  border-bottom: 1px solid var(--hairline);
+  font-size: 12px;
+}
+
+.mcp-row:last-child {
+  border-bottom: 0;
+}
+
+.mcp-kind {
+  flex: 0 0 auto;
+  color: var(--faint);
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.mcp-text {
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+
+.mcp-label {
+  color: var(--accent-text);
+}
+
+.mcp-image {
+  display: block;
+  max-width: 100%;
+  max-height: 180px;
+}
+
+.mcp-truncated {
+  margin: 6px 0 0;
+  color: var(--accent-text);
+  font-size: 11px;
+}
+
+.mcp-raw {
+  max-height: 220px;
+  overflow: auto;
+  margin: 8px 0 0;
+  padding: 8px 10px;
+  border: 1px solid var(--hairline);
+  border-radius: 6px;
+  background: var(--well);
+  color: var(--text);
+  font-family: var(--mono);
+  font-size: 11px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }
 
 .file-change summary {
@@ -5280,6 +5775,122 @@ button[aria-label^="Unpin "] {
   font-size: 18px;
 }
 
+/* Cost dashboard (roadmap 136): exact totals, a cap meter and one ledger. */
+.cost-dashboard {
+  margin-top: 10px;
+  padding: 10px 12px;
+  border: 1px solid var(--hairline);
+  border-radius: 6px;
+  background: var(--surface);
+}
+
+.cost-head {
+  display: flex;
+  align-items: end;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.cost-head .eyebrow {
+  display: block;
+  color: var(--faint);
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.cost-total {
+  display: block;
+  color: var(--text);
+  font-family: var(--mono);
+  font-size: 20px;
+}
+
+.cost-actions {
+  display: flex;
+  gap: 6px;
+}
+
+.cost-cap {
+  margin: 10px 0;
+}
+
+.cost-cap-track {
+  height: 6px;
+  margin-top: 4px;
+  border: 1px solid var(--hairline);
+  border-radius: 999px;
+  background: var(--well);
+  overflow: hidden;
+}
+
+.cost-cap-fill {
+  height: 100%;
+  background: var(--accent);
+}
+
+.cost-reconcile {
+  margin: 8px 0;
+  font-size: 11px;
+}
+
+.cost-reconcile.ok {
+  color: var(--verified);
+}
+
+.cost-reconcile.bad {
+  color: var(--danger-text);
+}
+
+.cost-groups {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 10px;
+}
+
+.cost-group h4,
+.cost-ledger caption {
+  margin: 0 0 4px;
+  color: var(--muted);
+  font-size: 11px;
+  text-align: left;
+}
+
+.cost-group ul {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.cost-group li {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  gap: 6px;
+  padding: 2px 0;
+  border-bottom: 1px solid var(--hairline);
+  font-size: 11px;
+}
+
+.cost-label {
+  overflow-wrap: anywhere;
+}
+
+.cost-ledger {
+  width: 100%;
+  margin-top: 10px;
+  border-collapse: collapse;
+  font-size: 11px;
+}
+
+.cost-ledger th,
+.cost-ledger td {
+  padding: 3px 6px;
+  border-bottom: 1px solid var(--hairline);
+  text-align: left;
+}
+
 .harness-row .needs-key {
   color: var(--accent-text);
 }
@@ -5417,6 +6028,25 @@ button[aria-label^="Unpin "] {
 
 .settings-no-match {
   padding: 10px;
+}
+
+/* Settings search (roadmap 125): named rows and an honest not-found state. */
+.settings-result .row-name {
+  color: var(--text);
+}
+
+.settings-result[aria-selected="true"] {
+  border-color: var(--accent);
+}
+
+.settings-not-found {
+  margin: 0 0 12px;
+  padding: 8px 10px;
+  border: 1px solid var(--hairline);
+  border-radius: 6px;
+  background: var(--surface);
+  color: var(--accent-text);
+  font-size: 12px;
 }
 
 .settings-nav .row-name {
@@ -6824,6 +7454,73 @@ html[data-density="compact"] .hunk-comments {
   margin: 8px 0 0;
   color: var(--accent-text);
   font-size: 11px;
+}
+
+/* contextual empty states (roadmap 117): one real action, never an illustration */
+.empty-state {
+  padding: 10px 0;
+}
+
+.empty-state p {
+  margin: 0 0 8px;
+}
+
+.empty-action {
+  min-height: 24px;
+}
+
+/* claim dashboard (roadmap 95): counts, holder and heartbeat age in one ledger view */
+
+.claims-dashboard {
+  padding: 10px 12px;
+  border: 1px solid var(--hairline);
+  border-radius: 8px;
+}
+
+.claims-stats {
+  margin: 6px 0 8px;
+}
+
+.claims-notice {
+  margin: 0 0 8px;
+  color: var(--accent-text);
+  font-size: 11px;
+}
+
+.claim-dashboard-row {
+  flex-wrap: wrap;
+}
+
+.claim-heartbeat {
+  min-width: 56px;
+  text-align: right;
+}
+
+.release-form {
+  display: flex;
+  flex: 1 1 100%;
+  align-items: end;
+  gap: 8px;
+  padding: 6px 0 2px;
+}
+
+.release-form label {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 4px;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.release-form input {
+  width: 100%;
+  padding: 5px 7px;
+  border: 1px solid var(--hairline);
+  border-radius: 6px;
+  background: var(--well);
+  color: var(--text);
+  font: inherit;
 }
 
 /* merge queue (roadmap 46): one writer per path, with the holder named before the waiter */
@@ -8622,6 +9319,8 @@ html[data-surface="tray"] #root {
 
 .about-card {
   width: min(460px, 100%);
+  max-height: min(82vh, 720px);
+  overflow-y: auto;
   padding: 20px;
   border: 1px solid var(--hairline);
   border-radius: 10px;
@@ -8663,6 +9362,81 @@ html[data-surface="tray"] #root {
   margin: 2px 0 0;
   color: var(--text);
   font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
+.about-licences {
+  margin: 0 0 14px;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.about-licences summary {
+  cursor: pointer;
+}
+
+.about-licences ul {
+  max-height: 180px;
+  overflow-y: auto;
+  margin: 8px 0 0;
+  padding-left: 18px;
+}
+
+.about-licences li {
+  padding: 1px 0;
+}
+
+.about-diagnostics-section h3 {
+  margin: 0 0 4px;
+  font-size: 12px;
+}
+
+.about-diagnostics {
+  max-height: 160px;
+  overflow: auto;
+  margin: 8px 0;
+  padding: 8px 10px;
+  border: 1px solid var(--hairline);
+  border-radius: 6px;
+  background: var(--well);
+  color: var(--text);
+  font-family: var(--mono);
+  font-size: 11px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.about-panel {
+  max-width: 640px;
+}
+
+/* Crash reporter (roadmap 116): consent, a readable redacted preview and a copy-only payload. */
+.crash-report {
+  padding: 10px 12px;
+  border: 1px solid var(--hairline);
+  border-radius: 8px;
+}
+
+.crash-report h3 {
+  margin: 0 0 6px;
+  font-size: 13px;
+}
+
+.crash-preview {
+  max-height: 180px;
+  overflow: auto;
+  margin: 8px 0;
+  padding: 8px 10px;
+  border: 1px solid var(--hairline);
+  border-radius: 6px;
+  background: var(--well);
+  color: var(--text);
+  font-family: var(--mono);
+  font-size: 11px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }
 
 /* Approval card v2 (135): command first, one primary action, snapshot state last. */
