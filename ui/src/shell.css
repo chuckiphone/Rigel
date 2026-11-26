@@ -2721,6 +2721,105 @@ input[type="checkbox"] {
   overflow-wrap: anywhere;
 }
 
+/* CSP-safe markdown (roadmap 112): text nodes and tokens only, never injected HTML. */
+.markdown {
+  position: relative;
+}
+
+.markdown-raw-toggle {
+  margin-bottom: 6px;
+}
+
+.markdown-heading {
+  margin: 10px 0 4px;
+  font-size: 13px;
+}
+
+.markdown-paragraph {
+  margin: 4px 0;
+}
+
+.markdown-list {
+  margin: 4px 0;
+  padding-left: 18px;
+}
+
+.markdown-inline-code {
+  padding: 1px 3px;
+  border: 1px solid var(--hairline);
+  border-radius: 4px;
+  background: var(--well);
+  font-family: var(--mono);
+  font-size: 12px;
+}
+
+.markdown-code {
+  margin: 8px 0;
+  border: 1px solid var(--hairline);
+  border-radius: 6px;
+  background: var(--well);
+}
+
+.markdown-code-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 4px 8px;
+  border-bottom: 1px solid var(--hairline);
+}
+
+.markdown-language {
+  color: var(--faint);
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.markdown-code-body {
+  overflow-x: auto;
+  margin: 0;
+  padding: 8px;
+  font-family: var(--mono);
+  font-size: 11px;
+  line-height: 1.5;
+  white-space: pre;
+}
+
+.markdown-tok-keyword {
+  color: var(--accent-text);
+}
+
+.markdown-tok-string {
+  color: var(--verified);
+}
+
+.markdown-tok-number {
+  color: var(--accent-text);
+}
+
+.markdown-tok-comment {
+  color: var(--faint);
+}
+
+.markdown-tok-punctuation {
+  color: var(--muted);
+}
+
+.markdown-raw-body {
+  max-height: 220px;
+  overflow: auto;
+  margin: 0;
+  padding: 8px;
+  border: 1px solid var(--hairline);
+  border-radius: 6px;
+  background: var(--well);
+  font-family: var(--mono);
+  font-size: 11px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
 .msg.user .msg-body {
   color: var(--muted);
 }

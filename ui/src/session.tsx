@@ -46,6 +46,7 @@ import SessionFilters, {
   sessionHash,
   type SessionFilter,
 } from "./session-filters";
+import MarkdownText from "./markdown";
 import McpResult from "./mcp-result";
 import { MemoryInspector } from "./inspector/memory";
 import { StepCost } from "./inspector/step-cost";
@@ -5681,7 +5682,9 @@ function ItemRow({ item, raw }: { item: Item; raw: boolean }) {
       <>
         <div className="msg assistant">
           <span className="gutter">rigel</span>
-          <div className="msg-body">{bodyText(item, "text")}</div>
+          <div className="msg-body">
+            <MarkdownText source={bodyText(item, "text")} />
+          </div>
         </div>
         {rawBlock}
       </>
