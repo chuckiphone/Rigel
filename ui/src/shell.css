@@ -6826,6 +6826,19 @@ html[data-density="compact"] .hunk-comments {
   font-size: 11px;
 }
 
+/* contextual empty states (roadmap 117): one real action, never an illustration */
+.empty-state {
+  padding: 10px 0;
+}
+
+.empty-state p {
+  margin: 0 0 8px;
+}
+
+.empty-action {
+  min-height: 24px;
+}
+
 /* claim dashboard (roadmap 95): counts, holder and heartbeat age in one ledger view */
 
 .claims-dashboard {

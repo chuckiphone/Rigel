@@ -40,6 +40,7 @@ import {
   type RecoveryOffer,
   type SubagentGraph,
 } from "./api";
+import EmptyState from "./empty-state";
 import { MemoryInspector } from "./inspector/memory";
 import { StepCost } from "./inspector/step-cost";
 import { Recovery } from "./recovery";
@@ -3547,11 +3548,24 @@ export default function SessionView({
               </div>
             ))}
             {visibleSessions.length === 0 ? (
-              <p className="empty subtle">
-                {list.length === 0
-                  ? "No session in this project yet. Start one from the button above."
-                  : "No session matches this filter."}
-              </p>
+              <EmptyState
+                surface="sessions"
+                signals={{ filtered: list.length > 0 }}
+                copy={
+                  list.length === 0
+                    ? "No session in this project yet. Start one with the first prompt."
+                    : "No session matches this filter."
+                }
+                onAction={(action) => {
+                  if (action === "clear-filter") {
+                    setSessionQuery("");
+                    setStatusFilter("all");
+                    setShowArchived(true);
+                  } else if (action === "start-session") {
+                    void startSession();
+                  }
+                }}
+              />
             ) : null}
           </div>
           <div className="roster-foot">
