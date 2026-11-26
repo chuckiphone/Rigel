@@ -3823,6 +3823,59 @@ button[aria-label^="Unpin "] {
   background: var(--well);
 }
 
+/* Composer v2 (roadmap 137): one wrapping row of single-line control labels. */
+.composer-v2 {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-bottom: 6px;
+}
+
+.composer-v2-control {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  min-height: 24px;
+  padding: 3px 7px;
+  border: 1px solid var(--hairline);
+  border-radius: 6px;
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.composer-v2-control[aria-pressed="true"] {
+  border-color: var(--accent);
+  color: var(--accent-text);
+}
+
+.composer-v2-label {
+  white-space: nowrap;
+}
+
+.composer-v2-value {
+  color: var(--faint);
+  white-space: nowrap;
+}
+
+.composer-v2-effort select {
+  max-width: 82px;
+  border: 0;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.composer-v2-mode {
+  display: inline-flex;
+  gap: 2px;
+}
+
 .composer-mode {
   display: inline-flex;
   align-items: center;

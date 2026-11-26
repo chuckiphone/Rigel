@@ -51,7 +51,9 @@ test("the composer exposes Build, Plan, Mission and Skills with context, queue a
   await expect(modes.getByRole("button", { name: /Mission/ })).toBeVisible();
   await expect(modes.getByRole("button", { name: /Session skills/ })).toBeVisible();
 
-  await expect(page.getByRole("button", { name: /^Context/ })).toBeVisible();
+  await expect(
+    page.locator(".composer-controls").getByRole("button", { name: /^Context/ }),
+  ).toBeVisible();
   await expect(page.getByRole("button", { name: "Stop turn" })).toBeDisabled();
   await expect(page.getByRole("button", { name: "Local", exact: true })).toHaveCount(0);
 
