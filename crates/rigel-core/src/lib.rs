@@ -133,6 +133,7 @@ pub use sandbox::{
     JobLimits, LinuxNamespacePolicy, Sandbox, SandboxError, SandboxExecPolicy, SandboxProfile,
 };
 pub use search::{MAX_HITS, PatchHit, SessionHit, TurnHit, WorkspaceHits};
+pub use session::safe_mode::{Mode as SafeMode, SafeModeError, SafeModeState, TurnMode};
 pub use session::{
     Agent, Bookmark, Checkpoint, Item, RecoveryOffer, Session, SessionError, SessionService,
     SessionStatus, SkillPin, SubagentGraph, TeamAgent, Tombstone, Turn, TurnTranscript,
