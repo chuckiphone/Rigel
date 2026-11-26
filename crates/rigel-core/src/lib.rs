@@ -6,6 +6,7 @@
 
 pub mod agent;
 pub mod agentmail;
+pub mod attachments;
 pub mod attention;
 pub mod attribute;
 pub mod audit;
@@ -72,6 +73,7 @@ pub use agentmail::{
     Mail, MailConfig, MailError, MailStatus, MessageBody, MessageSummary, SentMail, ThreadSummary,
     ThreadView,
 };
+pub use attachments::{Attachment, AttachmentError, AttachmentStore};
 pub use attention::{Attention, AttentionGroup, AttentionItem};
 pub use attribute::{Attributed, ConflictWatcher, Observed, POLL_INTERVAL, Watcher};
 pub use audit::{ApprovalInput, ApprovalRecord, ChainError, CommandProvenance, VerifyReport};
