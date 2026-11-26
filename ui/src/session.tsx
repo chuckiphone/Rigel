@@ -41,6 +41,11 @@ import {
   type SubagentGraph,
 } from "./api";
 import EmptyState from "./empty-state";
+import SessionFilters, {
+  sessionFilterFromHash,
+  sessionHash,
+  type SessionFilter,
+} from "./session-filters";
 import { MemoryInspector } from "./inspector/memory";
 import { StepCost } from "./inspector/step-cost";
 import { Recovery } from "./recovery";
@@ -603,9 +608,17 @@ export default function SessionView({
   const [list, setList] = useState<Session[]>(() =>
     tauri ? [] : [previewSession, previewArchivedSession],
   );
-  const [sessionQuery, setSessionQuery] = useState("");
-  const [statusFilter, setStatusFilter] = useState<"all" | Session["status"]>("all");
-  const [showArchived, setShowArchived] = useState(false);
+  // Roadmap 102: one filter object is both the list state and the URL; saved filters and tags
+  // live in session-filters.tsx so the same object round-trips through a pasted address.
+  const [filters, setFilters] = useState<SessionFilter>(() =>
+    sessionFilterFromHash(window.location.hash),
+  );
+  const sessionQuery = filters.query;
+  const statusFilter = filters.status;
+  const showArchived = filters.archived;
+  useEffect(() => {
+    window.history.replaceState(null, "", sessionHash(filters));
+  }, [filters]);
   const [renaming, setRenaming] = useState<string | null>(null);
   const [renameText, setRenameText] = useState("");
   const renamingRef = useRef<string | null>(null);
@@ -3224,7 +3237,9 @@ export default function SessionView({
                 <span aria-hidden>⌕</span>
                 <input
                   value={sessionQuery}
-                  onChange={(event) => setSessionQuery(event.target.value)}
+                  onChange={(event) =>
+                    setFilters((current) => ({ ...current, query: event.target.value }))
+                  }
                   placeholder="Filter sessions"
                   aria-label="Filter sessions"
                 />
@@ -3235,7 +3250,10 @@ export default function SessionView({
                   aria-label="Filter sessions by status"
                   value={statusFilter}
                   onChange={(event) =>
-                    setStatusFilter(event.target.value as "all" | Session["status"])
+                    setFilters((current) => ({
+                      ...current,
+                      status: event.target.value as SessionFilter["status"],
+                    }))
                   }
                 >
                   <option value="all">any status</option>
@@ -3248,7 +3266,9 @@ export default function SessionView({
                   type="button"
                   className={showArchived ? "chip on" : "chip"}
                   aria-pressed={showArchived}
-                  onClick={() => setShowArchived((shown) => !shown)}
+                  onClick={() =>
+                    setFilters((current) => ({ ...current, archived: !current.archived }))
+                  }
                   title="Archived sessions are hidden by default and never deleted"
                 >
                   archived
@@ -3325,6 +3345,7 @@ export default function SessionView({
                   ) : null}
                 </div>
               </div>
+              <SessionFilters filter={filters} onChange={setFilters} />
             </div>
           ) : !session ? (
             <button className="primary wide" onClick={() => void startSession()} disabled={starting}>
@@ -3558,9 +3579,7 @@ export default function SessionView({
                 }
                 onAction={(action) => {
                   if (action === "clear-filter") {
-                    setSessionQuery("");
-                    setStatusFilter("all");
-                    setShowArchived(true);
+                    setFilters({ query: "", status: "all", archived: true, tags: [] });
                   } else if (action === "start-session") {
                     void startSession();
                   }

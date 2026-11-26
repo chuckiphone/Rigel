@@ -1640,6 +1640,51 @@ input[type="checkbox"] {
   gap: 4px;
 }
 
+/* Tags and saved filters (roadmap 102): colourless text chips, never a colour code. */
+.session-filters-block {
+  display: grid;
+  gap: 6px;
+  padding-top: 6px;
+  border-top: 1px solid var(--hairline);
+}
+
+.filter-add {
+  display: flex;
+  gap: 4px;
+}
+
+.filter-add input {
+  flex: 1;
+  min-width: 0;
+  padding: 4px 6px;
+  border: 1px solid var(--hairline);
+  border-radius: 6px;
+  background: var(--well);
+  color: var(--text);
+  font: inherit;
+}
+
+.filter-tags,
+.filter-saved {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.filter-tag {
+  padding: 3px 7px;
+  border: 1px solid var(--hairline);
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--muted);
+  font-family: var(--mono);
+  font-size: 11px;
+}
+
+.filter-tag.known {
+  color: var(--text);
+}
+
 .session-list-pane,
 .agent-list-pane {
   display: flex;
