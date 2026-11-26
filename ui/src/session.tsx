@@ -46,6 +46,7 @@ import SessionFilters, {
   sessionHash,
   type SessionFilter,
 } from "./session-filters";
+import McpResult from "./mcp-result";
 import { MemoryInspector } from "./inspector/memory";
 import { StepCost } from "./inspector/step-cost";
 import { Recovery } from "./recovery";
@@ -5695,17 +5696,9 @@ function ItemRow({ item, raw }: { item: Item; raw: boolean }) {
   }
 
   if (item.kind === "mcp_call") {
-    const ok = item.status === "ok";
     return (
       <>
-        <details className={`tool-line${ok ? "" : " bad"}`}>
-          <summary>
-            <span className="tool-name">{bodyText(item, "tool")}</span>
-            <span className="tool-args">{argsSummary(item)}</span>
-            <span className="tool-status">{ok ? "ok" : "error"}</span>
-          </summary>
-          <pre>{JSON.stringify(item.body, null, 2)}</pre>
-        </details>
+        <McpResult body={item.body} />
         {rawBlock}
       </>
     );
