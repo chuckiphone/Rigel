@@ -2665,6 +2665,108 @@ input[type="checkbox"] {
   background: none;
 }
 
+/* Request inspector (roadmap 119): one struct on screen and in the copied JSON. */
+.request-inspector {
+  margin: 8px 0;
+  padding: 10px 12px;
+  border: 1px solid var(--hairline);
+  border-radius: 6px;
+  background: var(--surface);
+}
+
+.request-inspector-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.request-inspector h3,
+.request-inspector h4 {
+  margin: 0 0 6px;
+  font-size: 12px;
+}
+
+.request-route {
+  margin: 6px 0;
+  color: var(--accent-text);
+  font-size: 11px;
+  overflow-wrap: anywhere;
+}
+
+.request-stats {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 8px;
+  margin: 0 0 8px;
+}
+
+.request-stats dt {
+  color: var(--faint);
+  font-family: var(--mono);
+  font-size: 10px;
+  text-transform: uppercase;
+}
+
+.request-stats dd {
+  margin: 2px 0 0;
+  color: var(--muted);
+  font-family: var(--mono);
+  font-size: 11px;
+}
+
+.request-bodies {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 8px;
+}
+
+.request-inspector pre {
+  max-height: 200px;
+  overflow: auto;
+  margin: 0 0 8px;
+  padding: 8px 10px;
+  border: 1px solid var(--hairline);
+  border-radius: 6px;
+  background: var(--well);
+  color: var(--text);
+  font-family: var(--mono);
+  font-size: 11px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.request-headers {
+  margin-top: 8px;
+}
+
+.request-headers dl {
+  margin: 4px 0 0;
+}
+
+.request-headers dl > div {
+  display: flex;
+  gap: 8px;
+  padding: 2px 0;
+  border-bottom: 1px solid var(--hairline);
+  font-size: 11px;
+}
+
+.request-headers dt {
+  flex: 0 0 140px;
+  color: var(--muted);
+}
+
+.request-headers dd {
+  margin: 0;
+  color: var(--text);
+  overflow-wrap: anywhere;
+}
+
+.request-headers .redacted dd {
+  color: var(--faint);
+}
+
 .pill {
   padding: 0 5px;
   border: 1px solid var(--hairline);
