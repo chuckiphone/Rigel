@@ -44,6 +44,8 @@ import {
   type UpdateStatus,
 } from "./api";
 import { UI_SCALES, applyDisplay } from "./display";
+import { AboutSettingsPage } from "./about";
+import { CrashReportSurface } from "./crash-report";
 import AuditLogPage from "./audit-log";
 import ConcordPage from "./concord";
 import { ModelControls } from "./modelpicker";
@@ -300,6 +302,12 @@ const PAGES = [
   { id: "appearance", group: "Window", label: "Appearance", blurb: "Dark or light, with the same amber accent" },
   { id: "shortcuts", group: "Window", label: "Keyboard", blurb: "Rebindable shortcuts for the palette, focus mode and search" },
   { id: "notifications", group: "Window", label: "Notifications", blurb: "Desktop events while the window is hidden" },
+  {
+    id: "about",
+    group: "System",
+    label: "About",
+    blurb: "Version, build stamp, licences and a copyable diagnostics block",
+  },
   { id: "updates", group: "System", label: "Updates", blurb: "The signed self-update" },
   { id: "advanced", group: "System", label: "Advanced", blurb: "Every preference in one place, with the values Rigel resolved" },
   { id: "diagnostics", group: "System", label: "Diagnostics", blurb: "One redacted bundle for a bug report" },
@@ -355,6 +363,7 @@ const PAGE_ICONS: Record<PageId, string> = {
   rules: "M5.5 3.5h6l3 3v10h-9z M11.5 3.5v3h3 M7.5 9.5h5 M7.5 12.5h5",
   notifications:
     "M10 3a4 4 0 0 1 4 4c0 2.7.8 4 1.8 5H4.2C5.2 11 6 9.7 6 7a4 4 0 0 1 4-4Z M8.5 14.5a1.5 1.5 0 0 0 3 0",
+  about: "M10 3 Q10.8 9.1 17 10 Q10.8 10.9 10 17 Q9.2 10.9 3 10 Q9.2 9.1 10 3 Z",
   updates: "M10 3v8 M6.5 8 10 11.5 13.5 8 M4 14.5v2h12v-2",
   advanced: "M4 6h12 M4 10h12 M4 14h12 M7 4v4 M13 8v4 M9 12v4",
   diagnostics: "M3 10h3l1.5-4 3 8 1.5-4h5",
@@ -382,6 +391,7 @@ const SETTINGS_KEYWORDS: Record<PageId, string> = {
   concord: "concord inbox messages receipts replies muse agent work",
   rules: "agents.md claude.md memory project rules export",
   notifications: "desktop permission approval turn done failed",
+  about: "version commit build stamp git licence sbom expressions update channel privacy diagnostics copy",
   updates: "version github signed installer auto update",
   advanced: "all preferences settings auto refine session sync account status runtime fields",
   diagnostics: "bundle redact logs crash support report",
@@ -1693,6 +1703,8 @@ export default function SettingsView({
         };
       case "concord":
         return { text: "inbox", dot: null };
+      case "about":
+        return { text: "build facts", dot: null };
       case "updates":
         return {
           text: updateStatus ? (updateStatus.enabled ? `v${updateStatus.current}` : "off") : "…",
@@ -2633,6 +2645,20 @@ export default function SettingsView({
     </section>
   );
 
+  const aboutPage = (
+    <section className="settings-section">
+      <div className="settings-head">
+        <h3>About Rigel</h3>
+        <span className="pill">local facts</span>
+      </div>
+      <p className="fine">
+        The build stamp comes from the commit this binary was compiled from; the licence list comes
+        from the SBOM published with the release.
+      </p>
+      <AboutSettingsPage />
+    </section>
+  );
+
   const updatesPage = (
     <section className="settings-section">
       <div className="settings-head">
@@ -2701,9 +2727,10 @@ export default function SettingsView({
   );
 
   const diagnosticsPage = (
-    <section className="settings-section">
-      <div className="settings-head">
-        <h3>Bug-report bundle</h3>
+    <>
+      <section className="settings-section">
+        <div className="settings-head">
+          <h3>Bug-report bundle</h3>
         <span className="pill cancelled">never sent</span>
       </div>
       <p className="fine">
@@ -2736,7 +2763,9 @@ export default function SettingsView({
       ) : (
         <p className="fine">Open a project to enable the export.</p>
       )}
-    </section>
+      </section>
+      <CrashReportSurface />
+    </>
   );
 
   const appearancePage = (
@@ -4124,6 +4153,8 @@ export default function SettingsView({
         return notificationsPage;
       case "sponsors":
         return sponsorsPage;
+      case "about":
+        return aboutPage;
       case "updates":
         return updatesPage;
       case "advanced":

@@ -10,6 +10,7 @@
  */
 
 import { previewAgents, previewApprovals, previewMemoryFacts } from "./sessionMock";
+import { ABOUT_LICENCES } from "./about-licences";
 
 export interface Session {
   id: string;
@@ -319,6 +320,27 @@ export function defaultSettings(): Settings {
   };
 }
 
+/** Roadmap 124: the local facts behind the About dialog. Nothing here identifies the machine. */
+export interface AboutInfo {
+  version: string;
+  commit: string;
+  licences: string[];
+  components: number;
+  update_channel: string;
+  privacy: string;
+}
+
+/** The browser has no build stamp; it says so instead of inventing one. */
+export const PREVIEW_ABOUT: AboutInfo = {
+  version: "preview",
+  commit: "preview-build",
+  licences: [...ABOUT_LICENCES.expressions],
+  components: ABOUT_LICENCES.components,
+  update_channel: "signed GitHub releases/latest · preview is read-only",
+  privacy:
+    "No telemetry. Sessions and diagnostics stay on this machine until you copy or export them.",
+};
+
 /** The update switch, this build's version and whether a publisher key is present. */
 export interface UpdateStatus {
   current: string;
@@ -493,6 +515,22 @@ export interface DiagnosticsBundle {
   path: string;
   body: string;
 }
+
+/** Roadmap 116: the redacted local crash tail the reporter previews. */
+export interface CrashReport {
+  path: string;
+  text: string;
+}
+
+/** Browser preview: a shaped fake key proves the reporter redacts before it shows anything. */
+export const PREVIEW_CRASH: CrashReport = {
+  path: "crash.log",
+  text: [
+    "2026-11-25 09:14:02 panic in coordinator: turn 7 died while calling the model",
+    "request header Authorization: Bearer sk-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+    "state: paused turn 7 kept its messages and remaining budget",
+  ].join("\n"),
+};
 
 /** D97: the exact title and body a pull request would use. */
 export interface PullRequestPlan {
@@ -3023,6 +3061,20 @@ export const api = {
     return call<CoordinationView>("claim_list", { project });
   },
 
+  /**
+   * Roadmap 95: release one agent's claim on the named paths. The UI only calls this after an
+   * explicit confirmation with a reason; the core keeps the released row as a tombstone.
+   */
+  async claimRelease(
+    project: string,
+    agent: string,
+    paths: string[],
+    reason: string,
+  ): Promise<string[]> {
+    if (!isTauri()) return [];
+    return call<string[]>("claim_release", { project, agent, paths, reason });
+  },
+
   /** Live write lanes, holder and waiters; polled with the claims and reviews. */
   async mergeQueue(project: string): Promise<MergeQueueView> {
     if (!isTauri()) return { entries: [] };
@@ -3370,6 +3422,18 @@ export const api = {
   async concordReply(messageId: string, content: string): Promise<ConcordReply> {
     if (!isTauri()) throw new Error("Concord replies go through the desktop app.");
     return call<ConcordReply>("concord_reply", { message_id: messageId, content });
+  },
+
+  /** Roadmap 116: read the already-redacted crash tail from app data; no bundle is written. */
+  async crashReport(): Promise<CrashReport> {
+    if (!isTauri()) return PREVIEW_CRASH;
+    return call<CrashReport>("crash_report");
+  },
+
+  /** Roadmap 124: build stamp, version, SBOM licences and the update/privacy summary. */
+  async aboutInfo(): Promise<AboutInfo> {
+    if (!isTauri()) return PREVIEW_ABOUT;
+    return call<AboutInfo>("about_info");
   },
 
   async updateStatus(): Promise<UpdateStatus> {

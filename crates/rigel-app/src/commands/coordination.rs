@@ -19,6 +19,26 @@ pub(crate) fn claim_list(project: String) -> Result<CoordinationView, String> {
     })
 }
 
+/// Roadmap 95: release a claim by explicit user action only. A stale heartbeat is reported by
+/// `claim_list` and never released here on a timer; the reason travels with the release into the
+/// ledger. The core refuses an outside path and keeps the released row as a tombstone.
+#[tauri::command]
+pub(crate) fn claim_release(
+    project: String,
+    agent: String,
+    paths: Vec<String>,
+    reason: String,
+) -> Result<Vec<String>, String> {
+    tauri::async_runtime::block_on(async move {
+        let root = std::fs::canonicalize(&project).map_err(message)?;
+        let service = SessionService::open(&root).await.map_err(message)?;
+        ClaimService::new(service.pool().clone(), &root)
+            .release(&agent, &paths, &reason)
+            .await
+            .map_err(message)
+    })
+}
+
 #[tauri::command]
 pub(crate) fn conflict_resolve(
     project: String,

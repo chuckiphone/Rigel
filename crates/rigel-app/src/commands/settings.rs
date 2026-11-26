@@ -197,6 +197,13 @@ pub(crate) fn free_agents() -> Result<Vec<ModelOption>, String> {
     })
 }
 
+/// Roadmap 124: the About dialog's facts, all local. The commit is the build stamp baked in by
+/// `build.rs`; the licences are the set generated from the same SBOM the release publishes.
+#[tauri::command]
+pub(crate) fn about_info() -> Result<AboutInfo, String> {
+    Ok(about_snapshot())
+}
+
 #[tauri::command]
 pub(crate) fn update_status() -> Result<UpdateStatus, String> {
     update_status_now()
