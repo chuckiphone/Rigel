@@ -47,6 +47,29 @@ fn main() {
                     }
                 ]
             }),
+            "resources/list" => json!({
+                "resources": [
+                    { "uri": "file:///a.txt", "name": "a.txt", "mimeType": "text/plain" }
+                ]
+            }),
+            "resources/read" => json!({
+                "contents": [
+                    { "uri": "file:///a.txt", "mimeType": "text/plain", "text": "hello" }
+                ]
+            }),
+            "prompts/list" => json!({
+                "prompts": [
+                    { "name": "greet", "description": "Greet someone", "arguments": [
+                        { "name": "name", "required": true }
+                    ] }
+                ]
+            }),
+            "prompts/get" => json!({
+                "description": "Greet someone",
+                "messages": [
+                    { "role": "user", "content": { "type": "text", "text": "hi" } }
+                ]
+            }),
             "tools/call" => {
                 let text = message
                     .get("params")

@@ -6,6 +6,7 @@
 
 pub mod health;
 pub mod pin;
+pub mod resources;
 pub mod transport;
 
 pub use health::{
@@ -13,6 +14,11 @@ pub use health::{
     probe_servers, refresh,
 };
 pub use pin::{Catalog, PinError, PinObservation, PinStore, SchemaDiff};
+pub use resources::{
+    McpPrompt, McpPromptArgument, McpResource, PromptGetResult, PromptMessage, ResourceContent,
+    ResourceReadRecord, ResourceReadResult, get_prompt, list_prompts, list_resources,
+    read_resource, record_read,
+};
 
 pub use transport::{
     ENVIRONMENT_ALLOWLIST, MAX_MESSAGE_BYTES, TransportError, check_http, check_message,
