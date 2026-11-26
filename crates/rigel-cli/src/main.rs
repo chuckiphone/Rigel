@@ -31,6 +31,7 @@ mod plugins;
 mod proof;
 mod route;
 mod serve;
+mod stats;
 mod testing;
 mod tools;
 mod update;
@@ -59,6 +60,14 @@ enum Command {
         /// Also write a support archive (versions, schema, redacted settings and logs).
         #[arg(long, value_name = "FILE")]
         support_bundle: Option<PathBuf>,
+        #[arg(long)]
+        json: bool,
+    },
+
+    /// Local turn metrics: latency, tokens, retries and cache hits. No network call.
+    Stats {
+        #[arg(long, value_name = "PATH", default_value = ".")]
+        project: PathBuf,
         #[arg(long)]
         json: bool,
     },
@@ -580,6 +589,11 @@ async fn entry() -> ExitCode {
             support_bundle,
             json: as_json,
         } => doctor::run(&project, &dir, as_json, support_bundle.as_deref()).await,
+
+        Command::Stats {
+            project,
+            json: as_json,
+        } => stats::run(&project, as_json).await,
 
         Command::Migrate { project } => match Store::open_project(&project).await {
             Ok(store) => {
