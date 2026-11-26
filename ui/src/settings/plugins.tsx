@@ -13,6 +13,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
+import EmptyState from "../empty-state";
 import {
   api,
   type PluginCatalog,
@@ -278,7 +279,20 @@ export default function PluginsPage({ onNotice }: { onNotice: (notice: string) =
             </article>
           ))}
           {catalog !== null && catalog.entries.length === 0 ? (
-            <p className="empty">No entry matches this filter.</p>
+            query !== "" || category !== null || tier !== "all" ? (
+              <EmptyState
+                surface="plugins"
+                signals={{ filtered: true }}
+                copy="No entry matches this filter."
+                onAction={() => {
+                  setQuery("");
+                  setCategory(null);
+                  setTier("all");
+                }}
+              />
+            ) : (
+              <p className="empty">No catalogue entries in this build.</p>
+            )
           ) : null}
           {catalog !== null && visible < catalog.entries.length ? (
             <button

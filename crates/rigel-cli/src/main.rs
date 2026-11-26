@@ -32,6 +32,7 @@ mod proof;
 mod route;
 mod rules;
 mod serve;
+mod stats;
 mod testing;
 mod tools;
 mod update;
@@ -65,6 +66,14 @@ enum Command {
         /// Apply the repairs the report lists, instead of only reporting them.
         #[arg(long)]
         fix: bool,
+    },
+
+    /// Local turn metrics: latency, tokens, retries and cache hits. No network call.
+    Stats {
+        #[arg(long, value_name = "PATH", default_value = ".")]
+        project: PathBuf,
+        #[arg(long)]
+        json: bool,
     },
 
     /// Create or migrate a project's session database.
@@ -597,6 +606,11 @@ async fn entry() -> ExitCode {
                 doctor::run(&project, &dir, as_json, support_bundle.as_deref()).await
             }
         }
+
+        Command::Stats {
+            project,
+            json: as_json,
+        } => stats::run(&project, as_json).await,
 
         Command::Migrate { project } => match Store::open_project(&project).await {
             Ok(store) => {

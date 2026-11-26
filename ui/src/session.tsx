@@ -40,10 +40,20 @@ import {
   type RecoveryOffer,
   type SubagentGraph,
 } from "./api";
+import EmptyState from "./empty-state";
+import SessionFilters, {
+  sessionFilterFromHash,
+  sessionHash,
+  type SessionFilter,
+} from "./session-filters";
+import MarkdownText from "./markdown";
+import McpResult from "./mcp-result";
 import { MemoryInspector } from "./inspector/memory";
+import { RequestInspector, RequestInspectorPreview, fromUsage } from "./inspector/request";
 import { StepCost } from "./inspector/step-cost";
 import { Recovery } from "./recovery";
 import { SubagentGraphView } from "./subagent-graph";
+import { VirtualTranscriptPreview } from "./transcript/virtual";
 import { ApprovalCard } from "./session/approval-card";
 import { DegradedBanner } from "./degraded-banner";
 import { ModelControls } from "./modelpicker";
@@ -483,6 +493,11 @@ export default function SessionView({
   onOpenHunk,
 }: Props) {
   const tauri = isTauri();
+  // Preview-only 10,000-row fixture for the virtual transcript; the native window never shows it.
+  const virtualPreview =
+    !tauri && new URLSearchParams(window.location.search).get("virtual") === "1";
+  const requestPreview =
+    !tauri && new URLSearchParams(window.location.search).get("request") === "1";
   const contextMenu = useMenu();
   const [session, setSession] = useState<Session | null>(() => (tauri ? null : previewSession));
   const [recovery, setRecovery] = useState<RecoveryOffer | null>(() =>
@@ -602,9 +617,17 @@ export default function SessionView({
   const [list, setList] = useState<Session[]>(() =>
     tauri ? [] : [previewSession, previewArchivedSession],
   );
-  const [sessionQuery, setSessionQuery] = useState("");
-  const [statusFilter, setStatusFilter] = useState<"all" | Session["status"]>("all");
-  const [showArchived, setShowArchived] = useState(false);
+  // Roadmap 102: one filter object is both the list state and the URL; saved filters and tags
+  // live in session-filters.tsx so the same object round-trips through a pasted address.
+  const [filters, setFilters] = useState<SessionFilter>(() =>
+    sessionFilterFromHash(window.location.hash),
+  );
+  const sessionQuery = filters.query;
+  const statusFilter = filters.status;
+  const showArchived = filters.archived;
+  useEffect(() => {
+    window.history.replaceState(null, "", sessionHash(filters));
+  }, [filters]);
   const [renaming, setRenaming] = useState<string | null>(null);
   const [renameText, setRenameText] = useState("");
   const renamingRef = useRef<string | null>(null);
@@ -3223,7 +3246,9 @@ export default function SessionView({
                 <span aria-hidden>⌕</span>
                 <input
                   value={sessionQuery}
-                  onChange={(event) => setSessionQuery(event.target.value)}
+                  onChange={(event) =>
+                    setFilters((current) => ({ ...current, query: event.target.value }))
+                  }
                   placeholder="Filter sessions"
                   aria-label="Filter sessions"
                 />
@@ -3234,7 +3259,10 @@ export default function SessionView({
                   aria-label="Filter sessions by status"
                   value={statusFilter}
                   onChange={(event) =>
-                    setStatusFilter(event.target.value as "all" | Session["status"])
+                    setFilters((current) => ({
+                      ...current,
+                      status: event.target.value as SessionFilter["status"],
+                    }))
                   }
                 >
                   <option value="all">any status</option>
@@ -3247,7 +3275,9 @@ export default function SessionView({
                   type="button"
                   className={showArchived ? "chip on" : "chip"}
                   aria-pressed={showArchived}
-                  onClick={() => setShowArchived((shown) => !shown)}
+                  onClick={() =>
+                    setFilters((current) => ({ ...current, archived: !current.archived }))
+                  }
                   title="Archived sessions are hidden by default and never deleted"
                 >
                   archived
@@ -3324,6 +3354,7 @@ export default function SessionView({
                   ) : null}
                 </div>
               </div>
+              <SessionFilters filter={filters} onChange={setFilters} />
             </div>
           ) : !session ? (
             <button className="primary wide" onClick={() => void startSession()} disabled={starting}>
@@ -3547,11 +3578,22 @@ export default function SessionView({
               </div>
             ))}
             {visibleSessions.length === 0 ? (
-              <p className="empty subtle">
-                {list.length === 0
-                  ? "No session in this project yet. Start one from the button above."
-                  : "No session matches this filter."}
-              </p>
+              <EmptyState
+                surface="sessions"
+                signals={{ filtered: list.length > 0 }}
+                copy={
+                  list.length === 0
+                    ? "No session in this project yet. Start one with the first prompt."
+                    : "No session matches this filter."
+                }
+                onAction={(action) => {
+                  if (action === "clear-filter") {
+                    setFilters({ query: "", status: "all", archived: true, tags: [] });
+                  } else if (action === "start-session") {
+                    void startSession();
+                  }
+                }}
+              />
             ) : null}
           </div>
           <div className="roster-foot">
@@ -3962,6 +4004,8 @@ export default function SessionView({
                 </button>
               ))}
             </div>
+            {requestPreview ? <RequestInspectorPreview enabled /> : null}
+            {virtualPreview ? <VirtualTranscriptPreview enabled /> : null}
             <div className="transcript-shell">
             <div className="transcripts" ref={transcriptRef} onScroll={trackOutline}>
             <div className={shown.length === 2 ? "transcript-panes split" : "transcript-panes"}>
@@ -5522,7 +5566,10 @@ function TurnCard({
       <details className="step-details">
         <summary>step details</summary>
         {entry.items.find((item) => item.kind === "usage") ? (
-          <StepCost body={entry.items.find((item) => item.kind === "usage")!.body} />
+          <>
+            <StepCost body={entry.items.find((item) => item.kind === "usage")!.body} />
+            <RequestInspector inspection={fromUsage(entry.items.find((item) => item.kind === "usage")!.body)} />
+          </>
         ) : null}
         {usage ? (
           <dl>
@@ -5642,7 +5689,9 @@ function ItemRow({ item, raw }: { item: Item; raw: boolean }) {
       <>
         <div className="msg assistant">
           <span className="gutter">rigel</span>
-          <div className="msg-body">{bodyText(item, "text")}</div>
+          <div className="msg-body">
+            <MarkdownText source={bodyText(item, "text")} />
+          </div>
         </div>
         {rawBlock}
       </>
@@ -5662,17 +5711,9 @@ function ItemRow({ item, raw }: { item: Item; raw: boolean }) {
   }
 
   if (item.kind === "mcp_call") {
-    const ok = item.status === "ok";
     return (
       <>
-        <details className={`tool-line${ok ? "" : " bad"}`}>
-          <summary>
-            <span className="tool-name">{bodyText(item, "tool")}</span>
-            <span className="tool-args">{argsSummary(item)}</span>
-            <span className="tool-status">{ok ? "ok" : "error"}</span>
-          </summary>
-          <pre>{JSON.stringify(item.body, null, 2)}</pre>
-        </details>
+        <McpResult body={item.body} />
         {rawBlock}
       </>
     );

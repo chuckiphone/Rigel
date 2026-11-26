@@ -346,6 +346,25 @@ pub(crate) fn bookmark_toggle(
     })
 }
 
+/// Roadmap 103: change one bookmark's note. `None` clears it; the answer says whether a row was
+/// actually updated so a stale id cannot look like a successful edit.
+#[tauri::command]
+pub(crate) fn bookmark_note(
+    project: String,
+    session: String,
+    id: String,
+    note: Option<String>,
+) -> Result<bool, String> {
+    tauri::async_runtime::block_on(async move {
+        SessionService::open(Path::new(&project))
+            .await
+            .map_err(message)?
+            .set_bookmark_note(&session, &id, note.as_deref())
+            .await
+            .map_err(message)
+    })
+}
+
 #[tauri::command]
 pub(crate) fn session_get(project: String, id: String) -> Result<Session, String> {
     tauri::async_runtime::block_on(async move {
