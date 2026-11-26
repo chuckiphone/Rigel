@@ -5464,6 +5464,25 @@ button[aria-label^="Unpin "] {
   padding: 10px;
 }
 
+/* Settings search (roadmap 125): named rows and an honest not-found state. */
+.settings-result .row-name {
+  color: var(--text);
+}
+
+.settings-result[aria-selected="true"] {
+  border-color: var(--accent);
+}
+
+.settings-not-found {
+  margin: 0 0 12px;
+  padding: 8px 10px;
+  border: 1px solid var(--hairline);
+  border-radius: 6px;
+  background: var(--surface);
+  color: var(--accent-text);
+  font-size: 12px;
+}
+
 .settings-nav .row-name {
   justify-content: space-between;
   gap: 10px;
