@@ -10,6 +10,7 @@
  */
 
 import { previewAgents, previewApprovals, previewMemoryFacts } from "./sessionMock";
+import { ABOUT_LICENCES } from "./about-licences";
 
 export interface Session {
   id: string;
@@ -318,6 +319,27 @@ export function defaultSettings(): Settings {
     gravity_test_ads: true,
   };
 }
+
+/** Roadmap 124: the local facts behind the About dialog. Nothing here identifies the machine. */
+export interface AboutInfo {
+  version: string;
+  commit: string;
+  licences: string[];
+  components: number;
+  update_channel: string;
+  privacy: string;
+}
+
+/** The browser has no build stamp; it says so instead of inventing one. */
+export const PREVIEW_ABOUT: AboutInfo = {
+  version: "preview",
+  commit: "preview-build",
+  licences: [...ABOUT_LICENCES.expressions],
+  components: ABOUT_LICENCES.components,
+  update_channel: "signed GitHub releases/latest · preview is read-only",
+  privacy:
+    "No telemetry. Sessions and diagnostics stay on this machine until you copy or export them.",
+};
 
 /** The update switch, this build's version and whether a publisher key is present. */
 export interface UpdateStatus {
@@ -3384,6 +3406,12 @@ export const api = {
   async concordReply(messageId: string, content: string): Promise<ConcordReply> {
     if (!isTauri()) throw new Error("Concord replies go through the desktop app.");
     return call<ConcordReply>("concord_reply", { message_id: messageId, content });
+  },
+
+  /** Roadmap 124: build stamp, version, SBOM licences and the update/privacy summary. */
+  async aboutInfo(): Promise<AboutInfo> {
+    if (!isTauri()) return PREVIEW_ABOUT;
+    return call<AboutInfo>("about_info");
   },
 
   async updateStatus(): Promise<UpdateStatus> {

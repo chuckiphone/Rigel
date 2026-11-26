@@ -8676,6 +8676,8 @@ html[data-surface="tray"] #root {
 
 .about-card {
   width: min(460px, 100%);
+  max-height: min(82vh, 720px);
+  overflow-y: auto;
   padding: 20px;
   border: 1px solid var(--hairline);
   border-radius: 10px;
@@ -8717,6 +8719,53 @@ html[data-surface="tray"] #root {
   margin: 2px 0 0;
   color: var(--text);
   font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
+.about-licences {
+  margin: 0 0 14px;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.about-licences summary {
+  cursor: pointer;
+}
+
+.about-licences ul {
+  max-height: 180px;
+  overflow-y: auto;
+  margin: 8px 0 0;
+  padding-left: 18px;
+}
+
+.about-licences li {
+  padding: 1px 0;
+}
+
+.about-diagnostics-section h3 {
+  margin: 0 0 4px;
+  font-size: 12px;
+}
+
+.about-diagnostics {
+  max-height: 160px;
+  overflow: auto;
+  margin: 8px 0;
+  padding: 8px 10px;
+  border: 1px solid var(--hairline);
+  border-radius: 6px;
+  background: var(--well);
+  color: var(--text);
+  font-family: var(--mono);
+  font-size: 11px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.about-panel {
+  max-width: 640px;
 }
 
 /* Approval card v2 (135): command first, one primary action, snapshot state last. */
