@@ -834,7 +834,12 @@ impl Api {
             .unwrap_or_else(|| format!("http://{}:{}", self.host, self.port))
     }
 
-    async fn handle(&self, request: Request, peer: Option<IpAddr>) -> Reply {
+    async fn handle(
+        &self,
+        request: Request,
+        peer: Option<IpAddr>,
+        sse: Option<Arc<SseWriter>>,
+    ) -> Reply {
         // A browser page always carries an Origin on a cross-origin request. Refusing it is what
         // makes the bearer token unreachable from a web page even if it leaks into one.
         if request.headers.contains_key("origin") {
@@ -935,7 +940,10 @@ impl Api {
             ("GET", ["v1", "concord", "tools"]) => self.concord_tools().await,
             ("POST", ["v1", "concord", "call"]) => self.concord_call(&request.body).await,
             ("GET", ["v1", "app"]) => self.app_state(),
-            ("GET", ["v1", "events"]) => self.events(&request.query).await,
+            ("GET", ["v1", "events"]) => match sse {
+                Some(writer) => self.events_sse(&request.query, &writer).await,
+                None => self.events(&request.query).await,
+            },
             ("GET", ["v1", "swarm", "jobs"]) => self.swarm_jobs(),
             ("POST", ["v1", "swarm", "jobs", "next"]) => self.claim_swarm_job(),
             ("POST", ["v1", "swarm", "jobs", id, "complete"]) => {
@@ -2788,6 +2796,44 @@ impl Api {
         }
     }
 
+    /// Stream the same snapshots as the long-poll route, sending only changes and periodic
+    /// comments so intermediaries keep the connection alive without adding data events.
+    async fn events_sse(&self, query: &HashMap<String, String>, writer: &SseWriter) -> Reply {
+        let mut fingerprint = query.get("since").cloned().unwrap_or_default();
+        let mut force_initial = fingerprint.is_empty();
+        let mut heartbeat = Instant::now();
+        loop {
+            let snapshot = self.app_snapshot();
+            let current = snapshot
+                .get("fingerprint")
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+                .to_string();
+            if force_initial || current != fingerprint {
+                if !writer.send(
+                    "snapshot",
+                    &json!({
+                        "ok": true,
+                        "changed": true,
+                        "event": snapshot,
+                    }),
+                ) {
+                    break;
+                }
+                force_initial = false;
+                fingerprint = current;
+                heartbeat = Instant::now();
+            } else if heartbeat.elapsed() >= Duration::from_secs(15) {
+                if !writer.heartbeat() {
+                    break;
+                }
+                heartbeat = Instant::now();
+            }
+            tokio::time::sleep(Duration::from_millis(500)).await;
+        }
+        Reply::ok(json!({ "ok": true }))
+    }
+
     fn swarm_jobs_list(&self) -> Vec<Value> {
         let dir = self.data_dir.join("swarm").join("inbox");
         let mut jobs = Vec::new();
@@ -3553,10 +3599,27 @@ fn serve_connection(
     stream.set_read_timeout(Some(Duration::from_secs(30))).ok();
     stream.set_write_timeout(Some(Duration::from_secs(30))).ok();
     let peer = stream.peer_addr().ok().map(|address| address.ip());
-    let reply = match read_request(&mut stream) {
-        Ok(request) => handle.block_on(api.handle(request, peer)),
-        Err(reply) => reply,
+    let (reply, streamed) = match read_request(&mut stream) {
+        Ok(request) => {
+            let sse = (request.method == "GET"
+                && request.path.trim_matches('/') == "v1/events"
+                && accepts_event_stream(request.headers.get("accept").map(String::as_str)))
+            .then(|| {
+                stream
+                    .try_clone()
+                    .ok()
+                    .map(|stream| Arc::new(SseWriter::new(stream)))
+            })
+            .flatten();
+            let reply = handle.block_on(api.handle(request, peer, sse.clone()));
+            let streamed = sse.as_ref().is_some_and(|writer| writer.started());
+            (reply, streamed)
+        }
+        Err(reply) => (reply, false),
     };
+    if streamed {
+        return;
+    }
     let body = serde_json::to_vec(&reply.body).unwrap_or_else(|_| b"{}".to_vec());
     let reason = match reply.status {
         200 => "OK",
@@ -3586,6 +3649,75 @@ fn serve_connection(
     let _ = stream.write_all(head.as_bytes());
     let _ = stream.write_all(&body);
     let _ = stream.flush();
+}
+
+struct SseWriter {
+    state: Mutex<(std::net::TcpStream, bool)>,
+}
+
+impl SseWriter {
+    fn new(stream: std::net::TcpStream) -> Self {
+        Self {
+            state: Mutex::new((stream, false)),
+        }
+    }
+
+    fn started(&self) -> bool {
+        self.state.lock().is_ok_and(|state| state.1)
+    }
+
+    fn send(&self, event: &str, data: &Value) -> bool {
+        let Ok(mut state) = self.state.lock() else {
+            return false;
+        };
+        if !state.1 {
+            state.1 = true;
+            let headers = b"HTTP/1.1 200 OK\r\ncontent-type: text/event-stream; charset=utf-8\r\ncache-control: no-cache, no-store\r\nconnection: close\r\nx-content-type-options: nosniff\r\n\r\n";
+            if state.0.write_all(headers).is_err() {
+                return false;
+            }
+        }
+        state.0.write_all(&sse_frame(event, data)).is_ok() && state.0.flush().is_ok()
+    }
+
+    fn heartbeat(&self) -> bool {
+        self.send_comment(b": keep-alive\n\n")
+    }
+
+    fn send_comment(&self, comment: &[u8]) -> bool {
+        let Ok(mut state) = self.state.lock() else {
+            return false;
+        };
+        if !state.1 {
+            return false;
+        }
+        state.0.write_all(comment).is_ok() && state.0.flush().is_ok()
+    }
+}
+
+fn accepts_event_stream(header: Option<&str>) -> bool {
+    header.is_some_and(|header| {
+        header.split(',').any(|entry| {
+            let mut parts = entry.trim().split(';');
+            let media_type = parts.next().unwrap_or_default().trim();
+            media_type.eq_ignore_ascii_case("text/event-stream")
+                && parts.all(|parameter| {
+                    let Some((name, value)) = parameter.trim().split_once('=') else {
+                        return true;
+                    };
+                    !name.trim().eq_ignore_ascii_case("q")
+                        || value
+                            .trim()
+                            .parse::<f32>()
+                            .is_ok_and(|quality| quality > 0.0 && quality <= 1.0)
+                })
+        })
+    })
+}
+
+fn sse_frame(event: &str, data: &Value) -> Vec<u8> {
+    let data = serde_json::to_string(data).unwrap_or_else(|_| "null".to_string());
+    format!("event: {event}\ndata: {data}\n\n").into_bytes()
 }
 
 fn read_request(stream: &mut std::net::TcpStream) -> Result<Request, Reply> {
@@ -3768,6 +3900,25 @@ fn parse_query(query: &str) -> HashMap<String, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn event_stream_negotiation_honors_media_type_and_quality() {
+        assert!(accepts_event_stream(Some(
+            "application/json, text/event-stream; charset=utf-8"
+        )));
+        assert!(accepts_event_stream(Some("text/event-stream; q=0.5")));
+        assert!(!accepts_event_stream(Some("text/event-stream; q=0")));
+        assert!(!accepts_event_stream(Some("application/json")));
+        assert!(!accepts_event_stream(None));
+    }
+
+    #[test]
+    fn event_stream_frames_are_single_line_json_events() {
+        assert_eq!(
+            sse_frame("snapshot", &json!({ "text": "first\nsecond" })),
+            b"event: snapshot\ndata: {\"text\":\"first\\nsecond\"}\n\n"
+        );
+    }
 
     #[test]
     fn a_token_is_twice_a_uuid_and_never_a_placeholder() {
