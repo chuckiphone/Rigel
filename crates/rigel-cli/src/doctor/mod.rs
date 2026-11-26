@@ -8,13 +8,14 @@
 //!
 //! Three rules:
 //!
-//! * **Never mutate.** A doctor that migrates, prunes or expires hides the problem it was
-//!   asked to find. It opens an existing project database and leaves it alone.
+//! * **Report-only by default.** The plain command never mutates. Mutations happen only behind
+//!   `--fix`, and every repair is listed before it runs.
 //! * **Every row carries its evidence.** A count with no path is not actionable.
 //! * **The exit code is the summary.** `0` all clear, `1` warnings, `2` failures — so a
 //!   script can gate on it (P4.12).
 
 pub mod bundle;
+pub mod fix;
 
 use std::path::Path;
 use std::process::ExitCode;

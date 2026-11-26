@@ -71,11 +71,10 @@ pub struct AnthropicModel {
 
 impl AnthropicModel {
     pub fn new(api_key: impl Into<String>) -> Self {
-        let client = reqwest::Client::builder()
-            .timeout(Duration::from_secs(180))
-            .connect_timeout(Duration::from_secs(20))
-            .build()
-            .unwrap_or_default();
+        let client = crate::net::client::shared_provider_client("anthropic")
+            .expect("default HTTP client configuration is valid")
+            .client()
+            .clone();
         Self {
             client,
             api_key: api_key.into(),

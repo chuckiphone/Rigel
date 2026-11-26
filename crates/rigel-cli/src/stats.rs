@@ -127,8 +127,8 @@ pub fn collect(transcripts: &[TurnTranscript], sessions: usize) -> Stats {
         .input
         .saturating_add(stats.tokens.output)
         .saturating_add(stats.tokens.reasoning);
-    if completed > 0 {
-        stats.latency_ms.mean_ms = stats.latency_ms.total_ms / completed;
+    if let Some(mean) = stats.latency_ms.total_ms.checked_div(completed) {
+        stats.latency_ms.mean_ms = mean;
     }
     stats.completed_turns = completed as usize;
     stats

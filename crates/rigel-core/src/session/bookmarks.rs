@@ -13,6 +13,7 @@ use crate::migrate::now_ms;
 
 /** A note is one line and this many characters; longer input is clamped, never rejected. */
 pub const NOTE_LIMIT: usize = 500;
+type BookmarkRow = (String, String, String, String, String, Option<String>, i64);
 
 #[derive(Debug, Clone, Serialize)]
 pub struct Bookmark {
@@ -60,14 +61,13 @@ impl SessionService {
     /// D150 / roadmap 103: newest first, with `id` as the deterministic tie-break. A star is a
     /// note to the reader, so the list is read like one and never reordered between reads.
     pub async fn bookmarks(&self, session_id: &str) -> Result<Vec<Bookmark>, SessionError> {
-        let rows: Vec<(String, String, String, String, String, Option<String>, i64)> =
-            sqlx::query_as(
-                "SELECT id, session_id, kind, target_id, label, note, created_at
+        let rows: Vec<BookmarkRow> = sqlx::query_as(
+            "SELECT id, session_id, kind, target_id, label, note, created_at
                  FROM bookmarks WHERE session_id = ? ORDER BY created_at DESC, id DESC",
-            )
-            .bind(session_id)
-            .fetch_all(&self.pool)
-            .await?;
+        )
+        .bind(session_id)
+        .fetch_all(&self.pool)
+        .await?;
 
         Ok(rows
             .into_iter()

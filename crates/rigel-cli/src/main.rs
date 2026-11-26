@@ -63,6 +63,9 @@ enum Command {
         support_bundle: Option<PathBuf>,
         #[arg(long)]
         json: bool,
+        /// Apply the repairs the report lists, instead of only reporting them.
+        #[arg(long)]
+        fix: bool,
     },
 
     /// Local turn metrics: latency, tokens, retries and cache hits. No network call.
@@ -595,7 +598,14 @@ async fn entry() -> ExitCode {
             project,
             support_bundle,
             json: as_json,
-        } => doctor::run(&project, &dir, as_json, support_bundle.as_deref()).await,
+            fix,
+        } => {
+            if fix {
+                doctor::fix::run(&project).await
+            } else {
+                doctor::run(&project, &dir, as_json, support_bundle.as_deref()).await
+            }
+        }
 
         Command::Stats {
             project,
