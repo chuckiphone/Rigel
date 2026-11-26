@@ -31,6 +31,7 @@ pub mod github;
 pub mod http;
 pub mod hub;
 pub mod index;
+pub mod rank;
 pub mod run;
 pub mod scan;
 pub mod scanner;
@@ -54,6 +55,11 @@ pub use hub::{SkillHubSource, SkillsMpSource};
 pub use index::{
     ImportReport, IndexStats, IngestReport, InstallReport, RefreshReport, SkillDetail, SkillIndex,
     SourceRefresh, SweepReport, VariantRow, skill_dir_name,
+};
+pub use rank::{
+    EVIDENCE_WEIGHT, FIT_WEIGHT, FRESHNESS_HALF_LIFE_MS, FRESHNESS_WEIGHT, INSTALL_HISTORY_WEIGHT,
+    RankFactors, RankResult, RankedSkill, SkillRanking, SkillScore, rank, rank_skills, score,
+    score_skill,
 };
 pub use scan::{Capability, EvidenceLine, Severity};
 pub use scanner::{CollectionScan, ScanVerdict, ScannedSkill, SkillScanner, SkillSpector};

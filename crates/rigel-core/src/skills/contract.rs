@@ -6,7 +6,6 @@
 //! invocation does not match the contract is refused rather than run, and a `--dry-run`
 //! prints the exact command the contract implies.
 
-use std::collections::BTreeMap;
 use std::fmt;
 
 use crate::skills::run::Script;
