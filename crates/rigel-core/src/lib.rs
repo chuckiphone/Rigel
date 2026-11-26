@@ -11,6 +11,7 @@ pub mod attribute;
 pub mod audit;
 pub mod backend;
 pub mod backup;
+pub mod blobs;
 pub mod budget;
 pub mod claims;
 pub mod cloud;
@@ -74,6 +75,7 @@ pub use attention::{Attention, AttentionGroup, AttentionItem};
 pub use attribute::{Attributed, ConflictWatcher, Observed, POLL_INTERVAL, Watcher};
 pub use audit::{ApprovalInput, ApprovalRecord, ChainError, CommandProvenance, VerifyReport};
 pub use backend::{BackendConfig, BackendStatus};
+pub use blobs::{BlobError, BlobStore};
 pub use budget::{
     BudgetError, BudgetOutcome, BudgetService, BudgetSnapshot, DEFAULT_DAILY_CAP_MICROS,
     DEFAULT_WRITABLE_AGENTS, DailyStatus, InterruptSink, ReconcileReport, SafetySettings,
