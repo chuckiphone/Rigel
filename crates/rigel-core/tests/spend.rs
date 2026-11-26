@@ -19,11 +19,21 @@ async fn spend_sums_every_session_and_groups_by_day() {
     let second = service.start(Some("second"), None).await.unwrap();
 
     let a = service
-        .register_agent_with(&first.id, "native", Some("implementer"), None)
+        .register_agent_with(
+            &first.id,
+            "native",
+            Some("implementer"),
+            Some("openrouter/fast"),
+        )
         .await
         .unwrap();
     let b = service
-        .register_agent_with(&second.id, "native", Some("reviewer"), None)
+        .register_agent_with(
+            &second.id,
+            "native",
+            Some("reviewer"),
+            Some("openrouter/deep"),
+        )
         .await
         .unwrap();
     let budget = BudgetService::with_null_interrupt(service.pool().clone());
@@ -48,6 +58,17 @@ async fn spend_sums_every_session_and_groups_by_day() {
     assert_eq!(
         report.by_agent.iter().map(|row| row.micros).sum::<i64>(),
         110_000
+    );
+    assert_eq!(
+        report.by_model.iter().map(|row| row.micros).sum::<i64>(),
+        110_000,
+        "the model breakdown reconciles with the stored usage rows"
+    );
+    assert!(
+        report
+            .by_model
+            .iter()
+            .any(|row| row.key == "openrouter/fast" && row.micros == 50_000)
     );
 }
 

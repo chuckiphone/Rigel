@@ -9,6 +9,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { api, type MemoryFact } from "../api";
+import AsyncState from "../async-state";
 
 export function MemoryInspector({ project }: { project: string }) {
   const [facts, setFacts] = useState<MemoryFact[]>([]);
@@ -76,15 +77,12 @@ export function MemoryInspector({ project }: { project: string }) {
           Recall
         </button>
       </div>
-      {error ? (
-        <p className="fine" role="status">
-          {error}
-        </p>
-      ) : null}
+      {error ? <AsyncState state="error" label={error} /> : null}
       {facts.length === 0 ? (
-        <p className="fine">
-          {busy ? "Ranking committed memory…" : "No committed memory facts yet."}
-        </p>
+        <AsyncState
+          state={busy ? "loading" : "empty"}
+          label={busy ? "Ranking committed memory…" : "No committed memory facts yet."}
+        />
       ) : (
         <ul className="memory-fact-list">
           {facts.slice(0, 8).map((fact) => (
