@@ -22,6 +22,8 @@ pub struct SpendReport {
     pub by_session: Vec<SpendRow>,
     pub by_agent: Vec<SpendRow>,
     pub by_day: Vec<SpendRow>,
+    /// Roadmap 136: the same recorded cost grouped by the model the agent was using.
+    pub by_model: Vec<SpendRow>,
 }
 
 /// `YYYY-MM-DD` from Unix days, without pulling in a date-time crate for one label.
@@ -41,17 +43,18 @@ fn civil_date(days: i64) -> String {
 
 /// Group every turn's authoritative cost. `label` is human-facing; `key` is stable.
 pub async fn report(pool: &SqlitePool) -> Result<SpendReport, sqlx::Error> {
-    // agent, session, title, role, usage JSON, started_at
+    // agent, session, title, role, model, usage JSON, started_at
     type TurnRow = (
         String,
         String,
         Option<String>,
         Option<String>,
         Option<String>,
+        Option<String>,
         i64,
     );
     let rows: Vec<TurnRow> = sqlx::query_as(
-        "SELECT t.agent_id, a.session_id, s.title, a.role, t.usage_json, t.started_at
+        "SELECT t.agent_id, a.session_id, s.title, a.role, a.model, t.usage_json, t.started_at
              FROM turns t
              JOIN agents a ON a.id = t.agent_id
              JOIN sessions s ON s.id = a.session_id
@@ -63,8 +66,9 @@ pub async fn report(pool: &SqlitePool) -> Result<SpendReport, sqlx::Error> {
     let mut by_session: BTreeMap<String, SpendRow> = BTreeMap::new();
     let mut by_agent: BTreeMap<String, SpendRow> = BTreeMap::new();
     let mut by_day: BTreeMap<String, SpendRow> = BTreeMap::new();
+    let mut by_model: BTreeMap<String, SpendRow> = BTreeMap::new();
     let mut total = 0i64;
-    for (agent_id, session_id, title, role, usage, started_at) in rows {
+    for (agent_id, session_id, title, role, model, usage, started_at) in rows {
         let Some(usage) = usage.and_then(|json| serde_json::from_str::<Usage>(&json).ok()) else {
             continue;
         };
@@ -101,6 +105,15 @@ pub async fn report(pool: &SqlitePool) -> Result<SpendReport, sqlx::Error> {
         });
         entry.micros += cost;
         entry.turns += 1;
+        let model_key = model.clone().unwrap_or_else(|| "unknown model".to_string());
+        let model_row = by_model.entry(model_key.clone()).or_insert(SpendRow {
+            key: model_key,
+            label: model.unwrap_or_else(|| "unknown model".to_string()),
+            micros: 0,
+            turns: 0,
+        });
+        model_row.micros += cost;
+        model_row.turns += 1;
     }
 
     fn sorted(map: BTreeMap<String, SpendRow>) -> Vec<SpendRow> {
@@ -120,6 +133,7 @@ pub async fn report(pool: &SqlitePool) -> Result<SpendReport, sqlx::Error> {
         by_session: sorted(by_session),
         by_agent: sorted(by_agent),
         by_day: sorted(by_day),
+        by_model: sorted(by_model),
     })
 }
 

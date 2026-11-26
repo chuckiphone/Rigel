@@ -46,6 +46,7 @@ import {
 import { UI_SCALES, applyDisplay } from "./display";
 import { AboutSettingsPage } from "./about";
 import { CrashReportSurface } from "./crash-report";
+import CostDashboard, { PREVIEW_SPEND } from "./cost-dashboard";
 import {
   buildIndex,
   resolveLink,
@@ -739,6 +740,9 @@ export default function SettingsView({
   const [rules, setRules] = useState<RuleSource[]>([]);
   const [exporting, setExporting] = useState(false);
   const [spend, setSpend] = useState<SpendReport | null>(null);
+  // Preview-only report so the dashboard's reconciliation and exports can be exercised offline.
+  const costPreview = !isTauri() && new URLSearchParams(window.location.search).get("cost") === "1";
+  const shownSpend = costPreview ? PREVIEW_SPEND : spend;
   const [safety, setSafety] = useState<SafetyView | null>(null);
   const [writableInput, setWritableInput] = useState("");
   const [dailyInput, setDailyInput] = useState("");
@@ -2353,33 +2357,15 @@ export default function SettingsView({
     <section className="settings-section">
       <div className="settings-head">
         <h3>Recorded spend</h3>
-        <span className="pill cancelled">{spend ? `${spend.turns} turns` : "no data"}</span>
+        <span className="pill cancelled">{shownSpend ? `${shownSpend.turns} turns` : "no data"}</span>
       </div>
       <p className="fine">
         Every recorded turn, grouped across sessions. The session database is the source of truth;
         nothing here is estimated a second time. A turn with no priced usage is counted but its
         dollars stay at zero rather than being guessed.
       </p>
-      {spend ? (
-        <>
-          <p className="settings-total">{dollars(spend.total_micros)} total</p>
-          <div className="harness-list">
-            {spend.by_day.slice(0, 7).map((row) => (
-              <div className="harness-row spend-row" key={row.key}>
-                <span>{row.label}</span>
-                <span className="mono">{dollars(row.micros)}</span>
-                <span className="fine">{row.turns} turns</span>
-              </div>
-            ))}
-            {spend.by_session.slice(0, 5).map((row) => (
-              <div className="harness-row spend-row" key={row.key}>
-                <span>{row.label}</span>
-                <span className="mono">{dollars(row.micros)}</span>
-                <span className="fine">{row.turns} turns</span>
-              </div>
-            ))}
-          </div>
-        </>
+      {shownSpend ? (
+        <CostDashboard report={shownSpend} capMicros={safety?.daily_cap_micros ?? null} />
       ) : (
         <p className="fine">Open a project to see its recorded spend.</p>
       )}

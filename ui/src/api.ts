@@ -808,6 +808,8 @@ export interface SpendReport {
   by_session: SpendRow[];
   by_agent: SpendRow[];
   by_day: SpendRow[];
+  /** Roadmap 136: recorded cost grouped by the model the agent used. */
+  by_model: SpendRow[];
 }
 
 /** Live state of the local OmniRoute router. `origin` is where it listens. */

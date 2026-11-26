@@ -40,6 +40,7 @@ import {
   type RecoveryOffer,
   type SubagentGraph,
 } from "./api";
+import { AsyncStatePreview } from "./async-state";
 import EmptyState from "./empty-state";
 import SessionFilters, {
   sessionFilterFromHash,
@@ -498,6 +499,8 @@ export default function SessionView({
     !tauri && new URLSearchParams(window.location.search).get("virtual") === "1";
   const requestPreview =
     !tauri && new URLSearchParams(window.location.search).get("request") === "1";
+  const asyncPreview =
+    !tauri && new URLSearchParams(window.location.search).get("async") === "1";
   const contextMenu = useMenu();
   const [session, setSession] = useState<Session | null>(() => (tauri ? null : previewSession));
   const [recovery, setRecovery] = useState<RecoveryOffer | null>(() =>
@@ -4004,6 +4007,7 @@ export default function SessionView({
                 </button>
               ))}
             </div>
+            {asyncPreview ? <AsyncStatePreview /> : null}
             {requestPreview ? <RequestInspectorPreview enabled /> : null}
             {virtualPreview ? <VirtualTranscriptPreview enabled /> : null}
             <div className="transcript-shell">
