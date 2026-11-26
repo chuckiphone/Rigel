@@ -153,6 +153,7 @@ pub async fn list_catalog(server: &ServerSpec, wait: Duration) -> Result<Catalog
         let mut lines = BufReader::new(stdout).lines();
         let mut initialized = false;
         let mut server_version = "unknown".to_string();
+        let mut protocol_version = "unknown".to_string();
         while let Some(line) = next_line(&mut lines, &name).await? {
             let Ok(message) = serde_json::from_str::<Value>(&line) else {
                 continue;
@@ -166,6 +167,12 @@ pub async fn list_catalog(server: &ServerSpec, wait: Duration) -> Result<Catalog
                     .get("result")
                     .and_then(|result| result.get("serverInfo"))
                     .and_then(|info| info.get("version"))
+                    .and_then(Value::as_str)
+                    .unwrap_or("unknown")
+                    .to_string();
+                protocol_version = message
+                    .get("result")
+                    .and_then(|result| result.get("protocolVersion"))
                     .and_then(Value::as_str)
                     .unwrap_or("unknown")
                     .to_string();
@@ -208,7 +215,7 @@ pub async fn list_catalog(server: &ServerSpec, wait: Duration) -> Result<Catalog
                 .filter(|tool| tool.get("name").and_then(Value::as_str).is_some())
                 .take(64)
                 .collect();
-            return Catalog::new(server_version, tools)
+            return Catalog::with_protocol(protocol_version, server_version, tools)
                 .map_err(|error| format!("{name} returned a malformed tool list: {error}"));
         }
         Err(format!("{name} closed before tools/list"))
