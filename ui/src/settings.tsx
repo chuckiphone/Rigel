@@ -46,6 +46,14 @@ import {
 import { UI_SCALES, applyDisplay } from "./display";
 import { AboutSettingsPage } from "./about";
 import { CrashReportSurface } from "./crash-report";
+import {
+  buildIndex,
+  resolveLink,
+  searchSettings,
+  settingsHash,
+  settingsLinkFromHash,
+  type SettingsPageMeta,
+} from "./settings/search";
 import AuditLogPage from "./audit-log";
 import ConcordPage from "./concord";
 import { ModelControls } from "./modelpicker";
@@ -331,8 +339,8 @@ export type SettingsPage = PageId;
 
 /** A page can be opened directly; the Audit log may carry its filter after a `?`. */
 function pageFromHash(): PageId | null {
-  const target = /^#settings\/([a-z]+)/.exec(window.location.hash)?.[1];
-  return target && PAGES.some((row) => row.id === target) ? (target as PageId) : null;
+  const link = settingsLinkFromHash(window.location.hash);
+  return link.page && PAGES.some((row) => row.id === link.page) ? (link.page as PageId) : null;
 }
 
 /** One line icon per page. They are decorative; the label and its fact carry the meaning. */
@@ -396,6 +404,16 @@ const SETTINGS_KEYWORDS: Record<PageId, string> = {
   advanced: "all preferences settings auto refine session sync account status runtime fields",
   diagnostics: "bundle redact logs crash support report",
 };
+
+/** Pages and named rows share one index, so a search result can focus the exact setting. */
+const SETTINGS_META: SettingsPageMeta[] = PAGES.map((page) => ({
+  id: page.id,
+  label: page.label,
+  blurb: page.blurb,
+  group: page.group,
+  keywords: SETTINGS_KEYWORDS[page.id],
+}));
+const SETTINGS_INDEX = buildIndex(SETTINGS_META);
 
 /**
  * The auth line the handoff requires: a harness that is not on an API key says so, and names the
@@ -648,6 +666,8 @@ export default function SettingsView({
   const [page, setPage] = useState<PageId>(() =>
     initialPage === "agent" ? (pageFromHash() ?? "agent") : initialPage,
   );
+  const [focusKey, setFocusKey] = useState<string | null>(null);
+  const [notFoundKey, setNotFoundKey] = useState<string | null>(null);
   const [notesOpen, setNotesOpen] = useState(notesOpenFromStore);
   const toggleNotes = useCallback(() => {
     setNotesOpen((open) => {
@@ -664,15 +684,22 @@ export default function SettingsView({
   // window lands on that page, and the address follows the sidebar so it can be copied.
   useEffect(() => {
     if (initialPage !== "agent") return;
-    const target = pageFromHash();
-    if (target) setPage(target);
+    const link = resolveLink(settingsLinkFromHash(window.location.hash), SETTINGS_META, SETTINGS_INDEX);
+    if (link.page) setPage(link.page as PageId);
+    setFocusKey(link.focus);
+    setNotFoundKey(link.unknownKey);
   }, [initialPage]);
   useEffect(() => {
-    // The Audit log owns its query string; its filter component writes the hash. Every other
-    // page has no query, so replacing the hash here is still the whole address.
+    // The Audit log owns its query string; its filter component writes the hash. Other pages
+    // carry the focused setting key, so the address stays copyable with the exact row.
     if (page === "audit") return;
-    window.history.replaceState(null, "", `#settings/${page}`);
-  }, [page]);
+    window.history.replaceState(null, "", settingsHash(page, focusKey));
+  }, [page, focusKey]);
+  useEffect(() => {
+    if (!focusKey) return;
+    const row = document.querySelector<HTMLElement>(`[data-setting-key="${focusKey}"]`);
+    (row ?? document.getElementById("main"))?.focus();
+  }, [page, focusKey]);
   const contextMenu = useMenu();
   const copyText = async (text: string, label: string) => {
     if (!text) return;
@@ -1721,17 +1748,25 @@ export default function SettingsView({
   const theme: Theme =
     settings?.theme === "light" || settings?.theme === "system" ? settings.theme : "dark";
   const settingsQuery = filter.trim().toLowerCase();
-  const shownPages = settingsQuery
-    ? PAGES.filter((item) =>
-        (item.label + " " + item.blurb + " " + SETTINGS_KEYWORDS[item.id])
-          .toLowerCase()
-          .includes(settingsQuery),
-      )
-    : PAGES;
+  const matched = searchSettings(SETTINGS_INDEX, settingsQuery);
+  const shownPages = matched
+    .filter((entry) => entry.key.startsWith("page:"))
+    .map((entry) => PAGES.find((item) => item.id === entry.page))
+    .filter((item): item is (typeof PAGES)[number] => Boolean(item));
+  // Named rows are search results, not a second nav list: they only appear for an active query.
+  const shownRows = settingsQuery
+    ? matched.filter((entry) => !entry.key.startsWith("page:"))
+    : [];
+  const openSetting = (entry: { key: string; page: string }) => {
+    setPage(entry.page as PageId);
+    setFocusKey(entry.key);
+    setNotFoundKey(null);
+    window.history.replaceState(null, "", settingsHash(entry.page, entry.key));
+  };
 
   const agentPage = (
     <>
-      <section className="settings-section">
+      <section className="settings-section" data-setting-key="model" tabIndex={-1}>
         <h3>Model and effort</h3>
         <ModelControls
           model={settings?.model ?? "gpt-5.6-sol-medium"}
@@ -2258,6 +2293,7 @@ export default function SettingsView({
               inputMode="decimal"
               placeholder="off"
               aria-label="Daily cap in dollars"
+              data-setting-key="daily-cap"
             />
           </label>
           <div className="cap-form">
@@ -2728,7 +2764,7 @@ export default function SettingsView({
 
   const diagnosticsPage = (
     <>
-      <section className="settings-section">
+      <section className="settings-section" data-setting-key="diagnostics" tabIndex={-1}>
         <div className="settings-head">
           <h3>Bug-report bundle</h3>
         <span className="pill cancelled">never sent</span>
@@ -2775,7 +2811,7 @@ export default function SettingsView({
           <h3>Theme</h3>
           <span className="pill cancelled">{theme}</span>
         </div>
-        <div className="theme-grid" role="group" aria-label="Theme">
+        <div className="theme-grid" role="group" aria-label="Theme" data-setting-key="theme" tabIndex={-1}>
           {(["dark", "light", "system"] as const).map((option) => (
             <button
               key={option}
@@ -4234,7 +4270,11 @@ export default function SettingsView({
                       aria-selected={page === item.id}
                       className={`row${page === item.id ? " on" : ""}`}
                       title={`${item.label} — ${item.blurb}`}
-                      onClick={() => setPage(item.id)}
+                      onClick={() => {
+                        setPage(item.id);
+                        setFocusKey(null);
+                        setNotFoundKey(null);
+                      }}
                       onContextMenu={(event) =>
                         contextMenu.open(event, {
                           eyebrow: "Settings",
@@ -4298,6 +4338,27 @@ export default function SettingsView({
               </div>
             );
           })}
+          {shownRows.length > 0 ? (
+            <div className="settings-group" role="group" aria-label="Matching settings">
+              <p className="settings-group-label">settings</p>
+              {shownRows.map((entry) => (
+                <button
+                  key={entry.key}
+                  type="button"
+                  role="option"
+                  aria-selected={focusKey === entry.key}
+                  className="row settings-result"
+                  title={`${entry.label} — ${entry.page}`}
+                  onClick={() => openSetting(entry)}
+                >
+                  <span className="row-text">
+                    <span className="row-name">{entry.label}</span>
+                    <span className="row-desc">{entry.page}</span>
+                  </span>
+                </button>
+              ))}
+            </div>
+          ) : null}
         </div>
         <div className="roster-foot">
           <span className={`status-dot ${keys?.native_ready ? "idle" : "failed"}`} />
@@ -4330,6 +4391,12 @@ export default function SettingsView({
             </button>
           </div>
         </header>
+
+        {notFoundKey ? (
+          <p className="settings-not-found" role="status">
+            No setting named “{notFoundKey}”. Pick one from the list or clear the address.
+          </p>
+        ) : null}
 
         {page === "providers" || page === "harnesses" ? (
           <p className="notice" role="status">
