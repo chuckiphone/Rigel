@@ -46,6 +46,8 @@ export interface Bookmark {
   kind: "item" | "hunk";
   target_id: string;
   label: string;
+  /** Roadmap 103: an optional one-line note the session list and Markdown export carry. */
+  note?: string | null;
   created_at: number;
 }
 
@@ -2710,6 +2712,17 @@ export const api = {
   ): Promise<Bookmark | null> {
     if (!isTauri()) throw new Error("Bookmark a line in the desktop app.");
     return call<Bookmark | null>("bookmark_toggle", { project, session, kind, targetId, label });
+  },
+
+  /** Roadmap 103: write one bookmark's note, or clear it with `null`. */
+  async setBookmarkNote(
+    project: string,
+    session: string,
+    id: string,
+    note: string | null,
+  ): Promise<boolean> {
+    if (!isTauri()) return false;
+    return call<boolean>("bookmark_note", { project, session, id, note });
   },
 
   /** D147: skills, sessions, turns and patches in one read. Capped per section in the core. */

@@ -485,11 +485,13 @@ pub(crate) fn session_export(project: String, id: String) -> Result<SessionExpor
             .list(&id)
             .await
             .unwrap_or_default();
+        let bookmarks = service.bookmarks(&id).await.unwrap_or_default();
         let (markdown, json) = diagnostics::session_bundle(
             &session,
             &agents,
             &turns,
             &patches,
+            &bookmarks,
             &diagnostics::secrets(),
         );
         let (md_path, json_path) =
