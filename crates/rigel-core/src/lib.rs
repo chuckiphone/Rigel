@@ -20,6 +20,7 @@ pub mod comments;
 pub mod credentials;
 pub mod diagnostics;
 pub mod domain;
+pub mod export;
 pub mod flakes;
 pub mod forge;
 pub mod gravity;
@@ -93,6 +94,9 @@ pub use cloud::{
 };
 pub use comments::{CommentError, HunkComment, HunkComments};
 pub use domain::{AgentEvent, CostSource, EventSink, ItemKind, NullSink, Usage};
+pub use export::markdown::{
+    ExportFormat, ExportManifest, ExportResult, OmittedItem, export_json, export_markdown,
+};
 pub use flakes::{FlakeError, FlakeReport, FlakeRun, TestOutcome};
 pub use memory::rank::{Fact, Factor, RankedFact, Score};
 pub use memory::{
