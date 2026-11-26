@@ -8768,6 +8768,34 @@ html[data-surface="tray"] #root {
   max-width: 640px;
 }
 
+/* Crash reporter (roadmap 116): consent, a readable redacted preview and a copy-only payload. */
+.crash-report {
+  padding: 10px 12px;
+  border: 1px solid var(--hairline);
+  border-radius: 8px;
+}
+
+.crash-report h3 {
+  margin: 0 0 6px;
+  font-size: 13px;
+}
+
+.crash-preview {
+  max-height: 180px;
+  overflow: auto;
+  margin: 8px 0;
+  padding: 8px 10px;
+  border: 1px solid var(--hairline);
+  border-radius: 6px;
+  background: var(--well);
+  color: var(--text);
+  font-family: var(--mono);
+  font-size: 11px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
 /* Approval card v2 (135): command first, one primary action, snapshot state last. */
 .approval-command {
   margin: 10px 0 4px;

@@ -290,6 +290,20 @@ pub(crate) fn search_all(
     })
 }
 
+/// Roadmap 116: the newest crash records for the reporter. The core already redacted each line
+/// before appending it to `crash.log`; this reads that file and nothing else, and never sends it.
+#[tauri::command]
+pub(crate) fn crash_report() -> Result<CrashReport, String> {
+    let dir = index_dir();
+    Ok(CrashReport {
+        path: diagnostics::crash_log_path(&dir)
+            .file_name()
+            .map(|name| name.to_string_lossy().into_owned())
+            .unwrap_or_else(|| "crash.log".to_string()),
+        text: diagnostics::recent_crash(&dir),
+    })
+}
+
 /// D82: assemble a diagnostics bundle only when the user clicks the action. It gathers the
 /// doctor-shaped facts this window can check, the newest turn and the local logs; every string
 /// is redacted with the provider keys before it is written, and nothing is sent anywhere.

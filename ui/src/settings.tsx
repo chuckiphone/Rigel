@@ -45,6 +45,7 @@ import {
 } from "./api";
 import { UI_SCALES, applyDisplay } from "./display";
 import { AboutSettingsPage } from "./about";
+import { CrashReportSurface } from "./crash-report";
 import AuditLogPage from "./audit-log";
 import ConcordPage from "./concord";
 import { ModelControls } from "./modelpicker";
@@ -2726,9 +2727,10 @@ export default function SettingsView({
   );
 
   const diagnosticsPage = (
-    <section className="settings-section">
-      <div className="settings-head">
-        <h3>Bug-report bundle</h3>
+    <>
+      <section className="settings-section">
+        <div className="settings-head">
+          <h3>Bug-report bundle</h3>
         <span className="pill cancelled">never sent</span>
       </div>
       <p className="fine">
@@ -2761,7 +2763,9 @@ export default function SettingsView({
       ) : (
         <p className="fine">Open a project to enable the export.</p>
       )}
-    </section>
+      </section>
+      <CrashReportSurface />
+    </>
   );
 
   const appearancePage = (

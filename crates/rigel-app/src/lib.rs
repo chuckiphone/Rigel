@@ -592,6 +592,14 @@ pub struct DiagnosticsBundle {
     pub body: String,
 }
 
+/// Roadmap 116: the newest local crash records, already redacted before they were written by the
+/// core's crash hook. The renderer builds one preview from this and the build facts in About.
+#[derive(Debug, Clone, Serialize)]
+pub struct CrashReport {
+    pub path: String,
+    pub text: String,
+}
+
 #[derive(Debug, Clone, Serialize)]
 pub struct SessionExport {
     pub markdown_path: String,
@@ -1935,6 +1943,7 @@ pub fn run() {
             commands::sessions::session_recovery,
             commands::sessions::turn_discard,
             commands::workspace::diagnostics_export,
+            commands::workspace::crash_report,
             commands::workspace::session_export,
             commands::workspace::tests_run,
             commands::workspace::rules_sources,

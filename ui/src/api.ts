@@ -516,6 +516,22 @@ export interface DiagnosticsBundle {
   body: string;
 }
 
+/** Roadmap 116: the redacted local crash tail the reporter previews. */
+export interface CrashReport {
+  path: string;
+  text: string;
+}
+
+/** Browser preview: a shaped fake key proves the reporter redacts before it shows anything. */
+export const PREVIEW_CRASH: CrashReport = {
+  path: "crash.log",
+  text: [
+    "2026-11-25 09:14:02 panic in coordinator: turn 7 died while calling the model",
+    "request header Authorization: Bearer sk-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+    "state: paused turn 7 kept its messages and remaining budget",
+  ].join("\n"),
+};
+
 /** D97: the exact title and body a pull request would use. */
 export interface PullRequestPlan {
   title: string;
@@ -3406,6 +3422,12 @@ export const api = {
   async concordReply(messageId: string, content: string): Promise<ConcordReply> {
     if (!isTauri()) throw new Error("Concord replies go through the desktop app.");
     return call<ConcordReply>("concord_reply", { message_id: messageId, content });
+  },
+
+  /** Roadmap 116: read the already-redacted crash tail from app data; no bundle is written. */
+  async crashReport(): Promise<CrashReport> {
+    if (!isTauri()) return PREVIEW_CRASH;
+    return call<CrashReport>("crash_report");
   },
 
   /** Roadmap 124: build stamp, version, SBOM licences and the update/privacy summary. */
