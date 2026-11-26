@@ -51,6 +51,7 @@ import { MemoryInspector } from "./inspector/memory";
 import { StepCost } from "./inspector/step-cost";
 import { Recovery } from "./recovery";
 import { SubagentGraphView } from "./subagent-graph";
+import { VirtualTranscriptPreview } from "./transcript/virtual";
 import { ApprovalCard } from "./session/approval-card";
 import { DegradedBanner } from "./degraded-banner";
 import { ModelControls } from "./modelpicker";
@@ -490,6 +491,9 @@ export default function SessionView({
   onOpenHunk,
 }: Props) {
   const tauri = isTauri();
+  // Preview-only 10,000-row fixture for the virtual transcript; the native window never shows it.
+  const virtualPreview =
+    !tauri && new URLSearchParams(window.location.search).get("virtual") === "1";
   const contextMenu = useMenu();
   const [session, setSession] = useState<Session | null>(() => (tauri ? null : previewSession));
   const [recovery, setRecovery] = useState<RecoveryOffer | null>(() =>
@@ -3996,6 +4000,7 @@ export default function SessionView({
                 </button>
               ))}
             </div>
+            {virtualPreview ? <VirtualTranscriptPreview enabled /> : null}
             <div className="transcript-shell">
             <div className="transcripts" ref={transcriptRef} onScroll={trackOutline}>
             <div className={shown.length === 2 ? "transcript-panes split" : "transcript-panes"}>
