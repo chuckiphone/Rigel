@@ -511,13 +511,14 @@ pub(super) fn document(api: &Api) -> Value {
             "/v1/events": {
                 "get": {
                     "operationId": "waitForEvents",
-                    "summary": "Long-poll until the window opens or closes, the project changes, a Swarm job arrives, or Concord mail arrives",
+                    "summary": "Long-poll or stream snapshots when the window, project, Swarm or Concord state changes",
                     "parameters": [
+                        { "name": "Accept", "in": "header", "schema": { "type": "string" }, "description": "Set to text/event-stream to receive snapshot events instead of JSON long-poll responses." },
                         { "name": "wait", "in": "query", "schema": { "type": "integer", "default": 25, "maximum": 60 }, "description": "Seconds to hold the request open." },
                         { "name": "since", "in": "query", "schema": { "type": "string" }, "description": "The previous response's event.fingerprint. Omit for an immediate snapshot." }
                     ],
                     "responses": {
-                        "200": { "description": "changed, plus event: the same body /v1/app returns" }
+                        "200": { "description": "Long-poll returns changed and event. With Accept: text/event-stream, sends snapshot events and keep-alive comments." }
                     }
                 }
             },
