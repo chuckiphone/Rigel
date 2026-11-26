@@ -157,6 +157,11 @@ pub const PROJECT_MIGRATIONS: &[Migration] = &[
         name: "0026_bookmark_notes",
         sql: include_str!("../../../migrations/project/0026_bookmark_notes.sql"),
     },
+    Migration {
+        version: 27,
+        name: "0027_hot_query_indexes",
+        sql: include_str!("../../../migrations/project/0027_hot_query_indexes.sql"),
+    },
 ];
 
 /// `%APPDATA%\Rigel\index.db`
