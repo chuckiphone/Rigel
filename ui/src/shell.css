@@ -2755,6 +2755,95 @@ input[type="checkbox"] {
   color: var(--danger);
 }
 
+/* MCP result rows (roadmap 145): typed, capped, with the exact body one click away. */
+.mcp-result {
+  margin: 4px 0;
+  padding: 8px 10px;
+  border: 1px solid var(--hairline);
+  border-radius: 6px;
+  background: var(--surface);
+}
+
+.mcp-result-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+
+.mcp-row-count {
+  color: var(--faint);
+  font-size: 11px;
+}
+
+.mcp-result-head .chip {
+  margin-left: auto;
+}
+
+.mcp-rows {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.mcp-row {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 3px 0;
+  border-bottom: 1px solid var(--hairline);
+  font-size: 12px;
+}
+
+.mcp-row:last-child {
+  border-bottom: 0;
+}
+
+.mcp-kind {
+  flex: 0 0 auto;
+  color: var(--faint);
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.mcp-text {
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+
+.mcp-label {
+  color: var(--accent-text);
+}
+
+.mcp-image {
+  display: block;
+  max-width: 100%;
+  max-height: 180px;
+}
+
+.mcp-truncated {
+  margin: 6px 0 0;
+  color: var(--accent-text);
+  font-size: 11px;
+}
+
+.mcp-raw {
+  max-height: 220px;
+  overflow: auto;
+  margin: 8px 0 0;
+  padding: 8px 10px;
+  border: 1px solid var(--hairline);
+  border-radius: 6px;
+  background: var(--well);
+  color: var(--text);
+  font-family: var(--mono);
+  font-size: 11px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
 .file-change summary {
   display: flex;
   gap: 8px;
