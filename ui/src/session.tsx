@@ -57,6 +57,7 @@ import { SubagentGraphView } from "./subagent-graph";
 import { VirtualTranscriptPreview } from "./transcript/virtual";
 import { ApprovalCard } from "./session/approval-card";
 import { DegradedBanner } from "./degraded-banner";
+import { ProviderErrorPanel, providerStatus } from "./provider-error";
 import { ModelControls } from "./modelpicker";
 import { AgentRow, resolveAgentRoute } from "./agent-row";
 import BrowserPanel, { latestBrowserCall } from "./browser";
@@ -5835,7 +5836,11 @@ function ItemRow({ item, raw }: { item: Item; raw: boolean }) {
   if (item.kind === "error") {
     return (
       <>
-        <p className="error-line">error · {bodyText(item, "message")}</p>
+        {providerStatus(item.body) ? (
+          <ProviderErrorPanel body={item.body} turnId={item.turn_id} />
+        ) : (
+          <p className="error-line">error · {bodyText(item, "message")}</p>
+        )}
         {rawBlock}
       </>
     );
