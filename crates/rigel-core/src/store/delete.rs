@@ -28,6 +28,8 @@ pub enum DeleteError {
     },
     #[error("could not encode deletion tombstones: {0}")]
     Json(#[from] serde_json::Error),
+    #[error("attachment purge failed: {0}")]
+    Attachment(#[from] crate::attachments::AttachmentError),
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -139,6 +141,10 @@ pub async fn delete_session(
             source,
         })?;
     }
+
+    // Content-addressed blobs can be shared by other sessions. Drop this session's references
+    // and purge only blobs that no remaining session names.
+    crate::attachments::store::purge_session_blobs(project_root, session_id)?;
     Ok(())
 }
 

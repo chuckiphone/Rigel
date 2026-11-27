@@ -1,10 +1,13 @@
 //! Attachment store with per-project quota, type validation and hash dedup (roadmap 101).
 
-use std::collections::HashSet;
+use std::collections::{BTreeSet, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 
 use crate::patches::sha256_hex;
+
+/// A store rooted at one project's blob directory uses this single stable project key.
+const PROJECT_KEY: &str = "default";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Attachment {
@@ -28,6 +31,8 @@ pub enum AttachmentError {
     NotFound(String),
     #[error("attachment {0} is corrupted")]
     Corrupted(String),
+    #[error("session id {0} is not a safe reference key")]
+    UnsafeSessionId(String),
 }
 
 #[derive(Debug, Clone)]
@@ -36,6 +41,44 @@ pub struct AttachmentStore {
     quota_bytes: u64,
     quota_count: usize,
     allowed_types: Vec<String>,
+}
+
+/// Blob storage for one project, outside the checkpointed tree.
+pub fn default_root(project_root: &Path) -> PathBuf {
+    project_root.join(".rigel").join("attachment-blobs")
+}
+
+fn safe_session_id(session_id: &str) -> bool {
+    !session_id.is_empty()
+        && session_id != "."
+        && session_id != ".."
+        && !session_id.contains(['/', '\\', ':', '\0'])
+}
+
+/// Store a blob and record that one session references it.
+pub fn track_blob(
+    project_root: &Path,
+    session_id: &str,
+    data: &[u8],
+    mime_type: &str,
+) -> Result<Attachment, AttachmentError> {
+    if !safe_session_id(session_id) {
+        return Err(AttachmentError::UnsafeSessionId(session_id.to_string()));
+    }
+    let store = AttachmentStore::new(default_root(project_root), u64::MAX, usize::MAX, Vec::new());
+    store.put_for_session(PROJECT_KEY, session_id, data, mime_type)
+}
+
+/// Drop a deleted session's references, then purge blobs no remaining session references.
+pub fn purge_session_blobs(
+    project_root: &Path,
+    session_id: &str,
+) -> Result<Vec<String>, AttachmentError> {
+    if !safe_session_id(session_id) {
+        return Err(AttachmentError::UnsafeSessionId(session_id.to_string()));
+    }
+    let store = AttachmentStore::new(default_root(project_root), u64::MAX, usize::MAX, Vec::new());
+    store.drop_session(PROJECT_KEY, session_id)
 }
 
 impl AttachmentStore {
@@ -101,8 +144,10 @@ impl AttachmentStore {
         let mut count = 0usize;
         if let Ok(entries) = fs::read_dir(&dir) {
             for entry in entries.flatten() {
+                let name = entry.file_name().to_string_lossy().to_string();
                 if entry.file_type().map(|t| t.is_file()).unwrap_or(false)
-                    && !entry.file_name().to_string_lossy().ends_with(".meta")
+                    && !name.ends_with(".meta")
+                    && !name.ends_with(".refs")
                 {
                     bytes += entry.metadata().map(|m| m.len()).unwrap_or(0);
                     count += 1;
@@ -181,6 +226,108 @@ impl AttachmentStore {
         self.blob_path(project, hash).exists()
     }
 
+    fn refs_path(&self, project: &str, hash: &str) -> PathBuf {
+        self.project_dir(project).join(format!("{hash}.refs"))
+    }
+
+    fn read_refs(&self, project: &str, hash: &str) -> BTreeSet<String> {
+        match fs::read_to_string(self.refs_path(project, hash)) {
+            Ok(text) => text
+                .lines()
+                .filter(|line| !line.trim().is_empty())
+                .map(str::to_owned)
+                .collect(),
+            Err(_) => BTreeSet::new(),
+        }
+    }
+
+    /// Record that a session references an existing blob. Shared blobs carry every session id.
+    pub fn reference(
+        &self,
+        project: &str,
+        hash: &str,
+        session_id: &str,
+    ) -> Result<(), AttachmentError> {
+        if !safe_session_id(session_id) {
+            return Err(AttachmentError::UnsafeSessionId(session_id.to_string()));
+        }
+        if !self.blob_path(project, hash).exists() {
+            return Err(AttachmentError::NotFound(hash.to_string()));
+        }
+        let mut refs = self.read_refs(project, hash);
+        refs.insert(session_id.to_string());
+        let body = refs.into_iter().collect::<Vec<_>>().join("\n");
+        fs::write(self.refs_path(project, hash), format!("{body}\n"))?;
+        Ok(())
+    }
+
+    /// Store and reference in one step, so no blob can exist unattributed by construction.
+    pub fn put_for_session(
+        &self,
+        project: &str,
+        session_id: &str,
+        data: &[u8],
+        mime_type: &str,
+    ) -> Result<Attachment, AttachmentError> {
+        let attachment = self.put(project, data, mime_type)?;
+        self.reference(project, &attachment.hash, session_id)?;
+        Ok(attachment)
+    }
+
+    /// Sessions currently referencing one blob.
+    pub fn sessions_for(&self, project: &str, hash: &str) -> Vec<String> {
+        self.read_refs(project, hash).into_iter().collect()
+    }
+
+    /// Every blob referenced by one session, for a caller that owns its own purge.
+    pub fn referenced_by(&self, project: &str, session_id: &str) -> HashSet<String> {
+        let dir = self.project_dir(project);
+        let mut out = HashSet::new();
+        let Ok(entries) = fs::read_dir(dir) else {
+            return out;
+        };
+        for entry in entries.flatten() {
+            let name = entry.file_name().to_string_lossy().to_string();
+            if !name.ends_with(".refs") {
+                continue;
+            }
+            let hash = name.strip_suffix(".refs").unwrap_or(&name);
+            if self.read_refs(project, hash).contains(session_id) {
+                out.insert(hash.to_string());
+            }
+        }
+        out
+    }
+
+    /// Remove a session's references and purge every blob no remaining session references.
+    pub fn drop_session(
+        &self,
+        project: &str,
+        session_id: &str,
+    ) -> Result<Vec<String>, AttachmentError> {
+        if !safe_session_id(session_id) {
+            return Err(AttachmentError::UnsafeSessionId(session_id.to_string()));
+        }
+        for hash in self.referenced_by(project, session_id) {
+            let path = self.refs_path(project, &hash);
+            let mut refs = self.read_refs(project, &hash);
+            refs.remove(session_id);
+            if refs.is_empty() {
+                let _ = fs::remove_file(&path);
+            } else {
+                let body = refs.into_iter().collect::<Vec<_>>().join("\n");
+                fs::write(&path, format!("{body}\n"))?;
+            }
+        }
+        // A blob without any reference is unreachable; keep only blobs a session still names.
+        let live: HashSet<String> = self
+            .list(project)?
+            .into_iter()
+            .filter(|hash| !self.sessions_for(project, hash).is_empty())
+            .collect();
+        self.purge(project, &live)
+    }
+
     /// Purge attachments not in `referenced`. Never removes a referenced blob.
     pub fn purge(
         &self,
@@ -198,16 +345,17 @@ impl AttachmentStore {
                 continue;
             }
             let name = entry.file_name().to_string_lossy().to_string();
-            if name.ends_with(".meta") {
+            if name.ends_with(".meta") || name.ends_with(".refs") {
                 continue;
             }
             if referenced.contains(&name) {
                 continue;
             }
             fs::remove_file(entry.path())?;
-            // remove meta too
+            // Remove sidecars too: a purged blob must not leave stale references behind.
             let meta = dir.join(format!("{name}.meta"));
             let _ = fs::remove_file(meta);
+            let _ = fs::remove_file(self.refs_path(project, &name));
             removed.push(name);
         }
         removed.sort();
@@ -225,7 +373,7 @@ impl AttachmentStore {
             let entry = entry?;
             if entry.file_type()?.is_file() {
                 let name = entry.file_name().to_string_lossy().to_string();
-                if !name.ends_with(".meta") {
+                if !name.ends_with(".meta") && !name.ends_with(".refs") {
                     out.push(name);
                 }
             }
@@ -315,6 +463,47 @@ mod tests {
         assert_eq!(removed, vec![b.hash.clone()]);
         assert!(store.contains("p", &a.hash));
         assert!(!store.contains("p", &b.hash));
+    }
+
+    #[test]
+    fn a_session_purge_keeps_shared_blobs_and_removes_unreferenced_ones() {
+        let (_dir, store) = store();
+        let shared = store
+            .put_for_session("p", "s1", b"shared", "text/plain")
+            .unwrap();
+        store.reference("p", &shared.hash, "s2").unwrap();
+        let alone = store
+            .put_for_session("p", "s3", b"only-s3", "text/plain")
+            .unwrap();
+        let unreferenced = store.put("p", b"nobody", "text/plain").unwrap();
+
+        assert_eq!(store.sessions_for("p", &shared.hash), vec!["s1", "s2"]);
+        let removed = store.drop_session("p", "s1").unwrap();
+        assert!(
+            !removed.contains(&shared.hash),
+            "s2 still references the shared blob"
+        );
+        assert!(store.contains("p", &shared.hash));
+        assert_eq!(store.sessions_for("p", &shared.hash), vec!["s2"]);
+        assert!(store.contains("p", &alone.hash));
+        assert!(
+            !store.contains("p", &unreferenced.hash),
+            "an unreferenced blob is purged"
+        );
+
+        let removed = store.drop_session("p", "s2").unwrap();
+        assert!(removed.contains(&shared.hash));
+        assert!(!store.contains("p", &shared.hash));
+        assert!(store.contains("p", &alone.hash));
+        assert_eq!(
+            fs::read_to_string(store.refs_path("p", &alone.hash)).unwrap(),
+            "s3\n"
+        );
+
+        assert!(matches!(
+            store.reference("p", &shared.hash, "../escape"),
+            Err(AttachmentError::UnsafeSessionId(_))
+        ));
     }
 
     #[test]

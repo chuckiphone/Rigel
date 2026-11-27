@@ -601,6 +601,64 @@ async fn an_unsafe_session_id_cannot_reach_a_sibling_blob_directory() {
     assert_eq!(service.list().await.unwrap().len(), 1);
 }
 
+/// A content-addressed blob can be shared. Deleting one session must drop only its reference,
+/// and the blob must survive until the last referencing session is deleted.
+#[tokio::test]
+async fn deleting_a_session_purges_only_blobs_no_other_session_references() {
+    use rigel_core::attachments::store::{AttachmentStore, default_root, track_blob};
+    use rigel_core::store::delete::delete_session;
+
+    let tmp = TempDir::new().unwrap();
+    let service = SessionService::open(tmp.path()).await.unwrap();
+    let first = service.start(Some("first"), None).await.unwrap();
+    let second = service.start(Some("second"), None).await.unwrap();
+    let tombstones = tmp.path().join("attachment-tombstones.json");
+
+    let shared = track_blob(tmp.path(), &first.id, b"shared image", "image/png").unwrap();
+    let owned = track_blob(tmp.path(), &first.id, b"first only", "image/png").unwrap();
+    let store = AttachmentStore::new(default_root(tmp.path()), u64::MAX, usize::MAX, Vec::new());
+    store
+        .reference("default", &shared.hash, &second.id)
+        .unwrap();
+
+    delete_session(
+        service.pool(),
+        tmp.path(),
+        &first.id,
+        &first.id,
+        &tombstones,
+    )
+    .await
+    .unwrap();
+    assert!(
+        store.contains("default", &shared.hash),
+        "the other session still needs it"
+    );
+    assert_eq!(
+        store.sessions_for("default", &shared.hash),
+        vec![second.id.clone()]
+    );
+    assert!(
+        !store.contains("default", &owned.hash),
+        "the deleted session's blob is gone"
+    );
+
+    delete_session(
+        service.pool(),
+        tmp.path(),
+        &second.id,
+        &second.id,
+        &tombstones,
+    )
+    .await
+    .unwrap();
+    assert!(
+        !store.contains("default", &shared.hash),
+        "no session references it now"
+    );
+    assert!(store.list("default").unwrap().is_empty());
+}
+
 #[tokio::test]
 async fn skill_pins_are_per_session_and_unpin_is_idempotent() {
     let tmp = TempDir::new().unwrap();
