@@ -582,6 +582,30 @@ enum SkillCommand {
         #[arg(long)]
         json: bool,
     },
+
+    /// Write `rigel.lock` with the selected skills' exact versions and hashes.
+    Lock {
+        ids: Vec<String>,
+        #[arg(long, value_name = "PATH", default_value = ".")]
+        project: PathBuf,
+        #[arg(long, value_name = "FILE")]
+        output: Option<PathBuf>,
+        #[arg(long)]
+        json: bool,
+    },
+
+    /// Recreate skills from `rigel.lock` and local hash-addressed blobs, without opening SQLite.
+    Restore {
+        #[arg(long, value_name = "PATH", default_value = ".")]
+        project: PathBuf,
+        #[arg(long, value_name = "FILE")]
+        lock: Option<PathBuf>,
+        /// Install into these roots instead of the default harness stores.
+        #[arg(long, value_name = "DIR")]
+        to: Vec<PathBuf>,
+        #[arg(long)]
+        json: bool,
+    },
 }
 
 fn data_dir(cli: &Cli) -> PathBuf {
@@ -879,6 +903,45 @@ async fn entry() -> ExitCode {
 }
 
 async fn run_skills(dir: &Path, command: SkillCommand) -> ExitCode {
+    if let SkillCommand::Restore {
+        project,
+        lock,
+        to,
+        json: as_json,
+    } = &command
+    {
+        let lock_path = lock.clone().unwrap_or_else(|| project.join("rigel.lock"));
+        let lockfile = match rigel_core::skills::lockfile::SkillLockfile::read(&lock_path) {
+            Ok(lockfile) => lockfile,
+            Err(error) => return skills_failure(error, *as_json),
+        };
+        let roots = if to.is_empty() {
+            plugins::skill_roots()
+        } else {
+            to.clone()
+        };
+        if roots.is_empty() {
+            eprintln!("rigel: no HOME or USERPROFILE to restore skills into; pass --to <dir>");
+            return ExitCode::from(2);
+        }
+        let report = match lockfile.restore(dir, project, &roots) {
+            Ok(report) => report,
+            Err(error) => return skills_failure(error, *as_json),
+        };
+        if *as_json {
+            println!(
+                "{}",
+                crate::json::to_string_pretty(&report).unwrap_or_default()
+            );
+        } else {
+            println!("restored {} locked skills", report.restored);
+            for path in report.paths {
+                println!("  {}", path.display());
+            }
+        }
+        return ExitCode::SUCCESS;
+    }
+
     let index = match SkillIndex::open(dir).await {
         Ok(index) => index,
         Err(error) => return skills_failure(error, false),
@@ -1402,6 +1465,44 @@ async fn run_skills(dir: &Path, command: SkillCommand) -> ExitCode {
                 Err(error) => skills_failure(SkillsError::Io(error), as_json),
             }
         }
+
+        SkillCommand::Lock {
+            ids,
+            project,
+            output,
+            json: as_json,
+        } => {
+            let lockfile =
+                match rigel_core::skills::lockfile::SkillLockfile::generate(&index, &ids).await {
+                    Ok(lockfile) => lockfile,
+                    Err(error) => return skills_failure(error, as_json),
+                };
+            let path = output.unwrap_or_else(|| project.join("rigel.lock"));
+            let serialized = match serde_json::to_vec_pretty(&lockfile) {
+                Ok(serialized) => serialized,
+                Err(error) => {
+                    return skills_failure(SkillsError::Lockfile(error.to_string()), as_json);
+                }
+            };
+            if let Err(error) = std::fs::write(&path, serialized) {
+                return skills_failure(SkillsError::Io(error), as_json);
+            }
+            if as_json {
+                println!(
+                    "{}",
+                    json!({ "written": path, "skills": lockfile.skills.len() })
+                );
+            } else {
+                println!(
+                    "locked {} skills to {}",
+                    lockfile.skills.len(),
+                    path.display()
+                );
+            }
+            ExitCode::SUCCESS
+        }
+
+        SkillCommand::Restore { .. } => unreachable!("restore runs before opening the index"),
     }
 }
 

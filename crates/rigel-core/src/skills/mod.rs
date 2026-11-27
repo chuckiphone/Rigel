@@ -32,6 +32,7 @@ pub mod github;
 pub mod http;
 pub mod hub;
 pub mod index;
+pub mod lockfile;
 pub mod rank;
 pub mod run;
 pub mod scan;
@@ -96,6 +97,9 @@ pub enum SkillsError {
     #[error("blob store error: {0}")]
     Io(#[from] io::Error),
 
+    #[error("skill lockfile error: {0}")]
+    Lockfile(String),
+
     #[error("{0}")]
     InvalidRepo(String),
 
@@ -150,6 +154,7 @@ impl SkillsError {
             SkillsError::Storage(_)
             | SkillsError::Database(_)
             | SkillsError::Io(_)
+            | SkillsError::Lockfile(_)
             | SkillsError::Other(_) => 2,
         }
     }
