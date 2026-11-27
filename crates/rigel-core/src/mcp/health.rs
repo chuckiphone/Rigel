@@ -296,7 +296,6 @@ pub async fn refresh(servers: &[ServerSpec], wait: Duration) -> Vec<ServerHealth
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::process::Command as StdCommand;
 
     fn fake_server_spec() -> Option<ServerSpec> {
         // The fake server binary is built by rigel-mcp; in this crate's tests it may not be

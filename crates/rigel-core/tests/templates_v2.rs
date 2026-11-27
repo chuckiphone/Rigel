@@ -8,7 +8,7 @@ fn v1_loads_and_diff_works() {
     let m: TemplateModel = serde_json::from_str(v1_json).unwrap();
     assert!(m.variables.is_empty());
 
-    let mut a = TemplateModel::new("t");
+    let a = TemplateModel::new("t");
     let mut b = a.clone();
     b.slots.push("intro".to_string());
     let d = diff(&a, &b);

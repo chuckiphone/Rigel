@@ -149,7 +149,7 @@ mod tests {
             log.push_chunk("m1", &format!("t{i}"));
         }
         assert_eq!(log.len(), 1);
-        assert_eq!(log.message_text("m1").unwrap().len() > 0, true);
+        assert!(!log.message_text("m1").unwrap().is_empty());
     }
 
     #[test]

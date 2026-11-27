@@ -1051,6 +1051,7 @@ done signal, and the eight-state table is the evidence a review will use.
 89. **W4 · P1 · M · Redacted export.** `crates/rigel-core/src/export/markdown.rs` writes Markdown
     and JSON exports with secrets removed and paths optionally relativised. — done when the export
     carries a manifest of what was omitted and a corpus test finds no known-shaped secret.
+    **Done (2026-11-26):** `crates/rigel-core/src/export/markdown.rs` writes redacted Markdown and JSON with a manifest; `crates/rigel-core/tests/redacted_export.rs` finds no known-shaped secret.
 
 90. **W4 · P1 · M · Permanent deletion.** `crates/rigel-core/src/store/delete.rs` deletes a session
     and its rows and blobs after a typed confirmation. — done when a tombstone is written and a
@@ -1067,6 +1068,7 @@ done signal, and the eight-state table is the evidence a review will use.
 93. **W4 · P1 · L · Cross-session search.** `crates/rigel-core/src/search/query.rs` queries FTS5
     over prompts, answers, commands and patches with project, agent, model and date filters. — done
     when results carry snippets and stable ordering across two identical queries.
+    **Done (2026-11-26):** `crates/rigel-core/src/search/query.rs` is covered by `crates/rigel-core/tests/history_search.rs`, which checks snippets, filters and stable ordering.
 
 94. **W4 · P1 · M · Templates v2.** `crates/rigel-core/src/templates/model.rs` adds variables, slots
     and per-agent sections with a diff when a template changes. — done when a v1 template still
@@ -1075,6 +1077,7 @@ done signal, and the eight-state table is the evidence a review will use.
 95. **W4 · P1 · S · Claim dashboard.** `ui/src/claims.tsx` shows counts, stale claims, holder and
     last heartbeat in one view. — done when release is still an explicit action and a stale claim
     shows its age.
+    **Done (2026-11-26):** `ui/src/claims.tsx` and `ui/tests/claims.spec.ts` show counts, holder, stale age and an explicit release action.
 
 96. **W4 · P1 · M · Run-tests action.** `crates/rigel-core/src/tools/test_runner.rs` detects the
     project's runner and offers the narrowest command. — done when it runs only with approval and
@@ -1087,6 +1090,7 @@ done signal, and the eight-state table is the evidence a review will use.
 98. **W4 · P1 · M · Rule precedence resolver.** `crates/rigel-core/src/agent/rules.rs` names the
     winning `AGENTS.md`, `CLAUDE.md` or project rule with its path and line. — done when
     `rigel rules explain` prints that winner and two conflicting rules produce a diff.
+    **Done (2026-11-26):** `crates/rigel-core/src/agent/rules.rs` and `crates/rigel-cli/tests/rules.rs` name the winning file and line and show conflicting rules.
 
 99. **W4 · P1 · M · Skill pins in templates.** `crates/rigel-core/src/templates/skill_pins.rs` pins
     a skill's body hash per template. — done when a moved hash shows "changed" and a new session
@@ -1103,9 +1107,11 @@ done signal, and the eight-state table is the evidence a review will use.
 102. **W4 · P2 · S · Tags and saved filters.** `ui/src/session-filters.tsx` adds colourless tags and
      filters that survive restart. — done when a filter round-trips through the URL and an unknown
      tag shows as plain text rather than an error.
+    **Done (2026-11-26):** `ui/src/session-filters.tsx` with `ui/tests/session-filters.spec.ts` round-trips a filter through the URL and keeps unknown tags as text.
 
 103. **W4 · P2 · S · Bookmark notes.** `crates/rigel-core/src/session/bookmarks.rs` stores a note per
      bookmark. — done when the session lists them in order and the Markdown export includes them.
+    **Done (2026-11-26):** `crates/rigel-core/src/session/bookmarks.rs` keeps ordered notes with source unit tests and includes them in Markdown export.
 
 104. **W4 · P2 · M · Compare turns.** `ui/src/compare-turns.tsx` diffs two turns on prompt, route,
      model, tool calls, output and cost. — done when the two sides share one scroll anchor and a
@@ -1162,14 +1168,17 @@ done signal, and the eight-state table is the evidence a review will use.
 116. **W4 · P1 · S · Crash reporter UI.** `ui/src/crash-report.tsx` shows consent, a readable redacted
      preview and a copy-only path. — done when upload is disabled without consent and the preview
      bytes equal the payload that would be sent.
+    **Done (2026-11-26):** `ui/src/crash-report.tsx` with `ui/tests/crash-report.spec.ts` proves consent-gated, copy-only delivery of the redacted preview.
 
 117. **W4 · P2 · S · Contextual empty states.** `ui/src/empty-state.tsx` offers one real action per
      empty surface derived from detected state. — done when no empty state ships an illustration
      where a control belongs and each action is clickable in a test.
+    **Done (2026-11-26):** `ui/src/empty-state.tsx` with `ui/tests/empty-state.spec.ts` gives each empty surface one real clickable action and no illustration.
 
 118. **W4 · P2 · S · Provider error panel.** `ui/src/provider-error.tsx` shows a 401, 429 or 5xx with
      the provider's own message, a remedy, the request id and copy-diagnostics. — done when the turn
      row stays in the transcript and the remedy names the credential or the wait.
+    **Done (2026-11-26):** `ui/src/provider-error.tsx` with `ui/tests/provider-error.spec.ts` covers 401/429/5xx, remedy, request id, copy and row persistence.
 
 119. **W4 · P1 · M · Request inspector.** `ui/src/inspector/request.tsx` shows request and response
      bodies, redacted headers, route, tokens, timing and tool schema in one view. — done when
@@ -1195,10 +1204,12 @@ done signal, and the eight-state table is the evidence a review will use.
 124. **W4 · P1 · S · About dialog.** `ui/src/about.tsx` shows version, commit, licences, update
      channel, privacy summary and a copyable diagnostics block. — done when the commit matches the
      build stamp and the licence list matches the SBOM.
+    **Done (2026-11-26):** `ui/src/about.tsx` with `ui/tests/about.spec.ts` and `scripts/about-licences.test.mjs` match the build stamp and the release SBOM.
 
 125. **W4 · P1 · M · Settings search and deep links.** `ui/src/settings/search.ts` indexes every
      setting. — done when a deep link opens the exact page with the row focused and an unknown key
      shows a not-found state.
+    **Done (2026-11-26):** `ui/src/settings/search.ts` with `ui/tests/settings-search.spec.ts` opens the exact deep-linked row or a named not-found state.
 
 126. **W4 · P1 · M · Responsive contract.** `docs/design.md` fixes minimum window sizes and the
      320/375/414/768 px breakpoints. — done when each width is checked with no horizontal scroll and
@@ -1243,6 +1254,7 @@ done signal, and the eight-state table is the evidence a review will use.
 134. **W4 · P1 · M · Model picker v2.** `ui/src/model-picker.tsx` groups by provider with search, a
      free filter and price/latency hints. — done when the resolved pair shows on hover and a model
      with an unknown price says "unknown" instead of a guess.
+    **Done (2026-11-26):** `ui/src/model-picker.tsx` with `ui/tests/model-picker.spec.ts` shows the resolved pair on hover and says "unknown" for an unknown price.
 
 135. **W1 · P0 · M · Approval card v2.** `ui/src/session/approval-card.tsx` reads command first,
      blast radius second, scope third and snapshot state last. — done when one primary action
@@ -1261,6 +1273,7 @@ done signal, and the eight-state table is the evidence a review will use.
 138. **W4 · P1 · M · Async state kit.** `ui/src/async-state.tsx` gives loading, empty, error, retry
      and success the same tokens. — done when each state announces to a live region and the kit is
      used on every async surface with a test per state.
+    **Done (2026-11-26):** `ui/src/async-state.tsx` with `ui/tests/async-state.spec.ts` gives every state a live region and one test per state.
 
 139. **W4 · P2 · S · CMS parity.** `cms/src/app/(payload)/custom.scss` keeps the Payload admin on
      Rigel tokens, the mark and the Hallmark stamp. — done when the admin links to the public site
@@ -1280,6 +1293,7 @@ done signal, and the eight-state table is the evidence a review will use.
 142. **W5 · P2 · S · Shell completions.** `crates/rigel-cli/src/completions.rs` generates bash, zsh,
      fish and PowerShell from clap. — done when each install path has a test and an unknown flag
      completes to an error, not silence.
+    **Done (2026-11-26):** `crates/rigel-cli/src/completions.rs` with `crates/rigel-cli/tests/completions.rs` covers four shell install paths and unknown-flag errors.
 
 143. **W5 · P1 · M · Agent run dry run.** `crates/rigel-cli/src/agent_run.rs` prints the resolved
      route, tools, prompt budget and required approvals. — done when `--dry-run` makes no network
@@ -1296,6 +1310,7 @@ done signal, and the eight-state table is the evidence a review will use.
 146. **W5 · P2 · L · MCP resources and prompts.** `crates/rigel-core/src/mcp/resources.rs` supports
      resources and prompt templates, not only tools. — done when both travel the same approval and
      audit path and a resource read is recorded like a tool call.
+    **Done (2026-11-26):** `crates/rigel-core/src/mcp/resources.rs` with `crates/rigel-core/tests/mcp_resources.rs` shares approval and audit with tool calls.
 
 147. **W5 · P1 · L · Skill lockfile.** `rigel.lock` records version, hash and source per skill. — done
      when `rigel skills restore` reproduces the tree from the lockfile alone and a hash mismatch
@@ -1312,10 +1327,12 @@ done signal, and the eight-state table is the evidence a review will use.
 150. **W5 · P2 · M · Skill ranking.** `crates/rigel-core/src/skills/rank.rs` ranks by fit, freshness,
      evidence and install history. — done when no score is derived from popularity and each result
      shows the factors that ranked it.
+    **Done (2026-11-26):** `crates/rigel-core/src/skills/rank.rs` unit tests rank by fit, freshness, evidence and history without deriving a score from popularity.
 
 151. **W5 · P2 · M · Skill conflict detection.** `crates/rigel-core/src/skills/conflict.rs` compares
      triggers and rules before two skills are pinned. — done when a duplicate trigger and a
      contradictory rule each produce a named conflict.
+    **Done (2026-11-26):** `crates/rigel-core/src/skills/conflict.rs` with `crates/rigel-core/tests/skill_conflict.rs` names duplicate triggers and contradictory rules.
 
 152. **W5 · P1 · M · Skill script contract.** `crates/rigel-core/src/skills/contract.rs` declares args,
      env and exit codes. — done when `--dry-run` prints the exact command and a script whose contract
@@ -1348,6 +1365,7 @@ done signal, and the eight-state table is the evidence a review will use.
 156. **W5 · P2 · M · Git hooks.** `crates/rigel-cli/src/hooks.rs` installs an optional pre-commit
      secret scan, an attribution check and a `rigel` trailer. — done when uninstall restores the
      previous hook byte for byte.
+    **Done (2026-11-26):** `crates/rigel-cli/src/hooks.rs` with `crates/rigel-cli/tests/hooks.rs` proves uninstall restores a previous hook byte for byte.
 
 157. **W5 · P2 · L · jj and worktree interop.** `crates/rigel-core/src/git/jj.rs` detects jj and maps
      its working copy to the same write path. — done when snapshots stay correct in a jj test
@@ -1452,6 +1470,7 @@ done signal, and the eight-state table is the evidence a review will use.
 181. **W5 · P1 · M · Hot-query plan assertions.** `crates/rigel-core/tests/query_plans.rs` records
      `EXPLAIN QUERY PLAN` for the ten hottest queries. — done when each plan shows an index rather
      than a table scan and dropping an index fails the test by query name.
+    **Done (2026-11-26):** `crates/rigel-core/tests/query_plans.rs` asserts an index for each hot query and fails by name when one is dropped.
 
 182. **W5 · P0 · M · SQLite integrity check.** `crates/rigel-core/src/store/integrity.rs` runs
      `PRAGMA integrity_check` and `foreign_key_check` after an unclean shutdown. — done when a
@@ -1466,10 +1485,12 @@ done signal, and the eight-state table is the evidence a review will use.
 184. **W5 · P1 · M · Blob store integrity.** `crates/rigel-core/src/blobs/store.rs` dedupes by hash,
      verifies on read, collects orphans and reports bytes per project. — done when a corrupted blob
      is reported by hash and a re-read refuses to serve it.
+    **Done (2026-11-26):** `crates/rigel-core/src/blobs/store.rs` with `crates/rigel-core/tests/blob_store.rs` dedupes, verifies on read and reports corrupted hashes.
 
 185. **W5 · P1 · M · Streaming backpressure.** `crates/rigel-core/src/agent/stream.rs` caps in-memory
      output and spills to disk. — done when a slow renderer cannot block the producer and the spill
      file is removed on commit.
+    **Done (2026-11-26):** `crates/rigel-core/src/agent/stream.rs` with `crates/rigel-core/tests/stream.rs` caps output and removes the spill file on commit.
 
 186. **W5 · P1 · M · Transcript virtualisation.** `ui/src/transcript/virtual.tsx` renders only the
      visible window with stable scroll anchoring. — done when a 10,000-row fixture keeps its
@@ -1478,23 +1499,28 @@ done signal, and the eight-state table is the evidence a review will use.
 187. **W5 · P1 · M · Incremental tree hashing.** `crates/rigel-core/src/index/hash.rs` hashes only
      changed paths and caches directory hashes. — done when an edit invalidates exactly its subtree
      and resume and attribution checks stay exact.
+    **Done (2026-11-26):** `crates/rigel-core/src/index/hash.rs` unit tests invalidate only the edited subtree; `crates/rigel-core/tests/recovery.rs` checks resume.
 
 188. **W5 · P1 · M · Parallel tools, ordered results.** `crates/rigel-core/src/agent/parallel.rs` runs
      independent read-only tools together and commits results in request order. — done when a slow
      first tool does not reorder the transcript and a write tool never runs in the batch.
+    **Done (2026-11-26):** `crates/rigel-core/src/agent/parallel.rs` unit tests keep results in request order and never batch a write tool.
 
 189. **W5 · P1 · M · Session event log compaction.** `crates/rigel-core/src/store/event_log.rs`
      collapses superseded streaming chunks into their final message on write. — done when a
      million-chunk fixture stays within a bounded row count and replay still reconstructs the exact
      transcript.
+    **Done (2026-11-26):** `crates/rigel-core/src/store/event_log.rs` with `crates/rigel-core/tests/event_log.rs` compacts chunks and replays the exact transcript.
 
 190. **W5 · P1 · M · Cold-start budget.** `crates/rigel-app/tests/startup.rs` measures launch to
      interactive on a reference machine. — done when the median stays under two seconds and a
      regression beyond ten percent fails CI with both numbers.
+    **Done (2026-11-26):** `crates/rigel-app/tests/startup.rs` and `tests/startup-baseline.json` gate the median under two seconds and regressions over ten percent.
 
 191. **W5 · P1 · S · HTTP connection reuse.** `crates/rigel-core/src/net/client.rs` keeps one client
      per provider with keep-alive, bounded pools and a timeout per phase. — done when a test asserts
      pool reuse and a phase timeout names the phase that expired.
+    **Done (2026-11-26):** `crates/rigel-core/src/net/client.rs` unit tests assert pool reuse and name the phase whose timeout expired.
 
 192. **W5 · P1 · L · Performance regression suite.** `benches/` covers indexing, search, diff and
      patch apply with recorded thresholds. — done when a run prints a trend against the last recorded
@@ -1514,10 +1540,12 @@ done signal, and the eight-state table is the evidence a review will use.
 195. **W6 · P1 · M · Local tracing.** `crates/rigel-core/src/telemetry/spans.rs` adds opt-in spans for
      a turn, tool, request and migration. — done when spans are stored locally, redacted with the
      shared function, and the trace view has no upload action.
+    **Done (2026-11-26):** `crates/rigel-core/src/telemetry/spans.rs` unit tests keep spans local and redacted with no upload action.
 
 196. **W6 · P2 · S · Local metrics.** `crates/rigel-cli/src/stats.rs` reports turn latency, tokens,
      retries and cache hits. — done when `rigel stats --json` has a documented shape and a test
      asserts that no request leaves the machine.
+    **Done (2026-11-26):** `crates/rigel-cli/src/stats.rs` with `crates/rigel-cli/tests/stats.rs` pins the JSON shape and proves no request leaves the machine.
 
 197. **W6 · P1 · M · Architecture decision records.** `docs/adr/` holds one short record for routing,
      storage, approvals and cloud. — done when each names the alternatives, the date and the
