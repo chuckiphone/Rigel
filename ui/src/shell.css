@@ -4712,6 +4712,15 @@ button[aria-label^="Unpin "] {
   min-width: 0;
 }
 
+/* Roadmap 99: pin counts on a template; a moved hash is visible before the session starts. */
+.template-pins {
+  color: var(--faint);
+}
+
+.template-pins.changed {
+  color: var(--warn);
+}
+
 .composer-menu-label {
   margin: 4px 7px 6px;
   color: var(--faint);

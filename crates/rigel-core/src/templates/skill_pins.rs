@@ -51,6 +51,47 @@ impl SkillPins {
         }
     }
 
+    /// Validate and normalise the pins a template is about to store. One pin per skill id, with
+    /// the exact 64-character lowercase SHA-256 the index writes; a bad hash is an error, not a
+    /// pin that silently resolves to whatever body happens to be current later.
+    pub fn try_from_skills(skills: &[crate::templates::TemplateSkill]) -> Result<Self, String> {
+        let mut pins = Self::new();
+        for skill in skills {
+            if skill.skill_id.trim().is_empty() {
+                return Err("a template pin needs a skill id".to_string());
+            }
+            if skill.body_sha.len() != 64
+                || !skill
+                    .body_sha
+                    .bytes()
+                    .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+            {
+                return Err(format!(
+                    "{} has an invalid body hash; expected 64 lowercase hex characters",
+                    skill.skill_id
+                ));
+            }
+            if pins.get(&skill.skill_id).is_some() {
+                return Err(format!("duplicate template pin for {}", skill.skill_id));
+            }
+            pins.pin(skill.skill_id.clone(), skill.body_sha.clone());
+        }
+        pins.pins
+            .sort_by(|left, right| left.skill_id.cmp(&right.skill_id));
+        Ok(pins)
+    }
+
+    /// The pins as template skills, so a new session can inherit the exact id/hash pairs.
+    pub fn skills(&self) -> Vec<crate::templates::TemplateSkill> {
+        self.pins
+            .iter()
+            .map(|pin| crate::templates::TemplateSkill {
+                skill_id: pin.skill_id.clone(),
+                body_sha: pin.body_sha.clone(),
+            })
+            .collect()
+    }
+
     pub fn pin(&mut self, skill_id: impl Into<String>, body_sha: impl Into<String>) {
         let skill_id = skill_id.into();
         let body_sha = body_sha.into();
@@ -144,6 +185,78 @@ mod tests {
         }];
         let pins = SkillPins::from_template_skills(&skills);
         assert_eq!(pins.pins.len(), 1);
+    }
+
+    #[test]
+    fn try_from_skills_validates_and_sorts_pins() {
+        let hash = "a".repeat(64);
+        let skills = vec![
+            crate::templates::TemplateSkill {
+                skill_id: "z".to_string(),
+                body_sha: hash.clone(),
+            },
+            crate::templates::TemplateSkill {
+                skill_id: "a".to_string(),
+                body_sha: hash.clone(),
+            },
+        ];
+        let pins = SkillPins::try_from_skills(&skills).unwrap();
+        assert_eq!(
+            pins.skills()
+                .iter()
+                .map(|s| s.skill_id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["a", "z"]
+        );
+        assert_eq!(pins.skills()[0].body_sha, hash);
+
+        let bad = vec![crate::templates::TemplateSkill {
+            skill_id: "pdf".to_string(),
+            body_sha: "ABC".to_string(),
+        }];
+        assert!(SkillPins::try_from_skills(&bad).is_err());
+        let duplicate = vec![
+            crate::templates::TemplateSkill {
+                skill_id: "pdf".to_string(),
+                body_sha: hash.clone(),
+            },
+            crate::templates::TemplateSkill {
+                skill_id: "pdf".to_string(),
+                body_sha: hash,
+            },
+        ];
+        assert!(SkillPins::try_from_skills(&duplicate).is_err());
+    }
+
+    #[test]
+    fn a_template_hands_its_pins_to_the_new_session() {
+        let hash = "b".repeat(64);
+        let template = crate::templates::TemplateModel {
+            id: "t".to_string(),
+            name: "setup".to_string(),
+            model: None,
+            effort: None,
+            max_steps: None,
+            agents: Vec::new(),
+            skills: vec![crate::templates::TemplateSkill {
+                skill_id: "pdf".to_string(),
+                body_sha: hash.clone(),
+            }],
+            prompt: String::new(),
+            created_at: 1,
+            variables: Default::default(),
+            slots: Vec::new(),
+            agent_sections: Vec::new(),
+            variable_defs: Vec::new(),
+        };
+        let pins = template.skill_pins();
+        let inherited = pins.skills();
+        assert_eq!(inherited.len(), 1);
+        assert_eq!(inherited[0].skill_id, "pdf");
+        assert_eq!(inherited[0].body_sha, hash);
+        let mut current = std::collections::BTreeMap::new();
+        current.insert("pdf".to_string(), "c".repeat(64));
+        assert_eq!(pins.changed_pins(&current), vec!["pdf".to_string()]);
     }
 
     #[test]

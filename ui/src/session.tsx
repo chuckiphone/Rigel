@@ -66,6 +66,7 @@ import {
 import { DegradedBanner } from "./degraded-banner";
 import { ProviderErrorPanel, providerStatus } from "./provider-error";
 import SafeModePanel, { SafeModeBadge } from "./safe-mode";
+import { TemplatePinBadge, changedTemplatePins } from "./template-pins";
 import {
   FILTERS,
   filterCounts as countFilters,
@@ -1697,6 +1698,16 @@ export default function SessionView({
           ...(template?.max_steps ? { max_steps: template.max_steps } : {}),
         };
         saveSessionDefaults(created.id, sessionDefaults);
+        const movedPins = changedTemplatePins(template?.skills ?? [], pins);
+        if (
+          movedPins.length > 0 &&
+          !window.confirm(
+            `This template pins an older body for: ${movedPins.join(", ")}. Start the session with the pinned bodies?`,
+          )
+        ) {
+          onNotice("Session started without the template's pinned skills.");
+          return;
+        }
         const pinFailures: string[] = [];
         for (const skill of template?.skills ?? []) {
           try {
@@ -3258,6 +3269,10 @@ export default function SessionView({
                               {template.skills?.length
                                 ? ` · ${template.skills.length} skill${template.skills.length === 1 ? "" : "s"}`
                                 : ""}
+                              <TemplatePinBadge
+                                skills={template.skills?.length ?? 0}
+                                changed={changedTemplatePins(template.skills ?? [], pins)}
+                              />
                               {template.model ? ` · ${template.model.split("/").pop()}` : ""}
                             </small>
                           </button>

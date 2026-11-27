@@ -102,6 +102,11 @@ impl TemplateModel {
         }
     }
 
+    /// The skill pins this template will hand to a new session, in stable order.
+    pub fn skill_pins(&self) -> crate::templates::SkillPins {
+        crate::templates::SkillPins::from_template_skills(&self.skills)
+    }
+
     /// Fill variables into the prompt, replacing `{{name}}` with the value.
     pub fn render_prompt(&self) -> String {
         let mut out = self.prompt.clone();

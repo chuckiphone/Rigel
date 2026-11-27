@@ -11,6 +11,8 @@ test("the create button offers the project's templates", async ({ page }) => {
   const menu = page.getByRole("menu", { name: "Session templates" });
   await expect(menu).toBeVisible();
   await expect(menu.getByRole("menuitem", { name: /Fix the flaky test/ })).toBeVisible();
+  // Roadmap 99: the template's skill pin is visible on the row before it is used.
+  await expect(menu.getByRole("menuitem", { name: /Fix the flaky test/ })).toContainText("1 pinned");
   await expect(menu.getByRole("menuitem", { name: /Blank session/ })).toBeVisible();
 
   await menu.getByRole("button", { name: "Delete template Fix the flaky test" }).click();
