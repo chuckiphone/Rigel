@@ -20,6 +20,7 @@ use sqlx::Row;
 
 use super::blob::BlobStore;
 use super::cluster;
+use super::eval::{self, EvalReport, GoldenTask, GoldenTaskRunner};
 use super::evidence::{Evidence, EvidenceSummary, claims_from_description};
 use super::github::{GitHubSource, parse_repo_input};
 use super::hub::{SkillHubSource, SkillsMpSource};
@@ -378,6 +379,40 @@ impl SkillIndex {
             scan: None,
             blocked: 0,
         })
+    }
+
+    /// Evaluate every changed body before writing any rows. New skills have no prior behavior
+    /// to regress; updates must provide a golden suite and pass it before the row can advance.
+    pub async fn ingest_with_evals<R: GoldenTaskRunner>(
+        &self,
+        snapshot: &RepoSnapshot,
+        suites: &std::collections::HashMap<String, Vec<GoldenTask>>,
+        runner: &R,
+    ) -> Result<(IngestReport, Vec<EvalReport>), SkillsError> {
+        let mut reports = Vec::new();
+        for skill in &snapshot.skills {
+            let next_sha = super::blob::sha256_hex(skill.body.as_bytes());
+            let previous: Option<String> =
+                sqlx::query_scalar("SELECT body_sha FROM skills WHERE id = ?")
+                    .bind(&skill.record.id)
+                    .fetch_optional(self.store.pool())
+                    .await?;
+            if previous.as_deref().is_some_and(|sha| sha != next_sha) {
+                let suite = suites.get(&skill.record.id).ok_or_else(|| {
+                    SkillsError::Other(format!(
+                        "skill {} changed without a golden task suite; refusing update",
+                        skill.record.id
+                    ))
+                })?;
+                let report = eval::evaluate(&skill.record.id, &skill.body, suite, runner)
+                    .map_err(|error| SkillsError::Other(error.to_string()))?;
+                eval::require_pass(&report)
+                    .map_err(|error| SkillsError::Other(error.to_string()))?;
+                reports.push(report);
+            }
+        }
+        let ingest = self.ingest(snapshot).await?;
+        Ok((ingest, reports))
     }
 
     /// Scan the exact bodies a repository walk produced, drop the ones SkillSpector blocks,
@@ -1304,6 +1339,25 @@ impl SkillIndex {
         })
     }
 
+    /// Run a skill's golden tasks before copying it into any harness store.
+    pub async fn install_with_eval<R: GoldenTaskRunner>(
+        &self,
+        id: &str,
+        roots: &[PathBuf],
+        tasks: &[GoldenTask],
+        runner: &R,
+    ) -> Result<(InstallReport, EvalReport), SkillsError> {
+        let (body, _) = self
+            .body(id)
+            .await?
+            .ok_or_else(|| SkillsError::NoBody(id.to_string()))?;
+        let report = eval::evaluate(id, &body, tasks, runner)
+            .map_err(|error| SkillsError::Other(error.to_string()))?;
+        eval::require_pass(&report).map_err(|error| SkillsError::Other(error.to_string()))?;
+        let installed = self.install(id, roots).await?;
+        Ok((installed, report))
+    }
+
     /// Scan the exact `SKILL.md` bytes an install would write. SkillSpector reads a directory,
     /// so the body gets a disposable one; it is removed before an install can write anything.
     async fn scan_body(&self, body: &str) -> Result<ScanVerdict, SkillsError> {
@@ -1797,7 +1851,15 @@ struct PrototypeEntry {
 mod tests {
     use super::super::scanner::ScannedSkill;
     use super::*;
-    use crate::skills::FetchedSkill;
+    use crate::skills::{FetchedSkill, GoldenTask};
+
+    struct FixedGoldenRunner(&'static str);
+
+    impl GoldenTaskRunner for FixedGoldenRunner {
+        fn run(&self, _skill_id: &str, _skill_body: &str, _prompt: &str) -> Result<String, String> {
+            Ok(self.0.to_string())
+        }
+    }
 
     fn verdict(score: i64, recommendation: &str, severity: &str) -> ScanVerdict {
         ScanVerdict {
@@ -1845,6 +1907,61 @@ mod tests {
             http_requests: 5,
             skills: vec![fetched("safe"), fetched("bad"), fetched("caution")],
         }
+    }
+
+    fn golden_task() -> GoldenTask {
+        GoldenTask {
+            name: "readme lookup".into(),
+            prompt: "Find the README".into(),
+            expected_contains: vec!["README.md".into()],
+        }
+    }
+
+    #[tokio::test]
+    async fn failed_update_eval_preserves_the_indexed_version() {
+        let data = tempfile::tempdir().unwrap();
+        let index = SkillIndex::open(data.path()).await.unwrap();
+        let mut initial = snapshot();
+        initial.skills.truncate(1);
+        index.ingest(&initial).await.unwrap();
+        let original_sha = index.body_sha("safe").await.unwrap().unwrap();
+
+        let mut changed = initial.clone();
+        changed.skills[0].body.push_str("Updated guidance.\n");
+        let suites = std::collections::HashMap::from([("safe".into(), vec![golden_task()])]);
+        let error = index
+            .ingest_with_evals(&changed, &suites, &FixedGoldenRunner("not found"))
+            .await
+            .unwrap_err();
+
+        assert!(error.to_string().contains("readme lookup"));
+        assert_eq!(
+            index.body_sha("safe").await.unwrap().as_deref(),
+            Some(original_sha.as_str())
+        );
+    }
+
+    #[tokio::test]
+    async fn failed_install_eval_does_not_enable_the_skill() {
+        let data = tempfile::tempdir().unwrap();
+        let stores = tempfile::tempdir().unwrap();
+        let index = SkillIndex::open(data.path()).await.unwrap();
+        let mut initial = snapshot();
+        initial.skills.truncate(1);
+        index.ingest(&initial).await.unwrap();
+
+        let error = index
+            .install_with_eval(
+                "safe",
+                &[stores.path().join("agents")],
+                &[golden_task()],
+                &FixedGoldenRunner("not found"),
+            )
+            .await
+            .unwrap_err();
+
+        assert!(error.to_string().contains("readme lookup"));
+        assert!(!stores.path().join("agents/safe/SKILL.md").exists());
     }
 
     fn collection() -> CollectionScan {
