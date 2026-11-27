@@ -67,7 +67,7 @@ pub fn model(api_key: impl Into<String>) -> OpenRouterModel {
 }
 
 fn health_client() -> reqwest::Client {
-    reqwest::Client::builder()
+    crate::net::proxy::configure_builder(reqwest::Client::builder())
         .timeout(Duration::from_millis(1_500))
         .connect_timeout(Duration::from_millis(800))
         .build()

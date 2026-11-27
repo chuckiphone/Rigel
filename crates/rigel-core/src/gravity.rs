@@ -268,7 +268,7 @@ pub struct Gravity {
 
 impl Gravity {
     pub fn new(key: impl Into<String>, base: impl Into<String>) -> Self {
-        let http = reqwest::Client::builder()
+        let http = crate::net::proxy::configure_builder(reqwest::Client::builder())
             .timeout(Duration::from_secs(6))
             .connect_timeout(Duration::from_secs(3))
             .user_agent(USER_AGENT)
@@ -357,7 +357,7 @@ pub struct SharedGravity {
 
 impl SharedGravity {
     pub fn new(endpoint: impl Into<String>) -> Self {
-        let http = reqwest::Client::builder()
+        let http = crate::net::proxy::configure_builder(reqwest::Client::builder())
             .timeout(Duration::from_secs(8))
             .connect_timeout(Duration::from_secs(3))
             .user_agent(USER_AGENT)
@@ -549,7 +549,7 @@ pub async fn click_through(url: &str) -> Result<String, GravityError> {
 }
 
 fn tracking_client() -> reqwest::Client {
-    reqwest::Client::builder()
+    crate::net::proxy::configure_builder(reqwest::Client::builder())
         .timeout(Duration::from_secs(8))
         .connect_timeout(Duration::from_secs(3))
         .redirect(reqwest::redirect::Policy::none())

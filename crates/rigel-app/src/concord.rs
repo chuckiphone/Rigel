@@ -82,7 +82,7 @@ async fn request(
     timeout: Duration,
 ) -> Result<Value, String> {
     let (base, token) = connection()?;
-    let client = reqwest::Client::builder()
+    let client = rigel_core::net::proxy::configure_builder(reqwest::Client::builder())
         .timeout(timeout)
         .build()
         .map_err(|error| format!("Could not build the API client: {error}"))?;

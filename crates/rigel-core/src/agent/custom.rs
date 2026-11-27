@@ -118,7 +118,7 @@ fn validate_headers(headers: &[HeaderPair]) -> Result<(), String> {
 pub async fn probe(base_url: &str, headers: &[HeaderPair]) -> Result<Vec<String>, String> {
     let base = validate_base(base_url)?;
     validate_headers(headers)?;
-    let client = reqwest::Client::builder()
+    let client = crate::net::proxy::configure_builder(reqwest::Client::builder())
         .timeout(std::time::Duration::from_secs(20))
         .build()
         .map_err(|error| format!("could not build an HTTP client: {error}"))?;

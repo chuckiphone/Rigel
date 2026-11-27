@@ -411,7 +411,7 @@ pub fn start(data_dir: PathBuf, project: fn() -> Option<PathBuf>) {
                 return;
             };
             runtime.block_on(async move {
-                let client = reqwest::Client::builder()
+                let client = rigel_core::net::proxy::configure_builder(reqwest::Client::builder())
                     .connect_timeout(Duration::from_secs(5))
                     .timeout(Duration::from_secs(15))
                     .build()

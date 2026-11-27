@@ -168,7 +168,7 @@ async fn adopt_token(client: &reqwest::Client) -> bool {
 }
 
 fn http_client() -> reqwest::Client {
-    reqwest::Client::builder()
+    crate::net::proxy::configure_builder(reqwest::Client::builder())
         .timeout(Duration::from_millis(2_500))
         .connect_timeout(Duration::from_millis(800))
         .build()
@@ -334,7 +334,7 @@ pub async fn attachment(url: &str) -> Result<String, String> {
     let token = token().ok_or({
         "the chat server is up but exposed no session token — stop it and start the room from the Chat tab"
     })?;
-    let client = reqwest::Client::builder()
+    let client = crate::net::proxy::configure_builder(reqwest::Client::builder())
         .timeout(Duration::from_secs(15))
         .connect_timeout(Duration::from_millis(800))
         .build()

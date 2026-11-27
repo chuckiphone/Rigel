@@ -705,7 +705,7 @@ impl Cloud {
         store: Arc<dyn SessionStore>,
     ) -> Result<Self, CloudError> {
         config.validate()?;
-        let http = reqwest::Client::builder()
+        let http = crate::net::proxy::configure_builder(reqwest::Client::builder())
             .timeout(Duration::from_secs(30))
             .build()?;
         let app_check = config

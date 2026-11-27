@@ -977,7 +977,7 @@ impl Egress {
     }
 
     fn client_builder() -> reqwest::ClientBuilder {
-        reqwest::Client::builder()
+        crate::net::proxy::configure_builder(reqwest::Client::builder())
             // Redirects are followed by hand: a 302 to another origin must not inherit the
             // first origin's approval.
             .redirect(reqwest::redirect::Policy::none())

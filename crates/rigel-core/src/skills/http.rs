@@ -79,7 +79,7 @@ pub struct Http {
 
 impl Http {
     pub fn new(pool: SqlitePool, blobs: BlobStore, ttl: Duration) -> Result<Self, HttpError> {
-        let client = reqwest::Client::builder()
+        let client = crate::net::proxy::configure_builder(reqwest::Client::builder())
             .user_agent(USER_AGENT_VALUE)
             .timeout(Duration::from_secs(20))
             .connect_timeout(Duration::from_secs(8))

@@ -183,7 +183,7 @@ impl OpenRouterModel {
     /// A different total budget for one door. A local server processes its prompt on this CPU,
     /// where a long turn is minutes rather than seconds.
     pub fn with_request_timeout(mut self, timeout: Duration) -> Self {
-        if let Ok(client) = reqwest::Client::builder()
+        if let Ok(client) = crate::net::proxy::configure_builder(reqwest::Client::builder())
             .timeout(timeout)
             .connect_timeout(Duration::from_secs(20))
             .build()

@@ -39,7 +39,7 @@ pub struct RigelModel {
 
 impl RigelModel {
     pub fn new(token: impl Into<String>, base_url: impl Into<String>) -> Self {
-        let client = reqwest::Client::builder()
+        let client = crate::net::proxy::configure_builder(reqwest::Client::builder())
             .connect_timeout(Duration::from_secs(10))
             // Each read waits at most `MAX_WAIT_SECONDS`; the client bound is above that.
             .timeout(Duration::from_secs(40))

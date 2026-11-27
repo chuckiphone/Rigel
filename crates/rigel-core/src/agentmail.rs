@@ -223,7 +223,7 @@ impl Mail {
     }
 
     pub fn new(config: MailConfig, api_key: impl Into<String>, base: impl Into<String>) -> Self {
-        let http = reqwest::Client::builder()
+        let http = crate::net::proxy::configure_builder(reqwest::Client::builder())
             .timeout(Duration::from_secs(30))
             .build()
             .unwrap_or_default();
