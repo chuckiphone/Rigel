@@ -5,7 +5,7 @@
 //! runner refuses to start against a schema that is newer than the build, and refuses to
 //! run when an applied version has been renamed — both are silent-corruption bugs otherwise.
 
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 use sqlx::{Connection, SqliteConnection, SqlitePool};
 
@@ -221,6 +221,25 @@ pub enum MigrateError {
 /// lock error or an existing table. Taking the write lock first makes the second opener
 /// wait, then read the winner's result and do nothing.
 pub async fn apply(pool: &SqlitePool, migrations: &[Migration]) -> Result<Vec<i64>, MigrateError> {
+    let started = Instant::now();
+    let outcome = apply_inner(pool, migrations).await;
+    crate::telemetry::spans::record(
+        "migration",
+        serde_json::json!({
+            "operation": "apply",
+            "outcome": if outcome.is_ok() { "ok" } else { "error" },
+            "applied_count": outcome.as_ref().map(Vec::len).unwrap_or(0),
+            "migration_count": migrations.len(),
+            "duration_ms": started.elapsed().as_millis(),
+        }),
+    );
+    outcome
+}
+
+async fn apply_inner(
+    pool: &SqlitePool,
+    migrations: &[Migration],
+) -> Result<Vec<i64>, MigrateError> {
     // Foreign-key enforcement is per connection, and SQLite only honours a change to it outside
     // a transaction. A schema rebuild (0005) drops a table that children reference with
     // `ON DELETE CASCADE`, so the migration connection runs with enforcement off — otherwise
@@ -338,4 +357,30 @@ pub fn now_ms() -> i64 {
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_millis() as i64)
         .unwrap_or(0)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn migration_apply_emits_a_stable_local_span() {
+        let _guard = crate::telemetry::spans::TEST_LOCK.lock().await;
+        crate::telemetry::spans::configure(crate::telemetry::spans::Config { enabled: true });
+        let pool = sqlx::sqlite::SqlitePoolOptions::new()
+            .connect("sqlite::memory:")
+            .await
+            .unwrap();
+        apply(&pool, &[]).await.unwrap();
+
+        let spans = crate::telemetry::spans::trace_view().spans;
+        assert!(spans.iter().any(|span| {
+            span.name == "migration"
+                && span.fields["operation"] == "apply"
+                && span.fields["outcome"] == "ok"
+                && span.fields["applied_count"] == 0
+        }));
+        pool.close().await;
+        crate::telemetry::spans::configure(crate::telemetry::spans::Config::default());
+    }
 }

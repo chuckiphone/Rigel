@@ -53,6 +53,7 @@ pub mod storage;
 pub mod store;
 pub mod swarm;
 pub mod symbolimpact;
+pub mod telemetry;
 pub mod templates;
 pub mod testimpact;
 pub mod testrun;
