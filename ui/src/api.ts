@@ -429,6 +429,31 @@ export interface CloudStatus {
   last_sync_at: number | null;
 }
 
+/** Roadmap 179: the three values shown for one conflicting piece of cloud metadata. */
+export interface MetadataField {
+  name: string;
+  base: string;
+  ours: string;
+  theirs: string;
+}
+
+/** The side a reviewer picked for one field. */
+export type MetadataChoice = "base" | "ours" | "theirs";
+
+/** A recorded merge decision: the choice is not valid without an author and a timestamp. */
+export interface MergeDecision {
+  field: string;
+  choice: MetadataChoice;
+  author: string;
+  decided_at: number;
+}
+
+/** The fields under review and the decisions recorded so far. */
+export interface MetadataView {
+  fields: MetadataField[];
+  decisions: MergeDecision[];
+}
+
 /** The AgentMail inbox, as `rigel mail status` reports it. The key itself is never here. */
 export interface MailStatus {
   configured: boolean;
@@ -2473,6 +2498,15 @@ let previewQueue: PendingApproval[] = previewApprovals.map((pending) => ({ ...pe
 /** Roadmap 122: dropped files stay in memory in the browser; the shell writes real bytes. */
 const previewUploads = new Map<string, { name: string; size: number; written: number }>();
 
+/** Roadmap 179: the browser preview keeps metadata decisions in memory, just like its queue. */
+let previewMetadata: MetadataView = {
+  fields: [
+    { name: "publish_scope", base: "turns", ours: "all", theirs: "sessions" },
+    { name: "shelf_scope", base: "skills", ours: "skills", theirs: "skills" },
+  ],
+  decisions: [],
+};
+
 async function call<T>(command: string, args?: Record<string, unknown>): Promise<T> {
   const { invoke } = await import("@tauri-apps/api/core");
   return invoke<T>(command, args);
@@ -3800,17 +3834,62 @@ export const api = {
     return call<ApiBackendStatus>("backend_clear_token");
   },
 
+  /** Roadmap 179: the metadata fields in conflict and the decisions recorded so far. */
+  async cloudMetadataView(): Promise<MetadataView> {
+    if (!isTauri()) return structuredClone(previewMetadata);
+    return call<MetadataView>("cloud_metadata_view");
+  },
+
+  async cloudMetadataFields(fields: MetadataField[]): Promise<MetadataView> {
+    if (!isTauri()) {
+      previewMetadata = {
+        fields,
+        decisions: previewMetadata.decisions.filter((decision) =>
+          fields.some((field) => field.name === decision.field),
+        ),
+      };
+      return structuredClone(previewMetadata);
+    }
+    return call<MetadataView>("cloud_metadata_fields", { fields });
+  },
+
+  async cloudMetadataDecide(
+    field: string,
+    choice: MetadataChoice,
+    author: string,
+  ): Promise<MetadataView> {
+    if (!isTauri()) {
+      const name = field.trim();
+      const who = author.trim();
+      if (!who) throw new Error("A merge decision needs the author's identity.");
+      if (!previewMetadata.fields.some((candidate) => candidate.name === name)) {
+        throw new Error(`${name} is not a field under review.`);
+      }
+      previewMetadata.decisions = [
+        ...previewMetadata.decisions.filter((decision) => decision.field !== name),
+        { field: name, choice, author: who, decided_at: Date.now() },
+      ];
+      return structuredClone(previewMetadata);
+    }
+    return call<MetadataView>("cloud_metadata_decide", { field, choice, author });
+  },
+
   /** The Firebase project and account. No network call; `cloud.json` and the keychain answer. */
   async cloudStatus(): Promise<CloudStatus> {
     if (!isTauri()) {
+      // `?cloud=1` is the preview's signed-in fixture: it lets an E2E run exercise the account
+      // page's publish gate without a Firebase account or a desktop shell.
+      const signedIn =
+        typeof window !== "undefined" &&
+        new URLSearchParams(window.location.search).get("cloud") === "1";
       return {
-        configured: false,
-        project_id: null,
-        signed_in: false,
-        email: null,
-        uid: null,
-        expires_at: null,
-        email_verified: false,
+        configured: signedIn,
+        project_id: signedIn ? "preview-project" : null,
+        signed_in: signedIn,
+        email: signedIn ? "reviewer@example.com" : null,
+        uid: signedIn ? "preview-uid" : null,
+        expires_at: signedIn ? Date.now() + 3_600_000 : null,
+        email_verified: signedIn,
         app_check: null,
         last_push_at: null,
         last_pull_at: null,
