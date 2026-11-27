@@ -3208,6 +3208,69 @@ input[type="checkbox"] {
   color: var(--danger);
 }
 
+/* Roadmap 144: the on-demand health panel. One failed row never hides the others. */
+.mcp-health {
+  margin: 0 0 12px;
+  padding: 10px 12px;
+  border: 1px solid var(--hairline);
+  background: var(--raised);
+}
+
+.mcp-health-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.mcp-health-head h3 {
+  margin: 0;
+  font-size: 13px;
+}
+
+.mcp-health-summary {
+  margin: 6px 0 8px;
+}
+
+.mcp-health-list {
+  display: grid;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.mcp-health-row {
+  padding: 6px 8px;
+  border-left: 2px solid var(--hairline);
+  background: var(--surface);
+}
+
+.mcp-health-row.ready {
+  border-left-color: var(--verified);
+}
+
+.mcp-health-row.failed {
+  border-left-color: var(--danger);
+}
+
+.mcp-health-row-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.mcp-health-facts {
+  margin: 4px 0;
+  color: var(--faint);
+}
+
+.mcp-health-error {
+  margin: 4px 0 0;
+  color: var(--danger-text);
+  overflow-wrap: anywhere;
+}
+
 /* MCP result rows (roadmap 145): typed, capped, with the exact body one click away. */
 .mcp-result {
   margin: 4px 0;

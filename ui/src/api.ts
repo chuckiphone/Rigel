@@ -968,6 +968,16 @@ export interface DoorHealth {
   detail: string | null;
 }
 
+/** Roadmap 144: one declared MCP server's on-demand probe result. */
+export interface McpServerHealth {
+  name: string;
+  state: "ready" | "failed" | "unsupported";
+  latency_ms: number | null;
+  protocol_version: string | null;
+  tool_count: number;
+  last_error: string | null;
+}
+
 /** Item 18: what one picker row can do, with the source and date of the facts. */
 export interface ModelCapability {
   provider: string;
@@ -1381,6 +1391,26 @@ function previewQuote(prompt: string, spendMicros: number, capMicros: number | n
     price_stale: true,
   };
 }
+
+/** Roadmap 144: one answering server and one failed handshake, so both rows can be inspected. */
+const PREVIEW_MCP_HEALTH: McpServerHealth[] = [
+  {
+    name: "filesystem",
+    state: "ready",
+    latency_ms: 64,
+    protocol_version: "2025-06-18",
+    tool_count: 11,
+    last_error: null,
+  },
+  {
+    name: "broken-server",
+    state: "failed",
+    latency_ms: 37,
+    protocol_version: null,
+    tool_count: 0,
+    last_error: "broken-server did not answer in time",
+  },
+];
 
 /** Item 15: the preview's launch pass — one answering door and one refused key. */
 const PREVIEW_HEALTH: DoorHealth[] = [
@@ -4083,6 +4113,12 @@ export const api = {
       if (!isTauri()) throw new Error("Enable plugins in the desktop app.");
       return call<PluginRow>("plugins_set_enabled", { name, enabled });
     },
+  },
+
+  /** Roadmap 144: probe the project's declared MCP servers on demand. */
+  async mcpHealth(project: string): Promise<McpServerHealth[]> {
+    if (!isTauri()) return PREVIEW_MCP_HEALTH;
+    return call<McpServerHealth[]>("mcp_health", { project });
   },
 
   /** The embedded MCP catalogue and its project-local installer. */

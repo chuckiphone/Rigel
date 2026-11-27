@@ -8,6 +8,7 @@ pub(crate) mod audit;
 pub(crate) mod chat;
 pub(crate) mod cloud;
 pub(crate) mod coordination;
+pub(crate) mod mcp;
 pub(crate) mod memory;
 pub(crate) mod patches;
 pub(crate) mod providers;
