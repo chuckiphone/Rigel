@@ -389,6 +389,13 @@ async fn a_scripted_turn_reads_three_files_and_patches_one() {
         .map(|item| item.kind.as_str())
         .collect();
     assert_eq!(kinds.iter().filter(|kind| **kind == "mcp_call").count(), 3);
+    let read_paths = transcript[0]
+        .items
+        .iter()
+        .filter(|item| item.kind == "mcp_call")
+        .map(|item| item.body["arguments"]["path"].as_str().unwrap())
+        .collect::<Vec<_>>();
+    assert_eq!(read_paths, ["README.md", "src/lib.rs", "src/main.rs"]);
     assert_eq!(
         kinds.iter().filter(|kind| **kind == "file_change").count(),
         1

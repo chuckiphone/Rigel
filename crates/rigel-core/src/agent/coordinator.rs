@@ -1794,7 +1794,45 @@ chat_send/chat_wait.",
             }
 
             let offered_specs = self.tools.specs();
-            for call in &step.tool_calls {
+            // Run a model step concurrently only when every call is a known read-only
+            // tree operation. Mixed steps stay serial, so writes and coordinator tools
+            // retain their existing ordering and side-effect guarantees.
+            let parallel_calls = step
+                .tool_calls
+                .iter()
+                .map(|call| {
+                    let repair = super::tool_repair::repair(call, &offered_specs);
+                    let name = repair
+                        .as_ref()
+                        .map(|repair| repair.name.clone())
+                        .unwrap_or_else(|| call.name.clone());
+                    let parsed = serde_json::from_str::<serde_json::Value>(&call.arguments);
+                    let args = repair
+                        .as_ref()
+                        .map(|repair| repair.arguments.clone())
+                        .unwrap_or_else(|| {
+                            parsed.unwrap_or_else(|_| serde_json::json!({ "raw": call.arguments }))
+                        });
+                    (name, args)
+                })
+                .collect::<Vec<_>>();
+            let parallel_outcomes = if !parallel_calls.is_empty()
+                && parallel_calls
+                    .iter()
+                    .all(|(name, _)| Tools::parallel_read_only(name))
+            {
+                let tasks = parallel_calls.iter().map(|(name, args)| {
+                    self.tools
+                        .execute_for_turn(session_id, agent_id, &turn.id, name, args.clone())
+                });
+                tokio::select! {
+                    _ = token.cancelled() => None,
+                    outcomes = super::parallel::run_ordered(tasks) => Some(outcomes),
+                }
+            } else {
+                None
+            };
+            for (call_index, call) in step.tool_calls.iter().enumerate() {
                 if token.is_cancelled() {
                     last_stop = StopReason::Cancelled;
                     break;
@@ -1834,7 +1872,9 @@ chat_send/chat_wait.",
                 // `merge_subagent`, `subagent_results` and the chat tools) do not pass through
                 // `Tools::execute`. Check the project ceiling and role before this dispatch, so a
                 // model that calls a tool it was not offered is still refused.
-                let outcome = if let Some(reason) = self.tools.denied_reason(&call_name) {
+                let outcome = if let Some(outcomes) = &parallel_outcomes {
+                    outcomes[call_index].clone()
+                } else if let Some(reason) = self.tools.denied_reason(&call_name) {
                     ToolOutcome::error("NOT_ALLOWED", reason)
                 } else if call_name == "spawn_agents" {
                     let remaining = self.subagents.max_per_turn.saturating_sub(spawned);

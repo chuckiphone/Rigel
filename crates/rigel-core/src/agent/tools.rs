@@ -175,6 +175,11 @@ impl ToolOutcome {
 }
 
 impl Tools {
+    /// Only these tree reads are safe to run concurrently as a model-requested batch.
+    pub(crate) fn parallel_read_only(name: &str) -> bool {
+        matches!(name, "read_file" | "list_files")
+    }
+
     #[allow(clippy::too_many_arguments)]
     pub fn new(
         root: PathBuf,
