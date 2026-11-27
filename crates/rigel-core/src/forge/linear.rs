@@ -45,6 +45,8 @@ pub enum LinearError {
     InvalidResponse(String),
     #[error("could not access the credential store: {0}")]
     Credential(String),
+    #[error("could not configure Linear HTTP client: {0}")]
+    HttpClient(#[from] crate::net::client::ClientError),
 }
 
 impl LinearError {
@@ -76,12 +78,11 @@ pub struct HttpLinearTransport {
     client: Arc<crate::net::client::ProviderClient>,
 }
 
-impl Default for HttpLinearTransport {
-    fn default() -> Self {
-        Self {
-            client: crate::net::client::shared_provider_client("linear")
-                .expect("default HTTP client configuration is valid"),
-        }
+impl HttpLinearTransport {
+    pub fn new() -> Result<Self, LinearError> {
+        Ok(Self {
+            client: crate::net::client::shared_provider_client("linear")?,
+        })
     }
 }
 
@@ -124,15 +125,6 @@ pub struct LinearConnector {
     endpoint: String,
 }
 
-impl Default for LinearConnector {
-    fn default() -> Self {
-        Self::new(
-            Arc::new(KeychainCredentialStore),
-            Arc::new(HttpLinearTransport::default()),
-        )
-    }
-}
-
 impl LinearConnector {
     pub fn new(credentials: Arc<dyn CredentialStore>, transport: Arc<dyn LinearTransport>) -> Self {
         Self {
@@ -140,6 +132,13 @@ impl LinearConnector {
             transport,
             endpoint: LINEAR_ENDPOINT.to_string(),
         }
+    }
+
+    pub fn with_default_transport() -> Result<Self, LinearError> {
+        Ok(Self::new(
+            Arc::new(KeychainCredentialStore),
+            Arc::new(HttpLinearTransport::new()?),
+        ))
     }
 
     /// Store an OAuth token in the OS credential store for this project only.
