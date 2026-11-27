@@ -75,6 +75,17 @@ service, not the token:
 the attestation endpoint must answer with {"token": "…", "expires_at": <unix seconds>}: …
 ```
 
+A configured project never sends a Firebase request without a token. If the endpoint answers
+`200` with an empty or whitespace-only token, the client fails before the request instead of
+sending it un-attested:
+
+```
+the attestation endpoint returned an empty token
+```
+
+**Fix.** Make the attestation service mint a real token for this installation; the offline path
+says `the attestation endpoint is not reachable: …` and needs a different fix (start the service).
+
 ## MCP: the handshake did not complete
 
 ```
