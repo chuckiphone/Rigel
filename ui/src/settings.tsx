@@ -43,6 +43,7 @@ import {
   type UpdateCheck,
   type UpdateStatus,
 } from "./api";
+import { DataLocationPanel } from "./cloud-region";
 import { UI_SCALES, applyDisplay } from "./display";
 import { AboutSettingsPage } from "./about";
 import { CrashReportSurface } from "./crash-report";
@@ -1367,6 +1368,21 @@ export default function SettingsView({
       setCloudKey("");
       setCloudProject("");
       onNotice(`Firebase project ${next.project_id ?? project} saved.`);
+    } catch (failure) {
+      setError(failure instanceof Error ? failure.message : String(failure));
+    } finally {
+      setCloudBusy(false);
+    }
+  };
+
+  /** Persist the data-location pin, with the core enforcing cross-region confirmation. */
+  const saveCloudRegion = async (region: string, confirmation: string | null) => {
+    setCloudBusy(true);
+    setError(null);
+    try {
+      const next = await api.cloudSetRegion(region, confirmation);
+      setCloud(next);
+      onNotice(`Firebase data region pinned to ${next.data_region ?? region}.`);
     } catch (failure) {
       setError(failure instanceof Error ? failure.message : String(failure));
     } finally {
@@ -3538,6 +3554,12 @@ export default function SettingsView({
         </div>
         <p className="fine mono">cloud.json · in the app data folder</p>
       </section>
+
+      <DataLocationPanel
+        status={cloud}
+        busy={cloudBusy}
+        onPin={(region, confirmation) => void saveCloudRegion(region, confirmation)}
+      />
 
       <section className="settings-section">
         <div className="settings-head">

@@ -80,6 +80,22 @@ pub(crate) fn cloud_configure(
     rigel_core::cloud::Cloud::status_at(&index_dir()).map_err(message)
 }
 
+/// Pin the project's data region. An existing pin can only change with the exact move phrase.
+#[tauri::command]
+pub(crate) fn cloud_region_set(
+    region: String,
+    confirmation: Option<String>,
+) -> Result<rigel_core::cloud::CloudStatus, String> {
+    let dir = index_dir();
+    let mut config = rigel_core::cloud::CloudConfig::load(&dir)
+        .map_err(message)?
+        .ok_or_else(|| message(rigel_core::cloud::CloudError::NotConfigured))?;
+    rigel_core::cloud::region::set_pin(&mut config, &region, confirmation.as_deref())
+        .map_err(message)?;
+    rigel_core::cloud::CloudConfig::save(&dir, &config).map_err(message)?;
+    rigel_core::cloud::Cloud::status_at(&dir).map_err(message)
+}
+
 /// One sign-in. The password is used for this call and is never stored; only the refresh token
 /// reaches the OS keychain.
 #[tauri::command]

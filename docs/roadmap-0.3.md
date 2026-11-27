@@ -1484,6 +1484,9 @@ done signal, and the eight-state table is the evidence a review will use.
 180. **W5 · P2 · L · Region and residency.** `crates/rigel-core/src/cloud/region.rs` pins a project to
      a region and shows where its data lives. — done when a cross-region move needs an explicit
      confirmation and the data-location panel matches the stored region.
+    **Done (2026-11-27):** `cloud.json` persists the Firestore region pin; changing an existing
+    pin requires the exact project/from/to confirmation phrase, and Settings → Cloud shows the
+    stored value without claiming to migrate the database.
 
 ## 9. Data, storage and performance (181–192)
 

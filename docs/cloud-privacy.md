@@ -12,6 +12,11 @@ Cloud sync remains the user's own Firebase project: that project's owner is the 
 Cloud bills that project's usage to its owner, and Rigel adds no fee. A build with no such
 project configured keeps cloud off.
 
+The Cloud settings page displays the Firestore region recorded in the local `cloud.json` file.
+This is a user-maintained residency pin, not a location lookup or migration service. Changing an
+existing pin requires an exact confirmation naming the project and both regions; Firebase
+database migration itself remains the project owner's responsibility.
+
 The `rigel` model door and the room relay are separate from cloud sync. They use a Rigel API:
 by default the hosted API at `https://api.askrigel.com`, or a deployment the user runs from
 `deploy/`. Settings → Rigel API records the choice in `backend.json`; the relay credential is in

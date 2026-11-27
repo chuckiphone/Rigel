@@ -27,6 +27,16 @@ sent unless you press a button or turn on automatic publishing. A session is pub
 press **Publish to phone**, when you press **Publish all sessions** in Settings → Cloud, or after
 each finished turn once **publish every session automatically** is on (it is off by default).
 
+## Data location
+
+Settings → Cloud shows the Firestore region pin stored in the local `cloud.json` configuration.
+Pin the region selected when the Firebase Firestore database was created. The pin is local
+project metadata; it does not move cloud documents or change the database's actual location.
+Changing an existing pin requires typing `MOVE <project-id> FROM <current-region> TO
+<target-region>` before Rigel saves the new value. Firebase does not move an existing Firestore
+database in place, so arrange and complete any physical migration with Firebase before changing
+the pin. An unpinned project is shown as such rather than guessing its location.
+
 ## Setup, once
 
 1. **Create the project.** In the [Firebase console](https://console.firebase.google.com) create a
