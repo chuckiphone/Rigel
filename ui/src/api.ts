@@ -9,7 +9,8 @@
  * drift out of sync, and the same JSON the CLI prints under `--json`.
  */
 
-import { previewAgents, previewApprovals, previewMemoryFacts } from "./sessionMock";
+import { previewAgents, previewApprovals, previewMemoryFacts, previewTranscript } from "./sessionMock";
+import { previewRows } from "./publish-preview";
 import { ABOUT_LICENCES } from "./about-licences";
 
 export interface Session {
@@ -427,6 +428,27 @@ export interface CloudStatus {
   last_push_at: number | null;
   last_pull_at: number | null;
   last_sync_at: number | null;
+}
+
+/** Roadmap 164: what one publication is allowed to carry beyond the prompt and reply. */
+export interface PublishScope {
+  tool_output: boolean;
+  diffs: boolean;
+}
+
+/** One row publishing a session would expose, whether or not it is currently redacted. */
+export interface PublishRow {
+  kind: string;
+  label: string;
+  value: string;
+  redacted: boolean;
+}
+
+/** The full row list and the scope that produced it. */
+export interface PublishPreview {
+  session_id: string;
+  scope: PublishScope;
+  rows: PublishRow[];
 }
 
 /** Roadmap 179: the three values shown for one conflicting piece of cloud metadata. */
@@ -2498,6 +2520,9 @@ let previewQueue: PendingApproval[] = previewApprovals.map((pending) => ({ ...pe
 /** Roadmap 122: dropped files stay in memory in the browser; the shell writes real bytes. */
 const previewUploads = new Map<string, { name: string; size: number; written: number }>();
 
+/** Roadmap 164: publication scopes are per session; the preview keeps them in memory. */
+const previewPublishScopes = new Map<string, PublishScope>();
+
 /** Roadmap 179: the browser preview keeps metadata decisions in memory, just like its queue. */
 let previewMetadata: MetadataView = {
   fields: [
@@ -3832,6 +3857,30 @@ export const api = {
   async backendClearToken(): Promise<ApiBackendStatus> {
     if (!isTauri()) throw new Error("The relay credential is saved in the desktop app.");
     return call<ApiBackendStatus>("backend_clear_token");
+  },
+
+  /** Roadmap 164: the rows a session's publication would expose, before the click. */
+  async cloudPublishPreview(project: string, session: string): Promise<PublishPreview> {
+    const scope = previewPublishScopes.get(session) ?? { tool_output: false, diffs: false };
+    if (!isTauri()) {
+      return previewRows(session, previewTranscript, scope);
+    }
+    return call<PublishPreview>("cloud_publish_preview", { project, session });
+  },
+
+  async cloudPublishScope(session: string): Promise<PublishScope> {
+    if (!isTauri()) {
+      return previewPublishScopes.get(session) ?? { tool_output: false, diffs: false };
+    }
+    return call<PublishScope>("cloud_publish_scope", { session });
+  },
+
+  async cloudPublishScopeSet(session: string, scope: PublishScope): Promise<PublishScope> {
+    if (!isTauri()) {
+      previewPublishScopes.set(session, scope);
+      return scope;
+    }
+    return call<PublishScope>("cloud_publish_scope_set", { session, scope });
   },
 
   /** Roadmap 179: the metadata fields in conflict and the decisions recorded so far. */

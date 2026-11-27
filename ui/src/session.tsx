@@ -54,6 +54,7 @@ import McpResult from "./mcp-result";
 import { UPLOAD_CHUNK_BYTES } from "./composer/dropzone";
 import { MemoryInspector } from "./inspector/memory";
 import CompareTurns from "./compare-turns";
+import PublishPreviewPanel from "./publish-preview";
 import { RequestInspector, RequestInspectorPreview, fromUsage } from "./inspector/request";
 import { StepCost } from "./inspector/step-cost";
 import { Recovery } from "./recovery";
@@ -570,6 +571,7 @@ export default function SessionView({
   const [exporting, setExporting] = useState(false);
   const [forking, setForking] = useState(false);
   const [publishing, setPublishing] = useState(false);
+  const [publishPreview, setPublishPreview] = useState<import("./api").PublishPreview | null>(null);
   const [testRun, setTestRun] = useState<TestRun | null>(null);
   const [testRunning, setTestRunning] = useState(false);
   const testRunFor = useRef<string | null>(null);
@@ -3829,6 +3831,22 @@ export default function SessionView({
             {session ? (
               <button
                 className="chip"
+                title="List every row this session would publish, with tool output and diffs redacted by default"
+                onClick={() => {
+                  void api
+                    .cloudPublishPreview(project, session.id)
+                    .then(setPublishPreview)
+                    .catch((failure) =>
+                      onNotice(failure instanceof Error ? failure.message : "Preview failed."),
+                    );
+                }}
+              >
+                Publication preview
+              </button>
+            ) : null}
+            {session ? (
+              <button
+                className="chip"
                 disabled={publishing}
                 title="Send this session's prompts and replies to your Firebase project, where the phone can read them"
                 onClick={() => {
@@ -4151,6 +4169,17 @@ export default function SessionView({
             </div>
           </>
         )}
+
+        {publishPreview ? (
+          <PublishPreviewPanel
+            preview={publishPreview}
+            onClose={() => setPublishPreview(null)}
+            onScope={async (scope) => {
+              await api.cloudPublishScopeSet(publishPreview.session_id, scope);
+              return api.cloudPublishPreview(project, publishPreview.session_id);
+            }}
+          />
+        ) : null}
 
         {comparedIds
           ? (() => {
