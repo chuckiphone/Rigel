@@ -52,6 +52,8 @@ pub struct ImportReport {
 pub enum ImportError {
     #[error("history contains no valid message rows to import")]
     NoImportableRows,
+    #[error("failed to initialize imported turn")]
+    TurnNotInitialized,
     #[error(transparent)]
     Session(#[from] SessionError),
     #[error(transparent)]
@@ -129,7 +131,9 @@ pub async fn import_history(
             if active_turn.is_none() {
                 active_turn = Some(sessions.append_turn(&agent.id, None).await?.id);
             }
-            let turn_id = active_turn.as_deref().expect("turn was initialized");
+            let turn_id = active_turn
+                .as_deref()
+                .ok_or(ImportError::TurnNotInitialized)?;
             let status = if event.kind == "error" { "error" } else { "ok" };
             let item = sessions
                 .append_item(turn_id, &event.kind, status, &event.body, &event.body)
