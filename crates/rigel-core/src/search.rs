@@ -13,6 +13,9 @@ use std::collections::HashSet;
 use serde::Serialize;
 use sqlx::SqlitePool;
 
+pub mod query;
+pub use query::{SearchQuery, SearchResult, search as search_history};
+
 /// One section's cap is chosen by the caller; these bounds keep a bad bind from asking for the
 /// whole history.
 pub const MAX_HITS: usize = 25;
