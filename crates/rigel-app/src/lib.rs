@@ -687,12 +687,30 @@ pub struct PaletteSkill {
     pub source: String,
 }
 
+/// Roadmap 113: a file the palette can open, from the project's code graph.
+#[derive(Debug, Clone, Serialize)]
+pub struct PaletteFile {
+    pub path: String,
+    pub language: String,
+}
+
+/// Roadmap 113: a symbol the palette can jump to, with its recorded line.
+#[derive(Debug, Clone, Serialize)]
+pub struct PaletteSymbol {
+    pub name: String,
+    pub path: String,
+    pub line: Option<usize>,
+    pub language: String,
+}
+
 #[derive(Debug, Clone, Serialize)]
 pub struct PaletteResults {
     pub skills: Vec<PaletteSkill>,
     pub sessions: Vec<rigel_core::SessionHit>,
     pub turns: Vec<rigel_core::TurnHit>,
     pub patches: Vec<rigel_core::PatchHit>,
+    pub files: Vec<PaletteFile>,
+    pub symbols: Vec<PaletteSymbol>,
 }
 
 /// Reconcile a session with the tree and the patch journal (P3.11).

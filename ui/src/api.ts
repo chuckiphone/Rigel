@@ -90,11 +90,25 @@ export interface PalettePatch {
   created_at: number;
 }
 
+export interface PaletteFile {
+  path: string;
+  language: string;
+}
+
+export interface PaletteSymbol {
+  name: string;
+  path: string;
+  line: number | null;
+  language: string;
+}
+
 export interface PaletteResults {
   skills: PaletteSkill[];
   sessions: PaletteSession[];
   turns: PaletteTurn[];
   patches: PalettePatch[];
+  files: PaletteFile[];
+  symbols: PaletteSymbol[];
 }
 
 export interface Settings {
@@ -3034,7 +3048,27 @@ export const api = {
     currentSession: string | null,
   ): Promise<PaletteResults> {
     if (!isTauri()) {
-      return { skills: [], sessions: [], turns: [], patches: [] };
+      return {
+        skills: [],
+        sessions: [
+          {
+            id: "preview-session-1",
+            title: "Fix the flaky resume test",
+            status: "active",
+            created_at: 1_760_961_600_000,
+          },
+        ],
+        turns: [],
+        patches: [],
+        files: [
+          { path: "crates/rigel-core/src/diff/word.rs", language: "rust" },
+          { path: "ui/src/palette.tsx", language: "typescript" },
+        ],
+        symbols: [
+          { name: "word_diff", path: "crates/rigel-core/src/diff/word.rs", line: 47, language: "rust" },
+          { name: "paletteEntries", path: "ui/src/palette.ts", line: 76, language: "typescript" },
+        ],
+      };
     }
     return call<PaletteResults>("search_all", { project, query, currentSession });
   },
