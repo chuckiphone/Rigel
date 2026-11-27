@@ -117,7 +117,7 @@ impl AppCheck {
 
         let answer = self.fetch().await?;
         let token = require_attestation(true, Some(&answer.token))?
-            .expect("a configured project always has a token here");
+            .ok_or_else(|| CloudError::AppCheck(EMPTY_TOKEN_ERROR.to_string()))?;
 
         let now = now_ms();
         let expires_at = answer.expires_at.saturating_mul(1_000);
