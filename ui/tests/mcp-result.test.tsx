@@ -83,3 +83,21 @@ test("the panel shows typed rows, a visible cap marker and no raw body until ask
   assert.match(cappedHtml, new RegExp(`Truncated at ${RESULT_CHAR_CAP} characters`));
   assert.match(cappedHtml, /1 more row hidden/);
 });
+
+test("an unsafe image in a transcript body is refused, never rendered as an img", () => {
+  const html = renderToStaticMarkup(
+    <McpResult
+      body={{
+        tool: "unsafe_image",
+        result: {
+          content: [
+            { type: "image", mimeType: "image/png", data: "javascript:alert(1)" },
+          ],
+        },
+      }}
+    />,
+  );
+  assert.match(html, /image · source refused/);
+  assert.doesNotMatch(html, /<img/);
+  assert.match(html, /MCP result · unsafe_image/);
+});
