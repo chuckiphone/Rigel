@@ -112,7 +112,8 @@ test("open, send, approve and diff with Tab and Enter only", async ({ page }) =>
   await expect(page.getByRole("region", { name: "Transcript" })).toBeVisible();
 
   // Send: the composer takes a draft, Enter opens the review card, and its send is a Tab away.
-  const composerStops = await tabTo(page, placeholder("Ask the agent"));
+  // The transcript bar now carries eight filter chips and a search field before the composer.
+  const composerStops = await tabTo(page, placeholder("Ask the agent"), 120);
   await page.keyboard.type("Keyboard-only turn");
   await page.keyboard.press("Enter");
   const review = page.getByRole("region", { name: "Prompt refinement" });
