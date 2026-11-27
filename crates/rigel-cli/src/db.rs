@@ -231,24 +231,52 @@ async fn decrypt(project: &Path) -> ExitCode {
     }
 }
 
+/// `PRAGMA wal_checkpoint` answers three integers. Read them with checked accessors: a
+/// different SQLite build or a malformed answer must be a named error, never a panic on a row.
+fn checkpoint_report(
+    path: &Path,
+    mode: CheckpointMode,
+    row: &sqlx::sqlite::SqliteRow,
+) -> Result<CheckpointReport, String> {
+    if row.columns().len() < 3 {
+        return Err(format!(
+            "wal_checkpoint returned {} column(s), expected 3",
+            row.columns().len()
+        ));
+    }
+    let read = |index: usize, name: &str| {
+        row.try_get::<i32, _>(index)
+            .map_err(|error| format!("wal_checkpoint {name} column: {error}"))
+    };
+    Ok(CheckpointReport {
+        path: path.to_path_buf(),
+        mode: mode.pragma().to_ascii_lowercase(),
+        busy: read(0, "busy")?,
+        wal_frames: read(1, "wal_frames")?,
+        checkpointed_frames: read(2, "checkpointed_frames")?,
+    })
+}
+
 async fn checkpoint(project: &Path, mode: CheckpointMode, as_json: bool) -> ExitCode {
     let (path, pool) = match open_maintenance(project).await {
         Ok(open) => open,
         Err(error) => return fail(&error),
     };
     let pragma = format!("PRAGMA wal_checkpoint({})", mode.pragma());
-    let row = match sqlx::query(&pragma).fetch_one(&pool).await {
-        Ok(row) => row,
+    let result = async {
+        let row = sqlx::query(&pragma)
+            .fetch_one(&pool)
+            .await
+            .map_err(|error| error.to_string())?;
+        checkpoint_report(&path, mode, &row)
+    }
+    .await;
+    // Close on both paths: a failed pragma must not leave a pooled connection holding the DB.
+    pool.close().await;
+    let report = match result {
+        Ok(report) => report,
         Err(error) => return fail(&error),
     };
-    let report = CheckpointReport {
-        path,
-        mode: mode.pragma().to_ascii_lowercase(),
-        busy: row.get(0),
-        wal_frames: row.get(1),
-        checkpointed_frames: row.get(2),
-    };
-    pool.close().await;
     if as_json {
         println!("{}", json!(report));
     } else {
@@ -269,9 +297,13 @@ async fn analyze(project: &Path) -> ExitCode {
         Ok(open) => open,
         Err(error) => return fail(&error),
     };
-    match sqlx::query("ANALYZE").execute(&pool).await {
+    let result = sqlx::query("ANALYZE")
+        .execute(&pool)
+        .await
+        .map_err(|error| error.to_string());
+    pool.close().await;
+    match result {
         Ok(_) => {
-            pool.close().await;
             println!("updated query planner statistics for {}", path.display());
             ExitCode::SUCCESS
         }
@@ -284,11 +316,12 @@ async fn size(project: &Path, as_json: bool) -> ExitCode {
         Ok(open) => open,
         Err(error) => return fail(&error),
     };
-    let report = match size_report(&path, &pool).await {
+    let result = size_report(&path, &pool).await;
+    pool.close().await;
+    let report = match result {
         Ok(report) => report,
         Err(error) => return fail(&error),
     };
-    pool.close().await;
     if as_json {
         println!("{}", json!(report));
     } else {
@@ -319,9 +352,13 @@ async fn vacuum(project: &Path) -> ExitCode {
     // VACUUM is issued outside a transaction. In WAL mode SQLite can rebuild the file while
     // application readers continue using their snapshots; busy_timeout lets concurrent writers
     // finish instead of returning SQLITE_BUSY immediately.
-    match sqlx::query("VACUUM").execute(&pool).await {
+    let result = sqlx::query("VACUUM")
+        .execute(&pool)
+        .await
+        .map_err(|error| error.to_string());
+    pool.close().await;
+    match result {
         Ok(_) => {
-            pool.close().await;
             println!("vacuumed {}", path.display());
             ExitCode::SUCCESS
         }
@@ -359,10 +396,16 @@ async fn open_maintenance(project: &Path) -> Result<(PathBuf, SqlitePool), Strin
         .connect_with(options)
         .await
         .map_err(|error| format!("could not open {}: {error}", path.display()))?;
-    let journal_mode: String = sqlx::query_scalar("PRAGMA journal_mode")
+    let journal_mode: String = match sqlx::query_scalar("PRAGMA journal_mode")
         .fetch_one(&pool)
         .await
-        .map_err(|error| error.to_string())?;
+    {
+        Ok(mode) => mode,
+        Err(error) => {
+            pool.close().await;
+            return Err(error.to_string());
+        }
+    };
     if !journal_mode.eq_ignore_ascii_case("wal") {
         pool.close().await;
         return Err(format!(
@@ -463,6 +506,29 @@ mod tests {
                 .iter()
                 .all(|table| table.pages > 0 && table.bytes > 0)
         );
+        pool.close().await;
+    }
+
+    #[tokio::test]
+    async fn checkpoint_report_never_panics_on_a_short_row() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("rigel.db");
+        let pool = fixture(&path).await;
+
+        let short = sqlx::query("SELECT 1 AS busy")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        let error = checkpoint_report(&path, CheckpointMode::Passive, &short).unwrap_err();
+        assert!(error.contains("expected 3"), "{error}");
+
+        let full = sqlx::query("PRAGMA wal_checkpoint(PASSIVE)")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        let report = checkpoint_report(&path, CheckpointMode::Passive, &full).unwrap();
+        assert_eq!(report.busy, 0);
+        assert_eq!(report.mode, "passive");
         pool.close().await;
     }
 

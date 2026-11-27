@@ -33,6 +33,10 @@ pub enum AttachmentError {
     Corrupted(String),
     #[error("session id {0} is not a safe reference key")]
     UnsafeSessionId(String),
+    #[error("project {0} is not a single safe path component")]
+    UnsafeProject(String),
+    #[error("hash {0} is not a 64-character lowercase hex digest")]
+    UnsafeHash(String),
 }
 
 #[derive(Debug, Clone)]
@@ -53,6 +57,31 @@ fn safe_session_id(session_id: &str) -> bool {
         && session_id != "."
         && session_id != ".."
         && !session_id.contains(['/', '\\', ':', '\0'])
+}
+
+/// A project key becomes one directory name below the store root.
+fn safe_project(project: &str) -> bool {
+    safe_session_id(project)
+}
+
+/// Content addresses are exactly what `sha256_hex` produces: lowercase hex, 64 characters.
+fn safe_hash(hash: &str) -> bool {
+    hash.len() == 64
+        && hash
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+}
+
+fn check_inputs(project: &str, hash: Option<&str>) -> Result<(), AttachmentError> {
+    if !safe_project(project) {
+        return Err(AttachmentError::UnsafeProject(project.to_string()));
+    }
+    if let Some(hash) = hash
+        && !safe_hash(hash)
+    {
+        return Err(AttachmentError::UnsafeHash(hash.to_string()));
+    }
+    Ok(())
 }
 
 /// Store a blob and record that one session references it.
@@ -136,6 +165,9 @@ impl AttachmentStore {
 
     /// Current usage (bytes, count) for a project.
     pub fn usage(&self, project: &str) -> (u64, usize) {
+        if !safe_project(project) {
+            return (0, 0);
+        }
         let dir = self.project_dir(project);
         if !dir.exists() {
             return (0, 0);
@@ -165,6 +197,7 @@ impl AttachmentStore {
         mime_type: &str,
     ) -> Result<Attachment, AttachmentError> {
         self.validate_type(mime_type)?;
+        check_inputs(project, None)?;
         self.ensure_project(project)?;
         let hash = sha256_hex(data);
 
@@ -209,6 +242,7 @@ impl AttachmentStore {
 
     /// Read an attachment, verifying its hash.
     pub fn get(&self, project: &str, hash: &str) -> Result<Vec<u8>, AttachmentError> {
+        check_inputs(project, Some(hash))?;
         let path = self.blob_path(project, hash);
         if !path.exists() {
             return Err(AttachmentError::NotFound(hash.to_string()));
@@ -223,7 +257,7 @@ impl AttachmentStore {
 
     /// Whether an attachment exists.
     pub fn contains(&self, project: &str, hash: &str) -> bool {
-        self.blob_path(project, hash).exists()
+        safe_project(project) && safe_hash(hash) && self.blob_path(project, hash).exists()
     }
 
     fn refs_path(&self, project: &str, hash: &str) -> PathBuf {
@@ -248,6 +282,7 @@ impl AttachmentStore {
         hash: &str,
         session_id: &str,
     ) -> Result<(), AttachmentError> {
+        check_inputs(project, Some(hash))?;
         if !safe_session_id(session_id) {
             return Err(AttachmentError::UnsafeSessionId(session_id.to_string()));
         }
@@ -276,11 +311,17 @@ impl AttachmentStore {
 
     /// Sessions currently referencing one blob.
     pub fn sessions_for(&self, project: &str, hash: &str) -> Vec<String> {
+        if !safe_project(project) || !safe_hash(hash) {
+            return Vec::new();
+        }
         self.read_refs(project, hash).into_iter().collect()
     }
 
     /// Every blob referenced by one session, for a caller that owns its own purge.
     pub fn referenced_by(&self, project: &str, session_id: &str) -> HashSet<String> {
+        if !safe_project(project) || !safe_session_id(session_id) {
+            return HashSet::new();
+        }
         let dir = self.project_dir(project);
         let mut out = HashSet::new();
         let Ok(entries) = fs::read_dir(dir) else {
@@ -305,6 +346,7 @@ impl AttachmentStore {
         project: &str,
         session_id: &str,
     ) -> Result<Vec<String>, AttachmentError> {
+        check_inputs(project, None)?;
         if !safe_session_id(session_id) {
             return Err(AttachmentError::UnsafeSessionId(session_id.to_string()));
         }
@@ -334,6 +376,7 @@ impl AttachmentStore {
         project: &str,
         referenced: &HashSet<String>,
     ) -> Result<Vec<String>, AttachmentError> {
+        check_inputs(project, None)?;
         let dir = self.project_dir(project);
         if !dir.exists() {
             return Ok(Vec::new());
@@ -364,6 +407,7 @@ impl AttachmentStore {
 
     /// List attachment hashes for a project.
     pub fn list(&self, project: &str) -> Result<Vec<String>, AttachmentError> {
+        check_inputs(project, None)?;
         let dir = self.project_dir(project);
         if !dir.exists() {
             return Ok(Vec::new());
@@ -503,6 +547,55 @@ mod tests {
         assert!(matches!(
             store.reference("p", &shared.hash, "../escape"),
             Err(AttachmentError::UnsafeSessionId(_))
+        ));
+    }
+
+    #[test]
+    fn unsafe_project_and_hash_inputs_are_refused() {
+        let (dir, store) = store();
+        for project in ["../escape", "p/q", "p\\q", "/absolute", "..", ""] {
+            assert!(
+                matches!(
+                    store.put(project, b"x", "text/plain"),
+                    Err(AttachmentError::UnsafeProject(_))
+                ),
+                "{project} is not one path component"
+            );
+            assert!(matches!(
+                store.list(project),
+                Err(AttachmentError::UnsafeProject(_))
+            ));
+            assert!(matches!(
+                store.get(project, &"a".repeat(64)),
+                Err(AttachmentError::UnsafeProject(_))
+            ));
+        }
+        assert_eq!(
+            std::fs::read_dir(dir.path()).unwrap().count(),
+            0,
+            "nothing escaped the root"
+        );
+
+        let good = store.put("p", b"x", "text/plain").unwrap();
+        for hash in [
+            "short".to_string(),
+            "g".repeat(64),
+            good.hash.to_uppercase(),
+        ] {
+            assert!(
+                matches!(store.get("p", &hash), Err(AttachmentError::UnsafeHash(_))),
+                "{hash}"
+            );
+            assert!(!store.contains("p", &hash));
+        }
+        assert!(store.get("p", &good.hash).is_ok());
+        assert!(matches!(
+            store.reference("p", "../escape", "s1"),
+            Err(AttachmentError::UnsafeHash(_))
+        ));
+        assert!(matches!(
+            store.purge("../escape", &HashSet::new()),
+            Err(AttachmentError::UnsafeProject(_))
         ));
     }
 

@@ -155,8 +155,17 @@ impl SkillLockfile {
         for root in roots {
             for (directory, body) in &ready {
                 let folder = root.join(directory);
-                fs::create_dir_all(&folder)?;
                 let path = folder.join("SKILL.md");
+                // A restore writes whatever the lockfile says into the harness store. A
+                // pre-existing symlink at any of those three names would turn that write into
+                // an arbitrary file write outside the store, so refuse before touching it.
+                ensure_no_symlink(root)?;
+                ensure_no_symlink(&folder)?;
+                ensure_no_symlink(&path)?;
+                fs::create_dir_all(&folder)?;
+                // Re-check: creating the directory must not be a way around the first check.
+                ensure_no_symlink(&folder)?;
+                ensure_no_symlink(&path)?;
                 fs::write(&path, body)?;
                 paths.push(path);
             }
@@ -165,6 +174,19 @@ impl SkillLockfile {
             restored: self.skills.len(),
             paths,
         })
+    }
+}
+
+/// A missing path is fine; a symlink is not. `symlink_metadata` does not follow the link.
+fn ensure_no_symlink(path: &Path) -> Result<(), SkillsError> {
+    match fs::symlink_metadata(path) {
+        Ok(metadata) if metadata.file_type().is_symlink() => Err(lock_error(format!(
+            "refusing to restore through symlink {}",
+            path.display()
+        ))),
+        Ok(_) => Ok(()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(error.into()),
     }
 }
 
@@ -294,5 +316,70 @@ mod tests {
             .unwrap_err();
         assert!(error.to_string().contains("missing") || error.to_string().contains("mismatch"));
         assert!(!root.exists());
+    }
+
+    #[test]
+    fn a_missing_target_is_fine_but_an_existing_symlink_is_refused() {
+        let dir = TempDir::new().unwrap();
+        assert!(ensure_no_symlink(&dir.path().join("missing")).is_ok());
+        let regular = dir.path().join("regular");
+        fs::write(&regular, b"ok").unwrap();
+        assert!(ensure_no_symlink(&regular).is_ok());
+
+        let link = dir.path().join("link");
+        let linked = symlink(&regular, &link);
+        if linked.is_err() {
+            // Creating symlinks needs a privilege on some Windows machines; the check itself is
+            // still exercised above on ordinary and missing paths.
+            eprintln!("skipping symlink case: {:?}", linked.err());
+            return;
+        }
+        let error = ensure_no_symlink(&link).unwrap_err();
+        assert!(error.to_string().contains("symlink"), "{error}");
+    }
+
+    #[test]
+    fn restore_does_not_write_through_a_pre_existing_symlink() {
+        let data = TempDir::new().unwrap();
+        let project = TempDir::new().unwrap();
+        let body = b"---\nname: Locked Setup\nversion: 2.1\n---\n# Setup\n";
+        let hash = sha256_hex(body);
+        BlobStore::new(data.path()).put(body).unwrap();
+        let lock = SkillLockfile {
+            format_version: LOCK_FORMAT_VERSION,
+            skills: vec![LockedSkill {
+                id: "builtin:locked-setup".into(),
+                name: "Locked Setup".into(),
+                version: "2.1".into(),
+                hash,
+                source: "builtin".into(),
+            }],
+        };
+        let root = project.path().join("skills");
+        let folder = root.join("locked-setup");
+        fs::create_dir_all(&folder).unwrap();
+        let outside = project.path().join("outside.txt");
+        fs::write(&outside, b"do not overwrite").unwrap();
+        let target = folder.join("SKILL.md");
+        if symlink(&outside, &target).is_err() {
+            eprintln!("skipping symlink restore case: no privilege to create one");
+            return;
+        }
+
+        let error = lock
+            .restore(data.path(), project.path(), std::slice::from_ref(&root))
+            .unwrap_err();
+        assert!(error.to_string().contains("symlink"), "{error}");
+        assert_eq!(fs::read(&outside).unwrap(), b"do not overwrite");
+    }
+
+    #[cfg(unix)]
+    fn symlink(target: &Path, link: &Path) -> std::io::Result<()> {
+        std::os::unix::fs::symlink(target, link)
+    }
+
+    #[cfg(windows)]
+    fn symlink(target: &Path, link: &Path) -> std::io::Result<()> {
+        std::os::windows::fs::symlink_file(target, link)
     }
 }
