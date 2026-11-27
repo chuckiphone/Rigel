@@ -2530,6 +2530,42 @@ let previewQueue: PendingApproval[] = previewApprovals.map((pending) => ({ ...pe
 /** Roadmap 122: dropped files stay in memory in the browser; the shell writes real bytes. */
 const previewUploads = new Map<string, { name: string; size: number; written: number }>();
 
+/** Roadmap 132: the browser preview's patch hunks and recorded verdicts. */
+const previewVerdicts: Item[] = [];
+
+function previewDiffHunks(): AttributedHunk[] {
+  return [
+    {
+      id: "hunk-1",
+      patch_id: "patch-preview-1",
+      path: "crates/rigel-core/src/diff/word.rs",
+      ordinal: 1,
+      agent_id: "agent-preview-worker",
+      header: "@@ -12,6 +12,9 @@ fn word_diff",
+      old_start: 12,
+      old_lines: 6,
+      new_start: 12,
+      new_lines: 9,
+      created_at: 1_760_961_600_000,
+      status: "applied",
+    },
+    {
+      id: "hunk-2",
+      patch_id: "patch-preview-2",
+      path: "ui/src/session.tsx",
+      ordinal: 1,
+      agent_id: "agent-preview-reviewer",
+      header: "@@ -40,3 +40,7 @@ export default function Session",
+      old_start: 40,
+      old_lines: 3,
+      new_start: 40,
+      new_lines: 7,
+      created_at: 1_760_961_601_000,
+      status: "applied",
+    },
+  ];
+}
+
 /** Roadmap 164: publication scopes are per session; the preview keeps them in memory. */
 const previewPublishScopes = new Map<string, PublishScope>();
 
@@ -3492,7 +3528,49 @@ export const api = {
   },
 
   async patchHunks(project: string, session: string): Promise<AttributedHunk[]> {
+    if (!isTauri()) return previewDiffHunks();
     return call<AttributedHunk[]>("patch_hunks", { project, session });
+  },
+
+  /**
+   * Roadmap 132: the verdict is written through the same turn-item path the desktop app uses. The
+   * browser preview keeps it in memory so the flow can be exercised without a project database.
+   */
+  async diffReviewRecordVerdict(
+    project: string,
+    turn: string,
+    reviewer: string,
+    accepted: string[],
+    totalHunks: number,
+  ): Promise<Item> {
+    const who = reviewer.trim();
+    if (!who) throw new Error("A verdict must name the reviewer.");
+    if (!isTauri()) {
+      const stored: Item = {
+        id: `preview-verdict-${Date.now()}`,
+        turn_id: turn,
+        seq: previewVerdicts.length + 1,
+        kind: "note",
+        status: "verdict",
+        body: {
+          kind: "diff_review_verdict",
+          reviewer: who,
+          accepted,
+          hunks: totalHunks,
+          created_at: Date.now(),
+        },
+        created_at: Date.now(),
+      };
+      previewVerdicts.push(stored);
+      return stored;
+    }
+    return call<Item>("diff_review_record_verdict", {
+      project,
+      turn,
+      reviewer: who,
+      accepted,
+      total_hunks: totalHunks,
+    });
   },
 
   async hunkComments(project: string, session: string): Promise<HunkComment[]> {
