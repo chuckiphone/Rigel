@@ -58,6 +58,7 @@ mod control;
 mod mcp_catalog;
 pub mod notify;
 mod relay;
+pub mod setup;
 mod terminal;
 mod tray;
 mod tray_status;
@@ -2234,6 +2235,11 @@ pub fn run() {
             commands::cloud::cloud_metadata_view,
             commands::cloud::cloud_metadata_decide,
             commands::shell::usage_summary,
+            commands::setup::setup_probe_os,
+            commands::setup::setup_probe_shell,
+            commands::setup::setup_probe_git,
+            commands::setup::setup_probe_providers,
+            commands::setup::setup_probe_harnesses,
             commands::shell::tray_snapshot,
             commands::shell::tray_pause_all,
             commands::shell::notify_routing_table,

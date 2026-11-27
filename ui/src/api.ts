@@ -1903,6 +1903,15 @@ const PREVIEW_PROVIDERS: ProviderRow[] = [
   },
 ];
 
+/** Roadmap 108: one first-run setup step and the finding a real probe produced. */
+export type SetupStep = "os" | "shell" | "git" | "providers" | "harnesses";
+
+export interface SetupFinding {
+  step: SetupStep;
+  detail: string;
+  skipped: boolean;
+}
+
 /** One row of `adapters.json` (P4.1). */
 export interface HarnessInfo {
   harness: "native" | "codex" | "claude" | "muse" | "cursor" | "cline" | "gemini";
@@ -4442,6 +4451,31 @@ export const api = {
       if (!isTauri()) return previewRefinement(request);
       return call<PromptRefinement>("prompt_refine", { project, request });
     },
+  },
+
+  /**
+   * Roadmap 108: one real probe. In the browser preview the finding names what the browser can
+   * actually observe; in the app every step is a Tauri command backed by the core.
+   */
+  async setupProbe(step: SetupStep): Promise<SetupFinding> {
+    if (!isTauri()) {
+      // `?slow=1` lets an E2E run observe that progress does not move while a probe is pending.
+      if (new URLSearchParams(window.location.search).get("slow") === "1") {
+        await new Promise((resolve) => setTimeout(resolve, 600));
+      }
+      const detail: Record<SetupStep, string> = {
+        os:
+          typeof navigator !== "undefined" && navigator.userAgent
+            ? navigator.userAgent
+            : "unknown platform",
+        shell: "browser preview: no shell is attached",
+        git: "browser preview: git is not reachable from the renderer",
+        providers: PREVIEW_PROVIDERS.map((row) => `${row.id}: ${row.key_present ? "key" : "no key"}`).join(" · "),
+        harnesses: PREVIEW_HARNESSES.map((row) => `${row.harness}: ${row.installed ? row.version ?? "installed" : "missing"}`).join(" · "),
+      };
+      return { step, detail: detail[step], skipped: false };
+    }
+    return call<SetupFinding>(`setup_probe_${step}`);
   },
 
   /** Roadmap 114: the routing table the emitter uses, rendered in Settings → Notifications. */
