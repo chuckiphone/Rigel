@@ -129,7 +129,13 @@ async function installProbe() {
       probe.errors.push(String((event as PromiseRejectionEvent).reason)),
     );
     holder.navigation?.addEventListener("navigate", (event) => {
-      probe.navigations.push(event.destination?.url ?? "");
+      const destination = event.destination?.url ?? "";
+      // The app routes inside the hash with history.replaceState (#sessions, #settings/...).
+      // Those are same-document navigations, not the ad opening a page: a click that leaves the
+      // document is the only navigation this probe is looking for.
+      const here = window.location.href.split("#")[0];
+      const there = destination.split("#")[0];
+      if (here !== there) probe.navigations.push(destination);
     });
   });
 }
@@ -480,6 +486,7 @@ describe("Gravity end to end", () => {
       console.log(`session click probe: ${JSON.stringify(afterClick)}`);
       expect(afterClick.violations).toEqual([]);
       expect(afterClick.errors).toEqual([]);
+      // The ad must not open a page in this document; the app's own #sessions hash is filtered.
       expect(afterClick.navigations).toEqual([]);
 
       await openRail("Home");

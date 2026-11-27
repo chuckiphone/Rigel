@@ -11,7 +11,12 @@ fn explain_prints_the_winner_and_a_conflict() {
     fs::write(dir.path().join(".cursor/rules/x.md"), "rule B").unwrap();
 
     let output = Command::new(env!("CARGO_BIN_EXE_rigel"))
-        .args(["rules", "explain", "--project", dir.path().to_str().unwrap()])
+        .args([
+            "rules",
+            "explain",
+            "--project",
+            dir.path().to_str().unwrap(),
+        ])
         .output()
         .unwrap();
     assert!(output.status.success());

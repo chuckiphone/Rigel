@@ -120,6 +120,10 @@ test("open, send, approve and diff with Tab and Enter only", async ({ page }) =>
   // While the refinement request is in flight every review action is disabled and therefore
   // skipped by Tab. Wait for the card to finish before looking for its controls.
   await expect(review).toHaveAttribute("aria-busy", "false");
+  // The review card sits above the composer in DOM order, so a Tab walk that starts in the
+  // composer wraps through the transcript's "Bookmark this line" buttons before it comes back
+  // to "Send original". Start inside the review region so the traversal tests the card itself.
+  await review.getByRole("textbox", { name: "Refined prompt" }).focus();
   const reviewStops = await tabTo(page, text("Send original"));
   await page.keyboard.press("Enter");
 

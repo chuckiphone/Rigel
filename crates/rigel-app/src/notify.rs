@@ -225,12 +225,7 @@ mod tests {
             false,
             60 * 10
         ));
-        assert!(should_notify(
-            NotifyKind::Failed,
-            &settings,
-            false,
-            60 * 10
-        ));
+        assert!(should_notify(NotifyKind::Failed, &settings, false, 60 * 10));
     }
 
     #[test]

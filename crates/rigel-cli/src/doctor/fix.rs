@@ -41,9 +41,7 @@ pub fn plan(project: &Path) -> Vec<Repair> {
     if let Ok(entries) = std::fs::read_dir(&rigel) {
         for entry in entries.flatten() {
             let name = entry.file_name().to_string_lossy().to_string();
-            if name.ends_with(".db-journal")
-                || name.ends_with(".journal")
-                || name.ends_with(".tmp")
+            if name.ends_with(".db-journal") || name.ends_with(".journal") || name.ends_with(".tmp")
             {
                 repairs.push(Repair {
                     id: "stale-journal".to_string(),
