@@ -16,6 +16,7 @@ use serde_json::json;
 
 mod audit;
 mod backup;
+mod batch;
 mod claims;
 mod cloud;
 mod completions;
@@ -30,6 +31,7 @@ mod mail;
 mod network;
 mod phase3;
 mod plugins;
+mod prompts;
 mod proof;
 mod retention;
 mod route;
@@ -41,7 +43,6 @@ mod testing;
 mod tools;
 mod update;
 mod worktree;
-mod prompts;
 
 use harness::{CodexCommand, HarnessCommand};
 use phase3::{AgentCommand, KeyCommand, MemoryCommand, PatchCommand, SnapshotCommand};
@@ -59,6 +60,9 @@ pub(crate) struct Cli {
 
 #[derive(Subcommand)]
 enum Command {
+    /// Run one task across several repositories under one spend cap.
+    Batch(batch::BatchArgs),
+
     /// Report local state. Exit 0 is all clear, 1 has warnings, 2 has failures.
     Doctor {
         #[arg(long, value_name = "PATH", default_value = ".")]
@@ -716,6 +720,8 @@ async fn entry() -> ExitCode {
     let dir = data_dir(&cli);
 
     match cli.command {
+        Command::Batch(args) => batch::run(args, dir).await,
+
         Command::Doctor {
             project,
             support_bundle,
