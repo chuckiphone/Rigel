@@ -373,9 +373,8 @@ pub async fn run(options: ServeOptions) -> ExitCode {
 
     if options.print_token {
         if options.as_json {
-            println!(
-                "{}",
-                json!({ "ok": true, "token": token, "config": path.to_string_lossy() })
+            crate::json::print(
+                json!({ "ok": true, "token": token, "config": path.to_string_lossy() }),
             );
         } else {
             println!("{token}");
@@ -510,19 +509,16 @@ pub async fn run(options: ServeOptions) -> ExitCode {
 
     let url = api.base_url();
     if options.as_json {
-        println!(
-            "{}",
-            json!({
-                "ok": true,
-                "url": url,
-                "local_url": format!("http://{host}:{port}"),
-                "token": token,
-                "config": path.to_string_lossy(),
-                "project": project.to_string_lossy(),
-                "full_access": options.full_access,
-                "openapi": format!("{url}/v1/openapi.json"),
-            })
-        );
+        crate::json::print(json!({
+            "ok": true,
+            "url": url,
+            "local_url": format!("http://{host}:{port}"),
+            "token": token,
+            "config": path.to_string_lossy(),
+            "project": project.to_string_lossy(),
+            "full_access": options.full_access,
+            "openapi": format!("{url}/v1/openapi.json"),
+        }));
     } else {
         println!("rigel api on {url}");
         if url != format!("http://{host}:{port}") {

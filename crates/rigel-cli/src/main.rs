@@ -26,6 +26,7 @@ mod handoff;
 mod harness;
 mod hooks;
 mod impact;
+pub(crate) mod json;
 mod local;
 mod mail;
 mod network;
@@ -870,7 +871,7 @@ async fn entry() -> ExitCode {
                         // caller that wants the whole roster does not need a second request.
                         println!(
                             "{}",
-                            serde_json::to_string_pretty(&rows).unwrap_or_default()
+                            crate::json::to_string_pretty(&rows).unwrap_or_default()
                         );
                     } else {
                         for option in &shown {
@@ -927,7 +928,7 @@ async fn entry() -> ExitCode {
                     if as_json {
                         println!(
                             "{}",
-                            serde_json::to_string_pretty(&report).unwrap_or_default()
+                            crate::json::to_string_pretty(&report).unwrap_or_default()
                         );
                     } else {
                         println!("total  {}", dollars(report.total_micros));
@@ -1063,10 +1064,7 @@ async fn run_skills(dir: &Path, command: SkillCommand) -> ExitCode {
             Err(error) => return skills_failure(error, *as_json),
         };
         if *as_json {
-            println!(
-                "{}",
-                serde_json::to_string_pretty(&report).unwrap_or_default()
-            );
+            crate::json::print_pretty(&report);
         } else {
             println!("restored {} locked skills", report.restored);
             for path in report.paths {
@@ -1103,7 +1101,7 @@ async fn run_skills(dir: &Path, command: SkillCommand) -> ExitCode {
                     if json {
                         println!(
                             "{}",
-                            serde_json::to_string_pretty(&report).unwrap_or_default()
+                            crate::json::to_string_pretty(&report).unwrap_or_default()
                         );
                     } else {
                         println!(
@@ -1132,15 +1130,12 @@ async fn run_skills(dir: &Path, command: SkillCommand) -> ExitCode {
             match index.search(&query, limit).await {
                 Ok(hits) => {
                     if as_json {
-                        println!(
-                            "{}",
-                            json!({
-                                "query": query,
-                                "count": hits.len(),
-                                "order": "grade -> stars -> recency",
-                                "results": hits,
-                            })
-                        );
+                        crate::json::print(json!({
+                            "query": query,
+                            "count": hits.len(),
+                            "order": "grade -> stars -> recency",
+                            "results": hits,
+                        }));
                     } else if hits.is_empty() {
                         println!(
                             "no skills match {query:?} — index a repo first: rigel skills index <repo>"
@@ -1200,9 +1195,8 @@ async fn run_skills(dir: &Path, command: SkillCommand) -> ExitCode {
                         return skills_failure(SkillsError::Io(error), as_json);
                     }
                     if as_json {
-                        println!(
-                            "{}",
-                            json!({ "detail": detail, "written": file, "body_sha": sha, "pinned": pin })
+                        crate::json::print(
+                            json!({ "detail": detail, "written": file, "body_sha": sha, "pinned": pin }),
                         );
                     } else {
                         println!("{}", file.display());
@@ -1214,7 +1208,7 @@ async fn run_skills(dir: &Path, command: SkillCommand) -> ExitCode {
                 if as_json {
                     println!(
                         "{}",
-                        serde_json::to_string_pretty(&detail).unwrap_or_default()
+                        crate::json::to_string_pretty(&detail).unwrap_or_default()
                     );
                     return ExitCode::SUCCESS;
                 }
@@ -1237,7 +1231,7 @@ async fn run_skills(dir: &Path, command: SkillCommand) -> ExitCode {
         SkillCommand::Remove { id, json: as_json } => match index.remove(&id).await {
             Ok(true) => {
                 if as_json {
-                    println!("{}", json!({ "ok": true, "removed": id }));
+                    crate::json::print(json!({ "ok": true, "removed": id }));
                 } else {
                     println!("removed    {id}");
                     println!(
@@ -1276,7 +1270,7 @@ async fn run_skills(dir: &Path, command: SkillCommand) -> ExitCode {
             {
                 Ok(report) => {
                     if as_json {
-                        println!("{}", serde_json::to_string(&report).unwrap_or_default());
+                        println!("{}", crate::json::to_string(&report).unwrap_or_default());
                     } else {
                         println!(
                             "{} skills from {}@{}  (+{} added, {} updated, {} unchanged)",
@@ -1317,7 +1311,7 @@ async fn run_skills(dir: &Path, command: SkillCommand) -> ExitCode {
                 if as_json {
                     println!(
                         "{}",
-                        serde_json::to_string_pretty(&statuses).unwrap_or_default()
+                        crate::json::to_string_pretty(&statuses).unwrap_or_default()
                     );
                 } else if statuses.is_empty() {
                     println!("no sources yet — rigel skills index <repo>");
@@ -1354,7 +1348,7 @@ async fn run_skills(dir: &Path, command: SkillCommand) -> ExitCode {
             match index.sync_marketplace(kind, &query, limit).await {
                 Ok(count) => {
                     if as_json {
-                        println!("{}", json!({ "source": source, "rows": count }));
+                        crate::json::print(json!({ "source": source, "rows": count }));
                     } else {
                         println!("{count} rows from {source}");
                     }
@@ -1418,7 +1412,7 @@ async fn run_skills(dir: &Path, command: SkillCommand) -> ExitCode {
             match index.sweep(skillhub_pages, &queries, skillsmp_pages).await {
                 Ok(report) => {
                     if as_json {
-                        println!("{}", serde_json::to_string(&report).unwrap_or_default());
+                        println!("{}", crate::json::to_string(&report).unwrap_or_default());
                     } else {
                         println!(
                             "skillhub    {} rows over {} page(s){}",
@@ -1458,7 +1452,7 @@ async fn run_skills(dir: &Path, command: SkillCommand) -> ExitCode {
                 if as_json {
                     println!(
                         "{}",
-                        serde_json::to_string_pretty(&stats).unwrap_or_default()
+                        crate::json::to_string_pretty(&stats).unwrap_or_default()
                     );
                 } else {
                     println!("skills      {}", stats.skills);
@@ -1488,7 +1482,7 @@ async fn run_skills(dir: &Path, command: SkillCommand) -> ExitCode {
                 match index.import_prototype_entries(&text).await {
                     Ok(report) => {
                         if as_json {
-                            println!("{}", serde_json::to_string(&report).unwrap_or_default());
+                            println!("{}", crate::json::to_string(&report).unwrap_or_default());
                         } else {
                             println!(
                                 "imported {} · skipped {} (already present) · invalid {}",
@@ -1505,7 +1499,7 @@ async fn run_skills(dir: &Path, command: SkillCommand) -> ExitCode {
                 match rigel_core::skills::skillssh::import(&index, &url, policy).await {
                     Ok(report) => {
                         if as_json {
-                            println!("{}", serde_json::to_string(&report).unwrap_or_default());
+                            println!("{}", crate::json::to_string(&report).unwrap_or_default());
                         } else {
                             println!(
                                 "{}  {}",
@@ -1556,17 +1550,14 @@ async fn run_skills(dir: &Path, command: SkillCommand) -> ExitCode {
             };
             if !install {
                 if as_json {
-                    println!(
-                        "{}",
-                        json!({
-                            "seeded": seeded,
-                            "skills": rigel_core::skills::builtin::all().iter().map(|skill| json!({
-                                "id": skill.id(),
-                                "name": skill.name,
-                                "path": skill.path(),
-                            })).collect::<Vec<_>>()
-                        })
-                    );
+                    crate::json::print(json!({
+                        "seeded": seeded,
+                        "skills": rigel_core::skills::builtin::all().iter().map(|skill| json!({
+                            "id": skill.id(),
+                            "name": skill.name,
+                            "path": skill.path(),
+                        })).collect::<Vec<_>>()
+                    }));
                 } else {
                     println!(
                         "indexed {} built-in skills ({}) — pass --install to copy them into the harness stores",
@@ -1613,9 +1604,8 @@ async fn run_skills(dir: &Path, command: SkillCommand) -> ExitCode {
                 }
             }
             if as_json {
-                println!(
-                    "{}",
-                    json!({ "seeded": seeded, "installed": installed, "roots": roots })
+                crate::json::print(
+                    json!({ "seeded": seeded, "installed": installed, "roots": roots }),
                 );
             } else {
                 for report in &installed {
@@ -1640,7 +1630,7 @@ async fn run_skills(dir: &Path, command: SkillCommand) -> ExitCode {
             match index.blobs().gc(&live) {
                 Ok(removed) => {
                     if as_json {
-                        println!("{}", json!({ "removed": removed, "live": live.len() }));
+                        crate::json::print(json!({ "removed": removed, "live": live.len() }));
                     } else {
                         println!("removed {removed} orphan blobs, kept {}", live.len());
                     }
@@ -1672,10 +1662,7 @@ async fn run_skills(dir: &Path, command: SkillCommand) -> ExitCode {
                 return skills_failure(SkillsError::Io(error), as_json);
             }
             if as_json {
-                println!(
-                    "{}",
-                    json!({ "written": path, "skills": lockfile.skills.len() })
-                );
+                crate::json::print(json!({ "written": path, "skills": lockfile.skills.len() }));
             } else {
                 println!(
                     "locked {} skills to {}",
@@ -1817,7 +1804,7 @@ fn slugify(name: &str) -> String {
 /// `--json` still gets a machine-readable object so the UI never parses prose.
 fn skills_failure(error: SkillsError, as_json: bool) -> ExitCode {
     if as_json {
-        println!("{}", json!({ "ok": false, "error": error.to_string() }));
+        crate::json::print(json!({ "ok": false, "error": error.to_string() }));
     }
     eprintln!("rigel: {error}");
     ExitCode::from(error.exit_code())
@@ -1827,7 +1814,7 @@ fn skills_failure(error: SkillsError, as_json: bool) -> ExitCode {
 /// one row per source for a person. `watch` prints this on every tick as its heartbeat.
 fn print_refresh(report: &rigel_core::skills::RefreshReport, as_json: bool) {
     if as_json {
-        println!("{}", serde_json::to_string(report).unwrap_or_default());
+        crate::json::print(report);
         return;
     }
     println!(
@@ -1873,10 +1860,7 @@ async fn run_session(command: SessionCommand) -> ExitCode {
                 }
             };
             if as_json {
-                println!(
-                    "{}",
-                    serde_json::to_string_pretty(&report).unwrap_or_default()
-                );
+                crate::json::print_pretty(&report);
             } else {
                 if let Some(id) = &report.session_id {
                     println!("session {id}");
@@ -1925,7 +1909,7 @@ async fn run_session(command: SessionCommand) -> ExitCode {
                     if as_json {
                         println!(
                             "{}",
-                            serde_json::to_string_pretty(&sessions).unwrap_or_default()
+                            crate::json::to_string_pretty(&sessions).unwrap_or_default()
                         );
                     } else if sessions.is_empty() {
                         println!("no sessions");
@@ -2004,7 +1988,7 @@ async fn run_session(command: SessionCommand) -> ExitCode {
                     if as_json {
                         println!(
                             "{}",
-                            serde_json::to_string_pretty(&json!({
+                            crate::json::to_string_pretty(json!({
                                 "title": suggestion.title,
                                 "provider": suggestion.provider,
                                 "model": suggestion.model,
@@ -2042,7 +2026,7 @@ async fn run_session(command: SessionCommand) -> ExitCode {
                         if as_json {
                             println!(
                                 "{}",
-                                serde_json::to_string_pretty(&summaries).unwrap_or_default()
+                                crate::json::to_string_pretty(&summaries).unwrap_or_default()
                             );
                         } else if summaries.is_empty() {
                             println!("no turn summaries recorded");
@@ -2110,7 +2094,7 @@ async fn run_session(command: SessionCommand) -> ExitCode {
                     if as_json {
                         println!(
                             "{}",
-                            serde_json::to_string_pretty(&outcome).unwrap_or_default()
+                            crate::json::to_string_pretty(&outcome).unwrap_or_default()
                         );
                     } else {
                         println!(

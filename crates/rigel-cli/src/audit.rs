@@ -67,10 +67,7 @@ pub async fn run(command: AuditCommand) -> ExitCode {
         {
             Ok(report) => {
                 if json {
-                    println!(
-                        "{}",
-                        serde_json::to_string_pretty(&report).unwrap_or_else(|_| "{}".to_string())
-                    );
+                    crate::json::print_pretty(&report);
                 } else if report.valid {
                     println!(
                         "audit chain: {} approval(s), intact ({})",
@@ -106,11 +103,7 @@ pub async fn run(command: AuditCommand) -> ExitCode {
             match audit::export(&project, format, &out) {
                 Ok(report) => {
                     if json {
-                        println!(
-                            "{}",
-                            serde_json::to_string_pretty(&report)
-                                .unwrap_or_else(|_| "{}".to_string())
-                        );
+                        crate::json::print_pretty(&report);
                     } else {
                         println!(
                             "exported {} {} record(s) to {}",
@@ -124,9 +117,8 @@ pub async fn run(command: AuditCommand) -> ExitCode {
                 }
                 Err(error) => {
                     if json {
-                        println!(
-                            "{}",
-                            serde_json::json!({ "ok": false, "error": error.to_string() })
+                        crate::json::print(
+                            serde_json::json!({ "ok": false, "error": error.to_string() }),
                         );
                     }
                     eprintln!("rigel: could not export the audit chain: {error}");
@@ -150,11 +142,7 @@ pub async fn run(command: AuditCommand) -> ExitCode {
             match audit::provenance::command(service.pool(), &item).await {
                 Ok(chain) => {
                     if json {
-                        println!(
-                            "{}",
-                            serde_json::to_string_pretty(&chain)
-                                .unwrap_or_else(|_| "{}".to_string())
-                        );
+                        crate::json::print_pretty(&chain);
                     } else {
                         println!("item {}", chain.item_id);
                         link("command", &chain.command);

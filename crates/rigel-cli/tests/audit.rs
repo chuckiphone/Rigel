@@ -9,6 +9,12 @@ use rigel_core::audit;
 use serde_json::{Value, json};
 use tempfile::TempDir;
 
+const JSON_SCHEMA_VERSION: u64 = 1;
+
+fn rigel_cli_schema_version() -> u64 {
+    JSON_SCHEMA_VERSION
+}
+
 fn rigel(data: &Path, args: &[&str]) -> (i32, String) {
     let exe = env!("CARGO_BIN_EXE_rigel");
     let output = Command::new(exe)
@@ -57,6 +63,7 @@ async fn a_mutated_ledger_is_rejected_by_the_cli_with_the_first_broken_line() {
     let (code, stdout) = rigel(data.path(), &args);
     assert_eq!(code, 0, "{stdout}");
     let report: Value = serde_json::from_str(stdout.trim()).unwrap();
+    assert_eq!(report["schema_version"], rigel_cli_schema_version());
     assert_eq!(report["valid"], true);
     assert_eq!(report["records"], 1);
 

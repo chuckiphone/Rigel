@@ -69,19 +69,16 @@ pub async fn run(dir: &Path, command: UpdateCommand) -> ExitCode {
                 Err(_) => "missing".to_string(),
             };
             if as_json {
-                println!(
-                    "{}",
-                    json!({
-                        "ok": true,
-                        "version": env!("CARGO_PKG_VERSION"),
-                        "enabled": settings.enabled,
-                        "auto_install": settings.auto_install,
-                        "manifest_url": manifest_url(&settings),
-                        "settings": settings_path(dir),
-                        "key": key_state,
-                        "key_file": dir.join(PUBKEY_FILE),
-                    })
-                );
+                crate::json::print(json!({
+                    "ok": true,
+                    "version": env!("CARGO_PKG_VERSION"),
+                    "enabled": settings.enabled,
+                    "auto_install": settings.auto_install,
+                    "manifest_url": manifest_url(&settings),
+                    "settings": settings_path(dir),
+                    "key": key_state,
+                    "key_file": dir.join(PUBKEY_FILE),
+                }));
             } else {
                 println!("version      {}", env!("CARGO_PKG_VERSION"));
                 println!(
@@ -119,9 +116,8 @@ pub async fn run(dir: &Path, command: UpdateCommand) -> ExitCode {
             match save_settings(dir, &settings) {
                 Ok(()) => {
                     if as_json {
-                        println!(
-                            "{}",
-                            json!({ "ok": true, "enabled": true, "manifest_url": settings.manifest_url })
+                        crate::json::print(
+                            json!({ "ok": true, "enabled": true, "manifest_url": settings.manifest_url }),
                         );
                     } else {
                         println!("updates on");
@@ -141,7 +137,7 @@ pub async fn run(dir: &Path, command: UpdateCommand) -> ExitCode {
             match save_settings(dir, &settings) {
                 Ok(()) => {
                     if as_json {
-                        println!("{}", json!({ "ok": true, "enabled": false }));
+                        crate::json::print(json!({ "ok": true, "enabled": false }));
                     } else {
                         println!("updates off");
                     }
@@ -178,7 +174,7 @@ pub async fn run(dir: &Path, command: UpdateCommand) -> ExitCode {
             match update::check(dir, &manifest, env!("CARGO_PKG_VERSION")) {
                 Ok(result) => {
                     if as_json {
-                        println!("{}", json!({ "ok": true, "update": result }));
+                        crate::json::print(json!({ "ok": true, "update": result }));
                     } else {
                         println!(
                             "signed by the configured key · {} → {}",
@@ -222,16 +218,13 @@ pub async fn run(dir: &Path, command: UpdateCommand) -> ExitCode {
             match verify_artifact(&artifact, &parsed) {
                 Ok(sha256) => {
                     if as_json {
-                        println!(
-                            "{}",
-                            json!({
-                                "ok": true,
-                                "artifact": artifact,
-                                "sha256": sha256,
-                                "version": parsed.version,
-                                "signed": true,
-                            })
-                        );
+                        crate::json::print(json!({
+                            "ok": true,
+                            "artifact": artifact,
+                            "sha256": sha256,
+                            "version": parsed.version,
+                            "signed": true,
+                        }));
                     } else {
                         println!("{} matches the signed manifest", artifact.display());
                         println!("  version {} · sha256 {}", parsed.version, sha256);
@@ -250,7 +243,7 @@ fn hex(bytes: &[u8; 32]) -> String {
 
 fn failure(error: update::UpdateError, as_json: bool) -> ExitCode {
     if as_json {
-        println!("{}", json!({ "ok": false, "error": error.to_string() }));
+        crate::json::print(json!({ "ok": false, "error": error.to_string() }));
     }
     eprintln!("rigel: {error}");
     ExitCode::from(1)

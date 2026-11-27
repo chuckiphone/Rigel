@@ -255,10 +255,7 @@ pub async fn run(args: HandoffArgs) -> ExitCode {
     }
 
     if as_json {
-        println!(
-            "{}",
-            serde_json::to_string_pretty(&handoff).unwrap_or_else(|_| "{}".to_string())
-        );
+        crate::json::print_pretty(&handoff);
     } else {
         println!("{}", handoff.prompt);
     }

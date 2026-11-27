@@ -51,6 +51,7 @@ fn reports(output: &Output) -> Vec<Value> {
     String::from_utf8_lossy(&output.stdout)
         .lines()
         .filter_map(|line| serde_json::from_str::<Value>(line).ok())
+        .inspect(|value| assert_eq!(value["schema_version"], 1))
         .filter_map(|value| value.get("batch_report").cloned())
         .collect()
 }
@@ -59,6 +60,7 @@ fn stop_report(output: &Output) -> Option<Value> {
     String::from_utf8_lossy(&output.stdout)
         .lines()
         .filter_map(|line| serde_json::from_str::<Value>(line).ok())
+        .inspect(|value| assert_eq!(value["schema_version"], 1))
         .find_map(|value| value.get("batch_stop").cloned())
 }
 

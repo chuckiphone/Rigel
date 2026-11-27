@@ -49,10 +49,7 @@ pub async fn run_patch(command: PatchCommand) -> ExitCode {
             match pipeline.list(&session.id).await {
                 Ok(patches) => {
                     if as_json {
-                        println!(
-                            "{}",
-                            serde_json::to_string_pretty(&patches).unwrap_or_default()
-                        );
+                        crate::json::print_pretty(&patches);
                     } else if patches.is_empty() {
                         println!("no patches");
                     } else {
@@ -83,7 +80,7 @@ pub async fn run_patch(command: PatchCommand) -> ExitCode {
             match pipeline.apply(&id).await {
                 Ok(patch) => {
                     if as_json {
-                        println!("{}", serde_json::to_string(&patch).unwrap_or_default());
+                        crate::json::print(&patch);
                     } else {
                         println!("{}  {}", patch.status, patch.path);
                     }
@@ -105,7 +102,7 @@ pub async fn run_patch(command: PatchCommand) -> ExitCode {
             match pipeline.revert(&id).await {
                 Ok(patch) => {
                     if as_json {
-                        println!("{}", serde_json::to_string(&patch).unwrap_or_default());
+                        crate::json::print(&patch);
                     } else {
                         println!("{}  {}", patch.status, patch.path);
                     }
@@ -119,7 +116,7 @@ pub async fn run_patch(command: PatchCommand) -> ExitCode {
 
 fn patch_failure(error: rigel_core::PatchError, as_json: bool) -> ExitCode {
     if as_json {
-        println!("{}", json!({ "ok": false, "error": error.to_string() }));
+        crate::json::print(json!({ "ok": false, "error": error.to_string() }));
     }
     eprintln!("rigel: {error}");
     let code = match error {
@@ -176,7 +173,7 @@ pub async fn run_memory(command: MemoryCommand) -> ExitCode {
             match memory.read(&agent, &topic) {
                 Ok(Some(body)) => {
                     if as_json {
-                        println!("{}", json!({ "ok": true, "topic": topic, "body": body }));
+                        crate::json::print(json!({ "ok": true, "topic": topic, "body": body }));
                     } else {
                         print!("{body}");
                     }
@@ -184,7 +181,7 @@ pub async fn run_memory(command: MemoryCommand) -> ExitCode {
                 }
                 Ok(None) => {
                     if as_json {
-                        println!("{}", json!({ "ok": true, "topic": topic, "body": null }));
+                        crate::json::print(json!({ "ok": true, "topic": topic, "body": null }));
                     } else {
                         println!("no memory for {agent}/{topic}");
                     }
@@ -215,7 +212,7 @@ pub async fn run_memory(command: MemoryCommand) -> ExitCode {
             match rows {
                 Ok(rows) => {
                     if as_json {
-                        println!("{}", serde_json::to_string(&rows).unwrap_or_default());
+                        crate::json::print(&rows);
                     } else if rows.is_empty() {
                         println!("no memory facts");
                     } else {
@@ -251,7 +248,7 @@ pub async fn run_memory(command: MemoryCommand) -> ExitCode {
             match memory.pin_fact(&id, !unpin).await {
                 Ok(row) => {
                     if as_json {
-                        println!("{}", serde_json::to_string(&row).unwrap_or_default());
+                        crate::json::print(&row);
                     } else {
                         println!(
                             "{}  {}/{}  {}  pinned={}",
@@ -303,7 +300,7 @@ pub async fn run_memory(command: MemoryCommand) -> ExitCode {
             match memory.write(&agent, &topic, &content, mode).await {
                 Ok(file) => {
                     if as_json {
-                        println!("{}", serde_json::to_string(&file).unwrap_or_default());
+                        crate::json::print(&file);
                     } else {
                         println!("{}  {} words  {}", file.path, file.words, file.sha256);
                     }
@@ -317,7 +314,7 @@ pub async fn run_memory(command: MemoryCommand) -> ExitCode {
 
 fn memory_failure(error: rigel_core::MemoryError, as_json: bool) -> ExitCode {
     if as_json {
-        println!("{}", json!({ "ok": false, "error": error.to_string() }));
+        crate::json::print(json!({ "ok": false, "error": error.to_string() }));
     }
     eprintln!("rigel: {error}");
     ExitCode::from(error.exit_code())
@@ -341,7 +338,7 @@ pub async fn run_keys(command: KeyCommand) -> ExitCode {
                 })
                 .collect();
             if as_json {
-                println!("{}", json!({ "ok": true, "providers": rows }));
+                crate::json::print(json!({ "ok": true, "providers": rows }));
             } else {
                 for row in rows {
                     println!(

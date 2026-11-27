@@ -59,16 +59,8 @@ pub fn run(command: RouteCommand) -> ExitCode {
     };
 
     if json {
-        match serde_json::to_string_pretty(&explanation) {
-            Ok(text) => {
-                println!("{text}");
-                ExitCode::SUCCESS
-            }
-            Err(error) => {
-                eprintln!("rigel: {error}");
-                ExitCode::from(2)
-            }
-        }
+        crate::json::print_pretty(&explanation);
+        ExitCode::SUCCESS
     } else {
         println!(
             "saved:     {} / {}",

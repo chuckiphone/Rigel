@@ -22,12 +22,14 @@ fn rigel(project: &Path, args: &[&str]) -> (i32, Value) {
         .output()
         .expect("rigel runs");
     let stdout = String::from_utf8_lossy(&output.stdout);
-    let json: Value = serde_json::from_str(stdout.trim()).unwrap_or_else(|error| {
+    let versioned: Value = serde_json::from_str(stdout.trim()).unwrap_or_else(|error| {
         panic!(
             "not json: {error}\n{stdout}\n{}",
             String::from_utf8_lossy(&output.stderr)
         )
     });
+    assert_eq!(versioned["schema_version"], 1, "{versioned}");
+    let json = versioned.get("data").unwrap_or(&versioned).clone();
     (output.status.code().unwrap_or(-1), json)
 }
 

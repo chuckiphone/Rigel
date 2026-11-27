@@ -363,22 +363,19 @@ pub async fn run(args: AcpArgs) -> ExitCode {
             }
 
             if args.json {
-                println!(
-                    "{}",
-                    json!({
-                        "ok": true,
-                        "session": session.id,
-                        "agent": agent.id,
-                        "turn": turn.id,
-                        "harness": harness.key(),
-                        "status": "completed",
-                        "stop": turn_result.stop_reason,
-                        "text": turn_result.text,
-                        "used": state.usage.map(|usage| usage.used),
-                        "size": state.usage.map(|usage| usage.size),
-                        "cost_micros": state.usage.and_then(|usage| usage.cost_micros),
-                    })
-                );
+                crate::json::print(json!({
+                    "ok": true,
+                    "session": session.id,
+                    "agent": agent.id,
+                    "turn": turn.id,
+                    "harness": harness.key(),
+                    "status": "completed",
+                    "stop": turn_result.stop_reason,
+                    "text": turn_result.text,
+                    "used": state.usage.map(|usage| usage.used),
+                    "size": state.usage.map(|usage| usage.size),
+                    "cost_micros": state.usage.and_then(|usage| usage.cost_micros),
+                }));
             } else {
                 println!(
                     "\n{} · {} · ${:.4}{}",
@@ -411,18 +408,15 @@ pub async fn run(args: AcpArgs) -> ExitCode {
                 .finish_turn_with_reason(&turn.id, "failed", Some("harness_error"))
                 .await;
             if args.json {
-                println!(
-                    "{}",
-                    json!({
-                        "ok": false,
-                        "session": session.id,
-                        "agent": agent.id,
-                        "turn": turn.id,
-                        "harness": harness.key(),
-                        "status": "failed",
-                        "error": message,
-                    })
-                );
+                crate::json::print(json!({
+                    "ok": false,
+                    "session": session.id,
+                    "agent": agent.id,
+                    "turn": turn.id,
+                    "harness": harness.key(),
+                    "status": "failed",
+                    "error": message,
+                }));
             }
             harness_error(harness, error)
         }
@@ -629,7 +623,7 @@ fn report_missing_key(harness: Harness, json: bool) {
         rigel_adapters::registry::display_name(harness)
     );
     if json {
-        println!("{}", json!({ "ok": false, "error": message }));
+        crate::json::print(json!({ "ok": false, "error": message }));
     }
     eprintln!("rigel: {message}");
 }

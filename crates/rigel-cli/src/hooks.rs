@@ -402,18 +402,15 @@ pub fn scan(project: &Path, as_json: bool) -> ExitCode {
         findings: found.clone(),
     };
     if as_json {
-        println!(
-            "{}",
-            serde_json::to_string_pretty(&report).unwrap_or_default()
-        );
+        crate::json::print_pretty(&report);
     } else if found.is_empty() {
-        println!("staged diff is clean — no secret pattern on an added line");
+        println!("staged diff is clean â€” no secret pattern on an added line");
     } else {
         for finding in &found {
             println!("blocked: {}", finding.sentence());
         }
         println!(
-            "{} finding(s) — the matched text is deliberately not printed",
+            "{} finding(s) â€” the matched text is deliberately not printed",
             found.len()
         );
     }
@@ -527,15 +524,11 @@ pub fn trailer(path: &Path, agent: &str, as_json: bool) -> ExitCode {
         return ExitCode::from(2);
     }
     if as_json {
-        println!(
-            "{}",
-            serde_json::to_string_pretty(&TrailerReport {
-                added,
-                trailer: trailer_line(agent),
-                file: path.to_string_lossy().into_owned(),
-            })
-            .unwrap_or_default()
-        );
+        crate::json::print_pretty(&TrailerReport {
+            added,
+            trailer: trailer_line(agent),
+            file: path.to_string_lossy().into_owned(),
+        });
     } else if added {
         println!("added {}", trailer_line(agent));
     }
@@ -554,16 +547,13 @@ pub fn check_msg(path: &Path, as_json: bool) -> ExitCode {
     match attribution_check(&message) {
         Ok(()) => {
             if as_json {
-                println!("{}", serde_json::json!({ "attributed": true }));
+                crate::json::print(serde_json::json!({ "attributed": true }));
             }
             ExitCode::SUCCESS
         }
         Err(error) => {
             if as_json {
-                println!(
-                    "{}",
-                    serde_json::json!({ "attributed": false, "error": error })
-                );
+                crate::json::print(serde_json::json!({ "attributed": false, "error": error }));
             } else {
                 eprintln!("rigel hooks check-msg: {error}");
             }
@@ -622,7 +612,7 @@ pub enum HooksCommand {
 
 fn fail(as_json: bool, error: String, json: impl FnOnce(String) -> serde_json::Value) -> ExitCode {
     if as_json {
-        println!("{}", json(error));
+        crate::json::print(json(error));
     } else {
         eprintln!("rigel hooks: {error}");
     }
@@ -634,10 +624,7 @@ pub fn run(command: HooksCommand) -> ExitCode {
         HooksCommand::Install { project, json } => match install(&project) {
             Ok(report) => {
                 if json {
-                    println!(
-                        "{}",
-                        serde_json::to_string_pretty(&report).unwrap_or_default()
-                    );
+                    crate::json::print_pretty(&report);
                 } else {
                     println!(
                         "installed {} hook(s); backed up {}",
@@ -660,10 +647,7 @@ pub fn run(command: HooksCommand) -> ExitCode {
         HooksCommand::Uninstall { project, json } => match uninstall(&project) {
             Ok(report) => {
                 if json {
-                    println!(
-                        "{}",
-                        serde_json::to_string_pretty(&report).unwrap_or_default()
-                    );
+                    crate::json::print_pretty(&report);
                 } else {
                     println!(
                         "restored {} hook(s); removed {}",
@@ -682,10 +666,7 @@ pub fn run(command: HooksCommand) -> ExitCode {
         HooksCommand::Status { project, json } => match status(&project) {
             Ok(report) => {
                 if json {
-                    println!(
-                        "{}",
-                        serde_json::to_string_pretty(&report).unwrap_or_default()
-                    );
+                    crate::json::print_pretty(&report);
                 } else if report.installed {
                     for hook in &report.hooks {
                         println!(

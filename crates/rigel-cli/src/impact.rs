@@ -20,20 +20,14 @@ pub fn run(
         Ok(plan) => plan,
         Err(error) => {
             if json {
-                println!("{}", serde_json::json!({ "ok": false, "error": error }));
+                crate::json::print(serde_json::json!({ "ok": false, "error": error }));
             }
             eprintln!("rigel: {error}");
             return ExitCode::from(1);
         }
     };
     if json {
-        match serde_json::to_string_pretty(&plan) {
-            Ok(text) => println!("{text}"),
-            Err(error) => {
-                eprintln!("rigel: could not encode JSON: {error}");
-                return ExitCode::from(1);
-            }
-        }
+        crate::json::print_pretty(&plan);
     } else {
         print_impact(&plan);
     }

@@ -16,6 +16,10 @@ fn output_json(mut command: Command) -> (i32, Value) {
             String::from_utf8_lossy(&output.stderr)
         )
     });
+    assert_eq!(
+        json["schema_version"], 1,
+        "CLI JSON schema version changed; review the shape contract"
+    );
     (output.status.code().unwrap_or(-1), json)
 }
 

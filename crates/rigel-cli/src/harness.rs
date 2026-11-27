@@ -141,13 +141,10 @@ fn parity(as_json: bool, out: Option<PathBuf>, check: bool) -> ExitCode {
     }
 
     if as_json {
-        println!(
-            "{}",
-            serde_json::json!({
-                "checked": rigel_adapters::parity::CHECKED,
-                "rows": rigel_adapters::parity::matrix(),
-            })
-        );
+        crate::json::print(serde_json::json!({
+            "checked": rigel_adapters::parity::CHECKED,
+            "rows": rigel_adapters::parity::matrix(),
+        }));
     } else {
         print!("{markdown}");
     }
@@ -165,15 +162,12 @@ async fn probe_harnesses(dir: &std::path::Path, as_json: bool, refresh: bool) ->
     };
 
     if as_json {
-        println!(
-            "{}",
-            json!({
-                "ok": true,
-                "path": path,
-                "probed_at": cache.probed_at,
-                "harnesses": cache.infos(),
-            })
-        );
+        crate::json::print(json!({
+            "ok": true,
+            "path": path,
+            "probed_at": cache.probed_at,
+            "harnesses": cache.infos(),
+        }));
         return ExitCode::SUCCESS;
     }
 
@@ -330,7 +324,7 @@ async fn probe_muse(exe: Option<PathBuf>, as_json: bool) -> ExitCode {
     match MuseAdapter::new(config).probe().await {
         Ok(info) => {
             if as_json {
-                println!("{}", json!({ "ok": true, "harness": info }));
+                crate::json::print(json!({ "ok": true, "harness": info }));
             } else {
                 println!(
                     "muse {}  {}",
@@ -357,7 +351,7 @@ async fn probe_muse(exe: Option<PathBuf>, as_json: bool) -> ExitCode {
         }
         Err(error) => {
             if as_json {
-                println!("{}", json!({ "ok": false, "error": error.to_string() }));
+                crate::json::print(json!({ "ok": false, "error": error.to_string() }));
             }
             eprintln!("rigel: {error}");
             ExitCode::from(2)
@@ -422,25 +416,22 @@ async fn run_muse_turn(
     match outcome {
         Ok(result) => {
             if as_json {
-                println!(
-                    "{}",
-                    json!({
-                        "ok": true,
-                        "text": result.text,
-                        "model": result.model,
-                        "muse_session": result.session_id,
-                        "usage": null,
-                        "session": recorded.session_id,
-                        "agent": recorded.agent.id,
-                        "turn": recorded.turn.id,
-                        "duration_ms": result.duration.as_millis() as u64,
-                        "notices": notices,
-                        "items": items.iter().map(|item| json!({
-                            "kind": item.kind.as_str(),
-                            "body": item.body,
-                        })).collect::<Vec<_>>(),
-                    })
-                );
+                crate::json::print(json!({
+                    "ok": true,
+                    "text": result.text,
+                    "model": result.model,
+                    "muse_session": result.session_id,
+                    "usage": null,
+                    "session": recorded.session_id,
+                    "agent": recorded.agent.id,
+                    "turn": recorded.turn.id,
+                    "duration_ms": result.duration.as_millis() as u64,
+                    "notices": notices,
+                    "items": items.iter().map(|item| json!({
+                        "kind": item.kind.as_str(),
+                        "body": item.body,
+                    })).collect::<Vec<_>>(),
+                }));
             } else {
                 if !streamed {
                     println!("{}", result.text);
@@ -467,17 +458,14 @@ async fn run_muse_turn(
         }
         Err(error) => {
             if as_json {
-                println!(
-                    "{}",
-                    json!({
-                        "ok": false,
-                        "error": error.to_string(),
-                        "provider": credential_provider,
-                        "fix": format!("rigel keys set {credential_provider}"),
-                        "session": recorded.session_id,
-                        "turn": recorded.turn.id,
-                    })
-                );
+                crate::json::print(json!({
+                    "ok": false,
+                    "error": error.to_string(),
+                    "provider": credential_provider,
+                    "fix": format!("rigel keys set {credential_provider}"),
+                    "session": recorded.session_id,
+                    "turn": recorded.turn.id,
+                }));
             }
             eprintln!("rigel: {error}");
             if matches!(error, AdapterError::RequiresApiKey { .. }) {
@@ -537,7 +525,7 @@ async fn probe(exe: Option<PathBuf>, as_json: bool) -> ExitCode {
     match adapter.probe().await {
         Ok(info) => {
             if as_json {
-                println!("{}", json!({ "ok": true, "harness": info }));
+                crate::json::print(json!({ "ok": true, "harness": info }));
             } else {
                 println!(
                     "codex {}  {}",
@@ -558,10 +546,7 @@ async fn probe(exe: Option<PathBuf>, as_json: bool) -> ExitCode {
         }
         Err(AdapterError::NotInstalled { .. }) => {
             if as_json {
-                println!(
-                    "{}",
-                    json!({ "ok": true, "harness": { "installed": false } })
-                );
+                crate::json::print(json!({ "ok": true, "harness": { "installed": false } }));
             } else {
                 println!("codex not installed");
             }
@@ -569,7 +554,7 @@ async fn probe(exe: Option<PathBuf>, as_json: bool) -> ExitCode {
         }
         Err(error) => {
             if as_json {
-                println!("{}", json!({ "ok": false, "error": error.to_string() }));
+                crate::json::print(json!({ "ok": false, "error": error.to_string() }));
             }
             eprintln!("rigel: {error}");
             ExitCode::from(2)
@@ -714,30 +699,27 @@ async fn run(options: RunOptions) -> ExitCode {
     match outcome {
         Ok(result) => {
             if as_json {
-                println!(
-                    "{}",
-                    json!({
-                        "ok": true,
-                        "text": result.text,
-                        "transport": result.transport.as_str(),
-                        "fell_back": result.fell_back,
-                        "thread_id": result.thread_id,
-                        "usage": result.usage,
-                        "recorded_usage": recorded_usage,
-                        "estimate": estimate,
-                        "estimate_before_send": estimate_line,
-                        "session": recorded.session_id,
-                        "agent": recorded.agent.id,
-                        "turn": recorded.turn.id,
-                        "duration_ms": result.duration.as_millis() as u64,
-                        "notices": notices,
-                        "approvals": approvals,
-                        "items": items.iter().map(|item| json!({
-                            "kind": item.kind.as_str(),
-                            "body": item.body,
-                        })).collect::<Vec<_>>(),
-                    })
-                );
+                crate::json::print(json!({
+                    "ok": true,
+                    "text": result.text,
+                    "transport": result.transport.as_str(),
+                    "fell_back": result.fell_back,
+                    "thread_id": result.thread_id,
+                    "usage": result.usage,
+                    "recorded_usage": recorded_usage,
+                    "estimate": estimate,
+                    "estimate_before_send": estimate_line,
+                    "session": recorded.session_id,
+                    "agent": recorded.agent.id,
+                    "turn": recorded.turn.id,
+                    "duration_ms": result.duration.as_millis() as u64,
+                    "notices": notices,
+                    "approvals": approvals,
+                    "items": items.iter().map(|item| json!({
+                        "kind": item.kind.as_str(),
+                        "body": item.body,
+                    })).collect::<Vec<_>>(),
+                }));
             } else {
                 if !streamed {
                     println!("{}", result.text);
@@ -773,17 +755,14 @@ async fn run(options: RunOptions) -> ExitCode {
         }
         Err(error) => {
             if as_json {
-                println!(
-                    "{}",
-                    json!({
-                        "ok": false,
-                        "error": error.to_string(),
-                        "provider": credential_provider,
-                        "fix": format!("rigel keys set {credential_provider}"),
-                        "session": recorded.session_id,
-                        "turn": recorded.turn.id,
-                    })
-                );
+                crate::json::print(json!({
+                    "ok": false,
+                    "error": error.to_string(),
+                    "provider": credential_provider,
+                    "fix": format!("rigel keys set {credential_provider}"),
+                    "session": recorded.session_id,
+                    "turn": recorded.turn.id,
+                }));
             }
             eprintln!("rigel: {error}");
             if matches!(error, AdapterError::RequiresApiKey { .. }) {
@@ -807,7 +786,7 @@ async fn probe_claude(exe: Option<PathBuf>, as_json: bool) -> ExitCode {
     match adapter.probe().await {
         Ok(info) => {
             if as_json {
-                println!("{}", json!({ "ok": true, "harness": info }));
+                crate::json::print(json!({ "ok": true, "harness": info }));
             } else {
                 println!(
                     "claude {}  {}",
@@ -827,10 +806,7 @@ async fn probe_claude(exe: Option<PathBuf>, as_json: bool) -> ExitCode {
         }
         Err(AdapterError::NotInstalled { .. }) => {
             if as_json {
-                println!(
-                    "{}",
-                    json!({ "ok": true, "harness": { "installed": false } })
-                );
+                crate::json::print(json!({ "ok": true, "harness": { "installed": false } }));
             } else {
                 println!("claude not installed");
             }
@@ -838,7 +814,7 @@ async fn probe_claude(exe: Option<PathBuf>, as_json: bool) -> ExitCode {
         }
         Err(error) => {
             if as_json {
-                println!("{}", json!({ "ok": false, "error": error.to_string() }));
+                crate::json::print(json!({ "ok": false, "error": error.to_string() }));
             }
             eprintln!("rigel: {error}");
             ExitCode::from(2)
@@ -1015,25 +991,22 @@ async fn run_claude_turn(options: ClaudeRunOptions) -> ExitCode {
     match outcome {
         Ok(result) => {
             if as_json {
-                println!(
-                    "{}",
-                    json!({
-                        "ok": true,
-                        "text": result.text,
-                        "claude_session": result.session_id,
-                        "usage": result.usage,
-                        "recorded_usage": recorded_usage,
-                        "session": recorded.session_id,
-                        "agent": recorded.agent.id,
-                        "turn": recorded.turn.id,
-                        "duration_ms": result.duration.as_millis() as u64,
-                        "notices": notices,
-                        "items": items.iter().map(|item| json!({
-                            "kind": item.kind.as_str(),
-                            "body": item.body,
-                        })).collect::<Vec<_>>(),
-                    })
-                );
+                crate::json::print(json!({
+                    "ok": true,
+                    "text": result.text,
+                    "claude_session": result.session_id,
+                    "usage": result.usage,
+                    "recorded_usage": recorded_usage,
+                    "session": recorded.session_id,
+                    "agent": recorded.agent.id,
+                    "turn": recorded.turn.id,
+                    "duration_ms": result.duration.as_millis() as u64,
+                    "notices": notices,
+                    "items": items.iter().map(|item| json!({
+                        "kind": item.kind.as_str(),
+                        "body": item.body,
+                    })).collect::<Vec<_>>(),
+                }));
             } else {
                 if !streamed {
                     println!("{}", result.text);
@@ -1059,17 +1032,14 @@ async fn run_claude_turn(options: ClaudeRunOptions) -> ExitCode {
         }
         Err(error) => {
             if as_json {
-                println!(
-                    "{}",
-                    json!({
-                        "ok": false,
-                        "error": error.to_string(),
-                        "provider": credential_provider,
-                        "fix": format!("rigel keys set {credential_provider}"),
-                        "session": recorded.session_id,
-                        "turn": recorded.turn.id,
-                    })
-                );
+                crate::json::print(json!({
+                    "ok": false,
+                    "error": error.to_string(),
+                    "provider": credential_provider,
+                    "fix": format!("rigel keys set {credential_provider}"),
+                    "session": recorded.session_id,
+                    "turn": recorded.turn.id,
+                }));
             }
             eprintln!("rigel: {error}");
             if matches!(error, AdapterError::RequiresApiKey { .. }) {

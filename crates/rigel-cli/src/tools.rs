@@ -135,9 +135,8 @@ pub async fn run_tools(dir: &std::path::Path, command: ToolCommand) -> ExitCode 
             match service.detect(&host, refresh).await {
                 Ok(statuses) => {
                     if as_json {
-                        println!(
-                            "{}",
-                            json!({ "ok": true, "host": host.key(), "tools": statuses })
+                        crate::json::print(
+                            json!({ "ok": true, "host": host.key(), "tools": statuses }),
                         );
                     } else {
                         let width = statuses.iter().map(|row| row.id.len()).max().unwrap_or(4);
@@ -188,16 +187,13 @@ pub async fn run_tools(dir: &std::path::Path, command: ToolCommand) -> ExitCode 
                     let row = statuses.into_iter().find(|row| row.id == spec.id);
                     let present = row.as_ref().is_some_and(|row| row.present);
                     if as_json {
-                        println!(
-                            "{}",
-                            json!({
-                                "ok": true,
-                                "host": host.key(),
-                                "tool": spec.id,
-                                "present": present,
-                                "status": row,
-                            })
-                        );
+                        crate::json::print(json!({
+                            "ok": true,
+                            "host": host.key(),
+                            "tool": spec.id,
+                            "present": present,
+                            "status": row,
+                        }));
                     } else if let Some(row) = row.filter(|row| row.present) {
                         println!("{:<10} {}", spec.id, row.version.unwrap_or_default());
                         println!(
@@ -282,9 +278,8 @@ pub async fn run_tools(dir: &std::path::Path, command: ToolCommand) -> ExitCode 
                 .collect();
 
             if as_json {
-                println!(
-                    "{}",
-                    json!({ "ok": true, "from": source_name, "host": host.key(), "requirements": rows })
+                crate::json::print(
+                    json!({ "ok": true, "from": source_name, "host": host.key(), "requirements": rows }),
                 );
             } else if rows.is_empty() {
                 println!("{source_name}: no tool requirements found");
@@ -337,9 +332,8 @@ pub async fn run_tools(dir: &std::path::Path, command: ToolCommand) -> ExitCode 
                 Ok(pin) => {
                     let changed = matches!(pin, Pin::Changed { .. });
                     if as_json {
-                        println!(
-                            "{}",
-                            json!({ "ok": !changed, "host": host.key(), "tool": spec.id, "pin": pin })
+                        crate::json::print(
+                            json!({ "ok": !changed, "host": host.key(), "tool": spec.id, "pin": pin }),
                         );
                     } else {
                         match &pin {
@@ -385,16 +379,13 @@ pub async fn run_tools(dir: &std::path::Path, command: ToolCommand) -> ExitCode 
                 Ok(statuses) => {
                     let present = statuses.iter().filter(|row| row.present).count();
                     if as_json {
-                        println!(
-                            "{}",
-                            json!({
-                                "ok": true,
-                                "host": host.key(),
-                                "present": present,
-                                "tools": statuses,
-                                "note": "A new shell reads its PATH from the OS. Run `rigel tools which <tool>` there before using the tool.",
-                            })
-                        );
+                        crate::json::print(json!({
+                            "ok": true,
+                            "host": host.key(),
+                            "present": present,
+                            "tools": statuses,
+                            "note": "A new shell reads its PATH from the OS. Run `rigel tools which <tool>` there before using the tool.",
+                        }));
                     } else {
                         println!("{} present on {} after re-probing", present, host.key());
                         println!(
@@ -413,7 +404,7 @@ pub async fn run_tools(dir: &std::path::Path, command: ToolCommand) -> ExitCode 
         } => match service.ledger(limit).await {
             Ok(rows) => {
                 if as_json {
-                    println!("{}", json!({ "ok": true, "installs": rows }));
+                    crate::json::print(json!({ "ok": true, "installs": rows }));
                 } else if rows.is_empty() {
                     println!("no installs recorded");
                 } else {
@@ -441,7 +432,7 @@ pub async fn run_tools(dir: &std::path::Path, command: ToolCommand) -> ExitCode 
         ToolCommand::Queued { json: as_json } => match service.queued().await {
             Ok(rows) => {
                 if as_json {
-                    println!("{}", json!({ "ok": true, "queued": rows }));
+                    crate::json::print(json!({ "ok": true, "queued": rows }));
                 } else if rows.is_empty() {
                     println!("nothing queued");
                 } else {
@@ -504,9 +495,8 @@ pub async fn run_tools(dir: &std::path::Path, command: ToolCommand) -> ExitCode 
                     Err(error) => return failure(error, as_json),
                 };
                 if as_json {
-                    println!(
-                        "{}",
-                        json!({ "ok": false, "approved": false, "plan": plan, "install": record })
+                    crate::json::print(
+                        json!({ "ok": false, "approved": false, "plan": plan, "install": record }),
                     );
                 }
                 eprintln!("rigel: nothing ran");
@@ -526,16 +516,13 @@ pub async fn run_tools(dir: &std::path::Path, command: ToolCommand) -> ExitCode 
                 Ok(record) => {
                     let ok = record.exit_code == Some(0) || record.decision == "queued";
                     if as_json {
-                        println!(
-                            "{}",
-                            json!({
-                                "ok": ok,
-                                "approved": approved,
-                                "plan": plan,
-                                "install": record,
-                                "recheck": record.recheck(),
-                            })
-                        );
+                        crate::json::print(json!({
+                            "ok": ok,
+                            "approved": approved,
+                            "plan": plan,
+                            "install": record,
+                            "recheck": record.recheck(),
+                        }));
                     } else {
                         println!("\n  {}", record.recheck());
                         if let Some(duration) = record.duration_ms {
@@ -550,15 +537,12 @@ pub async fn run_tools(dir: &std::path::Path, command: ToolCommand) -> ExitCode 
                 }
                 Err(error) => {
                     if as_json {
-                        println!(
-                            "{}",
-                            json!({
-                                "ok": false,
-                                "approved": approved,
-                                "plan": plan,
-                                "error": error.to_string(),
-                            })
-                        );
+                        crate::json::print(json!({
+                            "ok": false,
+                            "approved": approved,
+                            "plan": plan,
+                            "error": error.to_string(),
+                        }));
                     }
                     eprintln!("rigel: {error}");
                     if matches!(error, rigel_core::ToolError::Blocked { .. }) {
@@ -587,10 +571,7 @@ pub fn run_trust(command: TrustCommand) -> ExitCode {
                 .unwrap_or_else(Host::current);
             let report: TrustReport = trust_for(&package, &host);
             if as_json {
-                println!(
-                    "{}",
-                    json!({ "ok": true, "host": host.key(), "trust": report })
-                );
+                crate::json::print(json!({ "ok": true, "host": host.key(), "trust": report }));
                 return ExitCode::SUCCESS;
             }
 
@@ -638,7 +619,7 @@ fn short(hash: &str) -> &str {
 
 fn failure(error: rigel_core::ToolError, as_json: bool) -> ExitCode {
     if as_json {
-        println!("{}", json!({ "ok": false, "error": error.to_string() }));
+        crate::json::print(json!({ "ok": false, "error": error.to_string() }));
     }
     eprintln!("rigel: {error}");
     ExitCode::from(1)

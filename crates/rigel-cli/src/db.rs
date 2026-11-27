@@ -160,14 +160,11 @@ fn status(project: &Path, as_json: bool) -> ExitCode {
     let encrypted = state == DatabaseState::Encrypted;
     let configured = key.is_some();
     if as_json {
-        println!(
-            "{}",
-            json!({
-                "path": path,
-                "encrypted": encrypted,
-                "key_configured": configured,
-            })
-        );
+        crate::json::print(json!({
+            "path": path,
+            "encrypted": encrypted,
+            "key_configured": configured,
+        }));
     } else {
         println!("database: {}", path.display());
         println!(
@@ -278,7 +275,7 @@ async fn checkpoint(project: &Path, mode: CheckpointMode, as_json: bool) -> Exit
         Err(error) => return fail(&error),
     };
     if as_json {
-        println!("{}", json!(report));
+        crate::json::print(json!(report));
     } else {
         println!(
             "{}: {} checkpoint: {} of {} WAL frames copied{}",
@@ -323,7 +320,7 @@ async fn size(project: &Path, as_json: bool) -> ExitCode {
         Err(error) => return fail(&error),
     };
     if as_json {
-        println!("{}", json!(report));
+        crate::json::print(json!(report));
     } else {
         println!("database: {}", report.path.display());
         println!(

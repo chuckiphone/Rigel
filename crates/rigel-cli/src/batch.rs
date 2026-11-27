@@ -218,7 +218,7 @@ fn canonical_repositories(repositories: &[PathBuf]) -> Result<Vec<PathBuf>, Stri
 
 fn emit_report(report: &RepositoryReport, json: bool) {
     if json {
-        println!("{}", serde_json::json!({"batch_report": report}));
+        crate::json::print(serde_json::json!({"batch_report": report}));
     } else {
         println!(
             "\nbatch report: {} status={} spend=${:.6} cap=${:.2} session={}",
@@ -233,7 +233,7 @@ fn emit_report(report: &RepositoryReport, json: bool) {
 
 fn emit_stop(stop: &BatchStop, json: bool) {
     if json {
-        println!("{}", serde_json::json!({"batch_stop": stop}));
+        crate::json::print(serde_json::json!({"batch_stop": stop}));
     } else {
         println!(
             "\nbatch stopped: {} after ${:.2} of ${:.2}",
