@@ -111,6 +111,8 @@ pub struct Output {
 
 #[derive(Debug, thiserror::Error)]
 pub enum RunError {
+    #[error(transparent)]
+    Contract(#[from] super::contract::ContractError),
     #[error("the script cwd {cwd} is outside the project root {root}")]
     CwdOutsideRoot { cwd: PathBuf, root: PathBuf },
 
@@ -126,6 +128,19 @@ pub enum RunError {
 
     #[error("the script has no program")]
     NoProgram,
+}
+
+/// Validate before spawning and check the finished child against the declared exit set.
+pub fn run_checked(
+    root: &Path,
+    script: &Script,
+    contract: &super::contract::Contract,
+    inherited: &BTreeMap<String, String>,
+) -> Result<Output, RunError> {
+    contract.validate_script(script)?;
+    let output = run(root, script, inherited)?;
+    contract.check_exit(output.exit_code)?;
+    Ok(output)
 }
 
 /// Run one script. The child is killed at the deadline and its partial output is kept.

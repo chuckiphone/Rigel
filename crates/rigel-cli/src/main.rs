@@ -474,6 +474,15 @@ enum SessionCommand {
 
 #[derive(Subcommand)]
 enum SkillCommand {
+    /// Run a locally declared skill script after checking its argument and environment contract.
+    Run {
+        #[arg(default_value = "SKILL.md", value_name = "FILE")]
+        file: PathBuf,
+        #[arg(long)]
+        dry_run: bool,
+        #[arg(last = true, value_name = "ARG")]
+        args: Vec<String>,
+    },
     /// Save a JSON golden-task suite for a skill id before it is installed or updated.
     Eval {
         #[command(subcommand)]
@@ -978,6 +987,11 @@ async fn run_skills(dir: &Path, command: SkillCommand) -> ExitCode {
         SkillCommand::Init { file, name } => return skills::init(file, name.as_deref()),
         SkillCommand::Lint { file } => return skills::lint(file).await,
         SkillCommand::Test { file } => return skills::test(file).await,
+        SkillCommand::Run {
+            file,
+            dry_run,
+            args,
+        } => return skills::run_script(file, *dry_run, args),
         SkillCommand::Eval {
             command: SkillEvalCommand::Set { id, file },
         } => {
@@ -1055,6 +1069,7 @@ async fn run_skills(dir: &Path, command: SkillCommand) -> ExitCode {
 
     match command {
         SkillCommand::Init { .. }
+        | SkillCommand::Run { .. }
         | SkillCommand::Lint { .. }
         | SkillCommand::Test { .. }
         | SkillCommand::Eval { .. } => {
