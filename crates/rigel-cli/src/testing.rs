@@ -375,15 +375,12 @@ fn print_run(kind: &str, run: &TestRun) {
 }
 
 fn print_json(value: &impl serde::Serialize) {
-    match serde_json::to_string(value) {
-        Ok(text) => println!("{text}"),
-        Err(error) => eprintln!("rigel: could not encode JSON: {error}"),
-    }
+    crate::json::print(value);
 }
 
 fn fail(error: &str, as_json: bool) -> ExitCode {
     if as_json {
-        println!("{}", serde_json::json!({ "ok": false, "error": error }));
+        crate::json::print(serde_json::json!({ "ok": false, "error": error }));
     }
     eprintln!("rigel: {error}");
     ExitCode::from(1)

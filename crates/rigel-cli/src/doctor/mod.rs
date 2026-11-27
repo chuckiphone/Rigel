@@ -238,7 +238,7 @@ pub async fn run(
             .as_ref()
             .map(|written| json!(written.path.display().to_string()))
             .unwrap_or(Value::Null);
-        println!("{}", value);
+        crate::json::print(value);
     } else {
         println!("rigel {}", env!("CARGO_PKG_VERSION"));
         for check in &checks {

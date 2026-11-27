@@ -71,16 +71,13 @@ pub async fn run(dir: &Path, command: MailCommand) -> ExitCode {
         MailCommand::Status { json: as_json } => {
             let status = Mail::status_at(dir);
             if as_json {
-                println!(
-                    "{}",
-                    json!({
-                        "ok": true,
-                        "configured": status.configured,
-                        "inbox": status.inbox,
-                        "key_present": status.key_present,
-                        "config": MailConfig::path(dir),
-                    })
-                );
+                crate::json::print(json!({
+                    "ok": true,
+                    "configured": status.configured,
+                    "inbox": status.inbox,
+                    "key_present": status.key_present,
+                    "config": MailConfig::path(dir),
+                }));
             } else {
                 match status.inbox.as_deref() {
                     Some(inbox) => println!("inbox      {inbox}"),
@@ -108,9 +105,8 @@ pub async fn run(dir: &Path, command: MailCommand) -> ExitCode {
         }) {
             Ok((config, path)) => {
                 if as_json {
-                    println!(
-                        "{}",
-                        json!({ "ok": true, "inbox": config.inbox, "config": path })
+                    crate::json::print(
+                        json!({ "ok": true, "inbox": config.inbox, "config": path }),
                     );
                 } else {
                     println!("inbox      {}", config.inbox);
@@ -133,15 +129,12 @@ pub async fn run(dir: &Path, command: MailCommand) -> ExitCode {
             match mail.list(limit).await {
                 Ok(messages) => {
                     if as_json {
-                        println!(
-                            "{}",
-                            json!({
-                                "ok": true,
-                                "inbox": mail.inbox(),
-                                "count": messages.len(),
-                                "messages": messages,
-                            })
-                        );
+                        crate::json::print(json!({
+                            "ok": true,
+                            "inbox": mail.inbox(),
+                            "count": messages.len(),
+                            "messages": messages,
+                        }));
                     } else if messages.is_empty() {
                         println!("{} has no messages", mail.inbox());
                     } else {
@@ -173,9 +166,8 @@ pub async fn run(dir: &Path, command: MailCommand) -> ExitCode {
             match mail.read(&message_id).await {
                 Ok(message) => {
                     if as_json {
-                        println!(
-                            "{}",
-                            json!({ "ok": true, "untrusted": true, "message": message })
+                        crate::json::print(
+                            json!({ "ok": true, "untrusted": true, "message": message }),
                         );
                     } else {
                         println!("from     {}", message.from);
@@ -208,16 +200,13 @@ pub async fn run(dir: &Path, command: MailCommand) -> ExitCode {
             match mail.send(&to, &subject, &text).await {
                 Ok(sent) => {
                     if as_json {
-                        println!(
-                            "{}",
-                            json!({
-                                "ok": true,
-                                "inbox": mail.inbox(),
-                                "to": to,
-                                "message_id": sent.message_id,
-                                "thread_id": sent.thread_id,
-                            })
-                        );
+                        crate::json::print(json!({
+                            "ok": true,
+                            "inbox": mail.inbox(),
+                            "to": to,
+                            "message_id": sent.message_id,
+                            "thread_id": sent.thread_id,
+                        }));
                     } else {
                         println!("sent       {} → {to}", mail.inbox());
                         println!("subject    {subject}");
@@ -244,16 +233,13 @@ pub async fn run(dir: &Path, command: MailCommand) -> ExitCode {
             match mail.reply(&message_id, &text).await {
                 Ok(sent) => {
                     if as_json {
-                        println!(
-                            "{}",
-                            json!({
-                                "ok": true,
-                                "inbox": mail.inbox(),
-                                "reply_to": message_id,
-                                "message_id": sent.message_id,
-                                "thread_id": sent.thread_id,
-                            })
-                        );
+                        crate::json::print(json!({
+                            "ok": true,
+                            "inbox": mail.inbox(),
+                            "reply_to": message_id,
+                            "message_id": sent.message_id,
+                            "thread_id": sent.thread_id,
+                        }));
                     } else {
                         println!("replied    {} on {}", mail.inbox(), message_id);
                         println!("id         {}", sent.message_id);
@@ -282,7 +268,7 @@ fn read_body(label: &str) -> Result<String, String> {
 
 fn user_error(message: &str, as_json: bool) -> ExitCode {
     if as_json {
-        println!("{}", json!({ "ok": false, "error": message }));
+        crate::json::print(json!({ "ok": false, "error": message }));
     } else {
         eprintln!("rigel: {message}");
     }
@@ -292,10 +278,7 @@ fn user_error(message: &str, as_json: bool) -> ExitCode {
 fn failure(error: MailError, as_json: bool) -> ExitCode {
     let code = error.exit_code();
     if as_json {
-        println!(
-            "{}",
-            json!({ "ok": false, "error": error.to_string(), "code": code })
-        );
+        crate::json::print(json!({ "ok": false, "error": error.to_string(), "code": code }));
     } else {
         eprintln!("rigel: {error}");
     }

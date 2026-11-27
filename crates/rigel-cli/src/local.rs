@@ -65,11 +65,7 @@ pub async fn run(dir: &Path, command: Option<LocalCommand>) -> ExitCode {
         LocalCommand::Stop { json } => match llamaserver::stop_at(dir) {
             Ok(Some(pid)) => {
                 if json {
-                    println!(
-                        "{}",
-                        serde_json::to_string_pretty(&serde_json::json!({ "stopped": pid }))
-                            .unwrap_or_default()
-                    );
+                    crate::json::print_pretty(serde_json::json!({ "stopped": pid }));
                 } else {
                     println!("stopped llama-server (PID {pid})");
                 }
@@ -77,7 +73,7 @@ pub async fn run(dir: &Path, command: Option<LocalCommand>) -> ExitCode {
             }
             Ok(None) => {
                 if json {
-                    println!("{}", serde_json::json!({ "stopped": null }));
+                    crate::json::print(serde_json::json!({ "stopped": null }));
                 } else {
                     println!("no llama-server started by Rigel is recorded on this machine");
                 }
@@ -127,13 +123,8 @@ fn setup(dir: &Path, server: Option<String>, model: Option<String>, port: Option
 }
 
 fn print_json(status: &Status) -> ExitCode {
-    match serde_json::to_string_pretty(status) {
-        Ok(text) => {
-            println!("{text}");
-            ExitCode::SUCCESS
-        }
-        Err(error) => fail(&format!("could not encode the status: {error}")),
-    }
+    crate::json::print_pretty(status);
+    ExitCode::SUCCESS
 }
 
 fn print_status(status: &Status) {

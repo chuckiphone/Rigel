@@ -88,15 +88,12 @@ pub async fn run(dir: &std::path::Path, command: WorktreeCommand) -> ExitCode {
             match trees.create(&agent).await {
                 Ok(worktree) => {
                     if as_json {
-                        println!(
-                            "{}",
-                            json!({
-                                "ok": true,
-                                "agent": worktree.agent_id,
-                                "path": worktree.path,
-                                "base": worktree.base,
-                            })
-                        );
+                        crate::json::print(json!({
+                            "ok": true,
+                            "agent": worktree.agent_id,
+                            "path": worktree.path,
+                            "base": worktree.base,
+                        }));
                     } else {
                         println!("{}", worktree.path.display());
                         println!("  base    {}", worktree.base);
@@ -124,7 +121,7 @@ pub async fn run(dir: &std::path::Path, command: WorktreeCommand) -> ExitCode {
                             .iter()
                             .map(|(path, status)| json!({ "path": path, "status": status }))
                             .collect();
-                        println!("{}", json!({ "ok": true, "agent": agent, "changes": rows }));
+                        crate::json::print(json!({ "ok": true, "agent": agent, "changes": rows }));
                     } else if changes.is_empty() {
                         println!("no changes in {agent}'s worktree");
                     } else {
@@ -157,7 +154,7 @@ pub async fn run(dir: &std::path::Path, command: WorktreeCommand) -> ExitCode {
             match trees.merge_back(&session, &agent).await {
                 Ok(report) => {
                     if as_json {
-                        println!("{}", json!({ "ok": report.clean(), "report": report }));
+                        crate::json::print(json!({ "ok": report.clean(), "report": report }));
                     } else if report.lines.is_empty() {
                         println!("nothing to merge from {agent}");
                     } else {
@@ -200,7 +197,7 @@ pub async fn run(dir: &std::path::Path, command: WorktreeCommand) -> ExitCode {
             match trees.remove(&agent, force).await {
                 Ok(()) => {
                     if as_json {
-                        println!("{}", json!({ "ok": true, "removed": agent }));
+                        crate::json::print(json!({ "ok": true, "removed": agent }));
                     } else {
                         println!("removed {agent}'s worktree");
                     }
@@ -229,7 +226,7 @@ pub async fn run(dir: &std::path::Path, command: WorktreeCommand) -> ExitCode {
             match trees.list() {
                 Ok(paths) => {
                     if as_json {
-                        println!("{}", json!({ "ok": true, "worktrees": paths }));
+                        crate::json::print(json!({ "ok": true, "worktrees": paths }));
                     } else if paths.is_empty() {
                         println!("no worktrees");
                     } else {
@@ -258,7 +255,7 @@ pub async fn run(dir: &std::path::Path, command: WorktreeCommand) -> ExitCode {
             {
                 Ok(report) => {
                     if as_json {
-                        println!("{}", json!({ "ok": true, "report": report }));
+                        crate::json::print(json!({ "ok": true, "report": report }));
                     } else {
                         for entry in &report.entries {
                             let action = if entry.removed { "removed" } else { "kept" };
@@ -291,7 +288,7 @@ async fn open(
 
 fn failure(error: rigel_core::WorktreeError, as_json: bool) -> ExitCode {
     if as_json {
-        println!("{}", json!({ "ok": false, "error": error.to_string() }));
+        crate::json::print(json!({ "ok": false, "error": error.to_string() }));
     }
     eprintln!("rigel: {error}");
     ExitCode::from(1)

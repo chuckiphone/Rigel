@@ -171,13 +171,7 @@ async fn check(
                 "retry_after_secs": error.retry_after_secs,
             })),
         });
-        match serde_json::to_string_pretty(&report) {
-            Ok(text) => println!("{text}"),
-            Err(error) => {
-                eprintln!("rigel: {error}");
-                return ExitCode::from(2);
-            }
-        }
+        crate::json::print_pretty(&report);
     } else {
         println!("origin:  {}", result.origin);
         println!(
@@ -264,14 +258,6 @@ fn set(project: &std::path::Path, file: &std::path::Path, as_json: bool) -> Exit
 }
 
 fn print_json(value: &impl serde::Serialize) -> ExitCode {
-    match serde_json::to_string_pretty(value) {
-        Ok(text) => {
-            println!("{text}");
-            ExitCode::SUCCESS
-        }
-        Err(error) => {
-            eprintln!("rigel: {error}");
-            ExitCode::from(2)
-        }
-    }
+    crate::json::print_pretty(value);
+    ExitCode::SUCCESS
 }

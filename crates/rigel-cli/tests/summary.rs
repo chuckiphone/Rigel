@@ -79,7 +79,9 @@ async fn session_summary_prints_the_stored_summary_and_provenance() {
         ],
     );
     assert_eq!(code, 0);
-    let rows: Value = serde_json::from_str(&stdout).unwrap();
+    let versioned: Value = serde_json::from_str(&stdout).unwrap();
+    assert_eq!(versioned["schema_version"], 1);
+    let rows = &versioned["data"];
     assert_eq!(rows[0]["turn_id"], turn.id);
     assert_eq!(rows[0]["item_ids"].as_array().unwrap().len(), 1);
     assert!(

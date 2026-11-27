@@ -63,7 +63,7 @@ pub fn run_snapshot(command: SnapshotCommand, data_dir: PathBuf) -> ExitCode {
             match snapshots.capture("manual") {
                 Ok(snapshot) => {
                     if as_json {
-                        println!("{}", json!({ "ok": true, "snapshot": snapshot }));
+                        crate::json::print(json!({ "ok": true, "snapshot": snapshot }));
                     } else {
                         println!(
                             "snapshot {}  {:?}  {} files, {} bytes\n  {}",
@@ -86,7 +86,7 @@ pub fn run_snapshot(command: SnapshotCommand, data_dir: PathBuf) -> ExitCode {
             match snapshots.list() {
                 Ok(manifests) => {
                     if as_json {
-                        println!("{}", json!({ "ok": true, "snapshots": manifests }));
+                        crate::json::print(json!({ "ok": true, "snapshots": manifests }));
                     } else if manifests.is_empty() {
                         println!("no snapshots yet");
                     } else {
@@ -125,7 +125,7 @@ pub fn run_snapshot(command: SnapshotCommand, data_dir: PathBuf) -> ExitCode {
             match snapshots.restore(&id, &project) {
                 Ok(report) => {
                     if as_json {
-                        println!("{}", json!({ "ok": true, "restore": report }));
+                        crate::json::print(json!({ "ok": true, "restore": report }));
                     } else {
                         println!(
                             "restored {}  {:?}  {} copied files{}",
@@ -160,10 +160,7 @@ pub fn run_snapshot(command: SnapshotCommand, data_dir: PathBuf) -> ExitCode {
             match snapshots.gc(&policy) {
                 Ok(report) => {
                     if as_json {
-                        println!(
-                            "{}",
-                            json!({ "ok": report.errors.is_empty(), "gc": report })
-                        );
+                        crate::json::print(json!({ "ok": report.errors.is_empty(), "gc": report }));
                     } else {
                         println!(
                             "{} {} snapshot(s), {} bytes {}",
@@ -199,7 +196,7 @@ fn canonical(project: &std::path::Path, as_json: bool) -> Option<PathBuf> {
         Ok(root) => Some(root),
         Err(error) => {
             if as_json {
-                println!("{}", json!({ "ok": false, "error": error.to_string() }));
+                crate::json::print(json!({ "ok": false, "error": error.to_string() }));
             }
             eprintln!("rigel: {}: {error}", project.display());
             None
@@ -209,7 +206,7 @@ fn canonical(project: &std::path::Path, as_json: bool) -> Option<PathBuf> {
 
 fn fail(error: rigel_core::SnapshotError, as_json: bool) -> ExitCode {
     if as_json {
-        println!("{}", json!({ "ok": false, "error": error.to_string() }));
+        crate::json::print(json!({ "ok": false, "error": error.to_string() }));
     }
     eprintln!("rigel: {error}");
     ExitCode::from(1)

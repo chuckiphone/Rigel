@@ -98,14 +98,11 @@ async fn list(
     };
 
     if as_json {
-        println!(
-            "{}",
-            json!({
-                "ok": true,
-                "claims": rows,
-                "unverified_changes": unverified,
-            })
-        );
+        crate::json::print(json!({
+            "ok": true,
+            "claims": rows,
+            "unverified_changes": unverified,
+        }));
         return ExitCode::SUCCESS;
     }
     if rows.is_empty() {
@@ -181,10 +178,7 @@ async fn release(
     };
     let Some(holder) = holder else {
         if as_json {
-            println!(
-                "{}",
-                json!({ "ok": false, "error": "no claim on that path" })
-            );
+            crate::json::print(json!({ "ok": false, "error": "no claim on that path" }));
         } else {
             eprintln!("rigel: no claim on {path}");
         }
@@ -203,10 +197,7 @@ async fn release(
     {
         Ok(released) if released.is_empty() => {
             if as_json {
-                println!(
-                    "{}",
-                    json!({ "ok": false, "error": "no claim on that path" })
-                );
+                crate::json::print(json!({ "ok": false, "error": "no claim on that path" }));
             } else {
                 eprintln!("rigel: no claim on {path}");
             }
@@ -214,9 +205,8 @@ async fn release(
         }
         Ok(released) => {
             if as_json {
-                println!(
-                    "{}",
-                    json!({ "ok": true, "released": released, "agent": holder, "reason": reason })
+                crate::json::print(
+                    json!({ "ok": true, "released": released, "agent": holder, "reason": reason }),
                 );
             } else {
                 println!("released {canonical} (held by {holder}): {reason}");

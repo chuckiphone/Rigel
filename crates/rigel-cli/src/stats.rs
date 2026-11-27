@@ -160,10 +160,7 @@ pub async fn run(project: &Path, as_json: bool) -> ExitCode {
     let stats = collect(&transcripts, sessions.len());
 
     if as_json {
-        println!(
-            "{}",
-            serde_json::to_string_pretty(&stats).unwrap_or_default()
-        );
+        crate::json::print_pretty(&stats);
     } else {
         println!("schema     {}", stats.schema);
         println!("sessions   {}", stats.sessions);

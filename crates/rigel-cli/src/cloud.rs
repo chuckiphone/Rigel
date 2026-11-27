@@ -176,24 +176,21 @@ pub async fn run(dir: &Path, command: CloudCommand) -> ExitCode {
         CloudCommand::Status { json: as_json } => match Cloud::status_at(dir) {
             Ok(status) => {
                 if as_json {
-                    println!(
-                        "{}",
-                        json!({
-                            "ok": true,
-                            "configured": status.configured,
-                            "project_id": status.project_id,
-                            "signed_in": status.signed_in,
-                            "email": status.email,
-                            "uid": status.uid,
-                            "expires_at": status.expires_at,
-                            "email_verified": status.email_verified,
-                            "app_check": status.app_check,
-                            "last_push_at": status.last_push_at,
-                            "last_pull_at": status.last_pull_at,
-                            "last_sync_at": status.last_sync_at,
-                            "config": CloudConfig::path(dir),
-                        })
-                    );
+                    crate::json::print(json!({
+                        "ok": true,
+                        "configured": status.configured,
+                        "project_id": status.project_id,
+                        "signed_in": status.signed_in,
+                        "email": status.email,
+                        "uid": status.uid,
+                        "expires_at": status.expires_at,
+                        "email_verified": status.email_verified,
+                        "app_check": status.app_check,
+                        "last_push_at": status.last_push_at,
+                        "last_pull_at": status.last_pull_at,
+                        "last_sync_at": status.last_sync_at,
+                        "config": CloudConfig::path(dir),
+                    }));
                 } else if status.configured {
                     println!("project    {}", status.project_id.as_deref().unwrap_or("—"));
                     match (&status.email, &status.uid) {
@@ -275,14 +272,11 @@ pub async fn run(dir: &Path, command: CloudCommand) -> ExitCode {
             }) {
                 Ok((config, path)) => {
                     if as_json {
-                        println!(
-                            "{}",
-                            json!({
-                                "ok": true,
-                                "project_id": config.project_id,
-                                "config": path,
-                            })
-                        );
+                        crate::json::print(json!({
+                            "ok": true,
+                            "project_id": config.project_id,
+                            "config": path,
+                        }));
                     } else {
                         println!("project    {}", config.project_id);
                         println!("config     {}", path.display());
@@ -312,16 +306,13 @@ pub async fn run(dir: &Path, command: CloudCommand) -> ExitCode {
             match cloud.sign_in(&email, &password).await {
                 Ok(status) => {
                     if as_json {
-                        println!(
-                            "{}",
-                            json!({
-                                "ok": true,
-                                "project_id": status.project_id,
-                                "email": status.email,
-                                "uid": status.uid,
-                                "signed_in": status.signed_in,
-                            })
-                        );
+                        crate::json::print(json!({
+                            "ok": true,
+                            "project_id": status.project_id,
+                            "email": status.email,
+                            "uid": status.uid,
+                            "signed_in": status.signed_in,
+                        }));
                     } else {
                         println!(
                             "signed in  {} ({})",
@@ -351,16 +342,13 @@ pub async fn run(dir: &Path, command: CloudCommand) -> ExitCode {
             match cloud.sign_up(&email, &password).await {
                 Ok(status) => {
                     if as_json {
-                        println!(
-                            "{}",
-                            json!({
-                                "ok": true,
-                                "project_id": status.project_id,
-                                "email": status.email,
-                                "uid": status.uid,
-                                "signed_in": status.signed_in,
-                            })
-                        );
+                        crate::json::print(json!({
+                            "ok": true,
+                            "project_id": status.project_id,
+                            "email": status.email,
+                            "uid": status.uid,
+                            "signed_in": status.signed_in,
+                        }));
                     } else {
                         println!(
                             "created    {} ({})",
@@ -386,13 +374,10 @@ pub async fn run(dir: &Path, command: CloudCommand) -> ExitCode {
             match cloud.send_password_reset(&email).await {
                 Ok(address) => {
                     if as_json {
-                        println!(
-                            "{}",
-                            json!({
-                                "ok": true,
-                                "email": address,
-                            })
-                        );
+                        crate::json::print(json!({
+                            "ok": true,
+                            "email": address,
+                        }));
                     } else {
                         println!(
                             "reset      if an account exists for {address}, Firebase has emailed a \
@@ -417,14 +402,11 @@ pub async fn run(dir: &Path, command: CloudCommand) -> ExitCode {
                 match cloud.check_email_verification().await {
                     Ok(status) => {
                         if as_json {
-                            println!(
-                                "{}",
-                                json!({
-                                    "ok": true,
-                                    "email": status.email,
-                                    "email_verified": status.email_verified,
-                                })
-                            );
+                            crate::json::print(json!({
+                                "ok": true,
+                                "email": status.email,
+                                "email_verified": status.email_verified,
+                            }));
                         } else if status.email_verified {
                             println!("email      verified");
                         } else {
@@ -441,14 +423,11 @@ pub async fn run(dir: &Path, command: CloudCommand) -> ExitCode {
                 match cloud.send_verification_email().await {
                     Ok(address) => {
                         if as_json {
-                            println!(
-                                "{}",
-                                json!({
-                                    "ok": true,
-                                    "sent": true,
-                                    "email": address,
-                                })
-                            );
+                            crate::json::print(json!({
+                                "ok": true,
+                                "sent": true,
+                                "email": address,
+                            }));
                         } else {
                             println!("sent       a verification link to {address}");
                             println!("           open it, then: rigel cloud verify --check");
@@ -505,13 +484,10 @@ pub async fn run(dir: &Path, command: CloudCommand) -> ExitCode {
             match Cloud::status_at(dir) {
                 Ok(status) => {
                     if as_json {
-                        println!(
-                            "{}",
-                            json!({
-                                "ok": true,
-                                "app_check": status.app_check,
-                            })
-                        );
+                        crate::json::print(json!({
+                            "ok": true,
+                            "app_check": status.app_check,
+                        }));
                     } else if let Some(check) = &status.app_check {
                         println!("app check  {}", check.attest_url);
                         println!("           Firebase requests carry a token from this endpoint");
@@ -540,7 +516,7 @@ pub async fn run(dir: &Path, command: CloudCommand) -> ExitCode {
             match cloud.sign_out() {
                 Ok(status) => {
                     if as_json {
-                        println!("{}", json!({ "ok": true, "signed_in": status.signed_in }));
+                        crate::json::print(json!({ "ok": true, "signed_in": status.signed_in }));
                     } else {
                         println!("signed out; the local refresh token is gone");
                     }
@@ -558,10 +534,7 @@ pub async fn run(dir: &Path, command: CloudCommand) -> ExitCode {
             match cloud.push(&index).await {
                 Ok(report) => {
                     if as_json {
-                        println!(
-                            "{}",
-                            serde_json::to_string_pretty(&report).unwrap_or_default()
-                        );
+                        crate::json::print_pretty(&report);
                     } else {
                         println!(
                             "pushed     {} skill(s) in {} batch(es)",
@@ -619,10 +592,7 @@ pub async fn run(dir: &Path, command: CloudCommand) -> ExitCode {
             match cloud.publish_session(&service, &id).await {
                 Ok(report) => {
                     if as_json {
-                        println!(
-                            "{}",
-                            serde_json::to_string_pretty(&report).unwrap_or_default()
-                        );
+                        crate::json::print_pretty(&report);
                     } else {
                         println!(
                             "published  {} — {} turn(s) in {} batch(es)",
@@ -652,9 +622,8 @@ pub async fn run(dir: &Path, command: CloudCommand) -> ExitCode {
             match cloud.enqueue_run(&prompt.join(" "), minutes).await {
                 Ok(id) => {
                     if as_json {
-                        println!(
-                            "{}",
-                            json!({ "id": id, "state": "queued", "maxMinutes": minutes })
+                        crate::json::print(
+                            json!({ "id": id, "state": "queued", "maxMinutes": minutes }),
                         );
                     } else {
                         println!("queued     {id} · {minutes} min ceiling");
@@ -677,10 +646,7 @@ pub async fn run(dir: &Path, command: CloudCommand) -> ExitCode {
             match cloud.runs(50).await {
                 Ok(runs) => {
                     if as_json {
-                        println!(
-                            "{}",
-                            serde_json::to_string_pretty(&runs).unwrap_or_default()
-                        );
+                        crate::json::print_pretty(&runs);
                     } else if runs.is_empty() {
                         println!("no runs queued");
                     } else {
@@ -708,7 +674,7 @@ pub async fn run(dir: &Path, command: CloudCommand) -> ExitCode {
             match cloud.run(&id).await {
                 Ok(run) => {
                     if as_json {
-                        println!("{}", serde_json::to_string_pretty(&run).unwrap_or_default());
+                        crate::json::print_pretty(&run);
                     } else {
                         println!("run        {}", run.id);
                         println!("state      {}", run.state);
@@ -730,7 +696,7 @@ pub async fn run(dir: &Path, command: CloudCommand) -> ExitCode {
             match cloud.cancel_run(&id).await {
                 Ok(run) => {
                     if as_json {
-                        println!("{}", serde_json::to_string_pretty(&run).unwrap_or_default());
+                        crate::json::print_pretty(&run);
                     } else {
                         println!("cancelled  {} · {}", run.id, run.state);
                     }
@@ -748,7 +714,7 @@ pub async fn run(dir: &Path, command: CloudCommand) -> ExitCode {
             match cloud.retry_run(&id).await {
                 Ok(run) => {
                     if as_json {
-                        println!("{}", serde_json::to_string_pretty(&run).unwrap_or_default());
+                        crate::json::print_pretty(&run);
                     } else {
                         println!("requeued   {} · {}", run.id, run.state);
                     }
@@ -772,14 +738,11 @@ pub async fn run(dir: &Path, command: CloudCommand) -> ExitCode {
                 Err(error) => return failure(error, as_json),
             };
             if as_json {
-                println!(
-                    "{}",
-                    json!({
-                        "ok": true,
-                        "pushed": pushed,
-                        "pulled": pulled,
-                    })
-                );
+                crate::json::print(json!({
+                    "ok": true,
+                    "pushed": pushed,
+                    "pulled": pulled,
+                }));
             } else {
                 println!(
                     "pushed     {} skill(s) in {} batch(es)",
@@ -826,10 +789,7 @@ fn one_line(prompt: &str) -> String {
 
 fn print_pull(report: &rigel_core::cloud::PullReport, as_json: bool) {
     if as_json {
-        println!(
-            "{}",
-            serde_json::to_string_pretty(report).unwrap_or_default()
-        );
+        crate::json::print_pretty(report);
     } else {
         println!(
             "pulled     {} received · {} written · {} skipped over {} page(s)",
@@ -860,7 +820,7 @@ fn read_secret(label: &str) -> Result<String, String> {
 
 fn user_error(message: &str, as_json: bool) -> ExitCode {
     if as_json {
-        println!("{}", json!({ "ok": false, "error": message }));
+        crate::json::print(json!({ "ok": false, "error": message }));
     } else {
         eprintln!("rigel: {message}");
     }
@@ -870,14 +830,11 @@ fn user_error(message: &str, as_json: bool) -> ExitCode {
 fn failure(error: CloudError, as_json: bool) -> ExitCode {
     let code = error.exit_code();
     if as_json {
-        println!(
-            "{}",
-            json!({
-                "ok": false,
-                "error": error.to_string(),
-                "code": code,
-            })
-        );
+        crate::json::print(json!({
+            "ok": false,
+            "error": error.to_string(),
+            "code": code,
+        }));
     } else {
         eprintln!("rigel: {error}");
     }

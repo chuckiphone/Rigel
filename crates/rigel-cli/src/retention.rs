@@ -63,7 +63,7 @@ pub async fn run(command: RetentionCommand) -> ExitCode {
             };
             match rigel_core::retention::save_policy(&project, policy) {
                 Ok(()) if as_json => {
-                    println!("{}", json!({"policy": policy}));
+                    crate::json::print(json!({"policy": policy}));
                     ExitCode::SUCCESS
                 }
                 Ok(()) => {
@@ -126,10 +126,7 @@ async fn open(project: &Path) -> Result<Store, rigel_core::StorageError> {
 
 fn print_report(report: &rigel_core::retention::RetentionPreview, as_json: bool) {
     if as_json {
-        println!(
-            "{}",
-            serde_json::to_string(report).unwrap_or_else(|_| "{}".into())
-        );
+        crate::json::print(report);
     } else {
         println!("Retention preview for {}", report.project);
         println!("category    count       bytes");

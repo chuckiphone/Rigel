@@ -133,7 +133,7 @@ pub async fn run(dir: &Path, command: PluginCommand) -> ExitCode {
         } => match PluginStore::new(dir).remove(&name) {
             Ok(true) => {
                 if as_json {
-                    println!("{}", json!({ "ok": true, "removed": name }));
+                    crate::json::print(json!({ "ok": true, "removed": name }));
                 } else {
                     println!("removed {name}");
                 }
@@ -189,11 +189,10 @@ fn list(dir: &Path, as_json: bool) -> ExitCode {
         })
         .collect();
     if as_json {
-        println!(
-            "{}",
+        crate::json::print(
             json!({ "plugins": rows, "broken": broken.iter().map(|(name, error)| json!({
                 "name": name, "error": error
-            })).collect::<Vec<_>>() })
+            })).collect::<Vec<_>>() }),
         );
     } else if rows.is_empty() {
         println!("no plugins installed — `rigel plugins browse` lists the catalogue");
@@ -241,10 +240,7 @@ fn search(
     };
     let hits = catalog.search(query, category.as_deref(), tier.as_deref());
     if as_json {
-        println!(
-            "{}",
-            json!({ "entries": hits, "categories": catalog.categories() })
-        );
+        crate::json::print(json!({ "entries": hits, "categories": catalog.categories() }));
         return ExitCode::SUCCESS;
     }
     if hits.is_empty() {
@@ -294,7 +290,7 @@ fn info(dir: &Path, name: &str, as_json: bool) -> ExitCode {
     };
     if let Some(entry) = catalog.get(name) {
         if as_json {
-            println!("{}", json!({ "entry": entry }));
+            crate::json::print(json!({ "entry": entry }));
         } else {
             print_entry(entry);
             println!(
@@ -309,19 +305,16 @@ fn info(dir: &Path, name: &str, as_json: bool) -> ExitCode {
         Ok((plugins, _)) => {
             if let Some(plugin) = plugins.iter().find(|plugin| plugin.manifest.name == name) {
                 if as_json {
-                    println!(
-                        "{}",
-                        json!({
-                            "name": plugin.manifest.name,
-                            "version": plugin.manifest.version,
-                            "description": plugin.manifest.description,
-                            "enabled": plugin.enabled,
-                            "directory": plugin.directory,
-                            "tools": plugin.manifest.qualified_tools(),
-                            "capabilities": plugin.manifest.capabilities.summary(),
-                            "receipt": plugin.receipt,
-                        })
-                    );
+                    crate::json::print(json!({
+                        "name": plugin.manifest.name,
+                        "version": plugin.manifest.version,
+                        "description": plugin.manifest.description,
+                        "enabled": plugin.enabled,
+                        "directory": plugin.directory,
+                        "tools": plugin.manifest.qualified_tools(),
+                        "capabilities": plugin.manifest.capabilities.summary(),
+                        "receipt": plugin.receipt,
+                    }));
                 } else {
                     println!("{} {}", plugin.manifest.name, plugin.manifest.version);
                     println!("  {}", plugin.manifest.description);
@@ -409,13 +402,10 @@ async fn install_skill(dir: &Path, entry: &CatalogEntry, as_json: bool) -> ExitC
         Err(error) => return skills_failure(error, as_json),
     };
     if as_json {
-        println!(
-            "{}",
-            json!({
-                "ok": true, "name": entry.name, "skills": installed,
-                "tool_install": entry.install
-            })
-        );
+        crate::json::print(json!({
+            "ok": true, "name": entry.name, "skills": installed,
+            "tool_install": entry.install
+        }));
     } else if installed.is_empty() {
         println!("{} is a skill entry with no built-in body", entry.name);
     } else {
@@ -438,7 +428,7 @@ async fn install_skill(dir: &Path, entry: &CatalogEntry, as_json: bool) -> ExitC
 
 fn print_plugin_report(report: PluginInstallReport, as_json: bool) -> ExitCode {
     if as_json {
-        println!("{}", json!(report));
+        crate::json::print(json!(report));
     } else {
         println!(
             "{} {}  installed at {}",
@@ -457,7 +447,7 @@ fn set_enabled(dir: &Path, name: &str, enabled: bool, as_json: bool) -> ExitCode
     match PluginStore::new(dir).set_enabled(name, enabled) {
         Ok(row) => {
             if as_json {
-                println!("{}", json!(row));
+                crate::json::print(json!(row));
             } else {
                 println!(
                     "{} {}",
@@ -484,17 +474,14 @@ fn validate(path: &Path, as_json: bool) -> ExitCode {
             .unwrap_or_default(),
     );
     if as_json {
-        println!(
-            "{}",
-            json!({
-                "ok": true,
-                "name": manifest.name,
-                "version": manifest.version,
-                "tools": manifest.qualified_tools(),
-                "capabilities": manifest.capabilities.summary(),
-                "entry_available": available,
-            })
-        );
+        crate::json::print(json!({
+            "ok": true,
+            "name": manifest.name,
+            "version": manifest.version,
+            "tools": manifest.qualified_tools(),
+            "capabilities": manifest.capabilities.summary(),
+            "entry_available": available,
+        }));
     } else {
         println!("{} {} is valid", manifest.name, manifest.version);
         println!("  tools: {}", manifest.qualified_tools().join(", "));
@@ -526,13 +513,10 @@ async fn run_tool(dir: &Path, plugin: &str, tool: &str, args: &str, as_json: boo
     match runtime.call(Some(plugin), tool, arguments).await {
         Ok(reply) => {
             if as_json {
-                println!(
-                    "{}",
-                    json!({
-                        "ok": true, "plugin": reply.plugin, "tool": reply.tool,
-                        "content": reply.content
-                    })
-                );
+                crate::json::print(json!({
+                    "ok": true, "plugin": reply.plugin, "tool": reply.tool,
+                    "content": reply.content
+                }));
             } else {
                 println!("{}", reply.text());
             }
@@ -544,7 +528,7 @@ async fn run_tool(dir: &Path, plugin: &str, tool: &str, args: &str, as_json: boo
 
 fn failure(error: PluginError, as_json: bool) -> ExitCode {
     if as_json {
-        println!("{}", json!({ "ok": false, "error": error.to_string() }));
+        crate::json::print(json!({ "ok": false, "error": error.to_string() }));
     }
     eprintln!("rigel: {error}");
     ExitCode::from(error.exit_code())
@@ -552,7 +536,7 @@ fn failure(error: PluginError, as_json: bool) -> ExitCode {
 
 fn skills_failure(error: SkillsError, as_json: bool) -> ExitCode {
     if as_json {
-        println!("{}", json!({ "ok": false, "error": error.to_string() }));
+        crate::json::print(json!({ "ok": false, "error": error.to_string() }));
     }
     eprintln!("rigel: {error}");
     ExitCode::from(error.exit_code())

@@ -84,9 +84,8 @@ pub async fn run(command: ProofCommand) -> ExitCode {
                 Ok(run) => run,
                 Err(error) => {
                     if json {
-                        println!(
-                            "{}",
-                            serde_json::json!({ "ok": false, "error": error.to_string() })
+                        crate::json::print(
+                            serde_json::json!({ "ok": false, "error": error.to_string() }),
                         );
                     }
                     eprintln!("rigel: {error}");
@@ -98,9 +97,8 @@ pub async fn run(command: ProofCommand) -> ExitCode {
                 Ok(bundle) => bundle,
                 Err(error) => {
                     if json {
-                        println!(
-                            "{}",
-                            serde_json::json!({ "ok": false, "error": error.to_string() })
+                        crate::json::print(
+                            serde_json::json!({ "ok": false, "error": error.to_string() }),
                         );
                     }
                     eprintln!("rigel: {error}");
@@ -249,15 +247,12 @@ fn print_verification(result: &ProofVerification) {
 }
 
 fn print_json(value: &impl serde::Serialize) {
-    match serde_json::to_string_pretty(value) {
-        Ok(text) => println!("{text}"),
-        Err(error) => eprintln!("rigel: could not encode JSON: {error}"),
-    }
+    crate::json::print_pretty(value);
 }
 
 fn fail(error: &str, as_json: bool) -> ExitCode {
     if as_json {
-        println!("{}", serde_json::json!({ "ok": false, "error": error }));
+        crate::json::print(serde_json::json!({ "ok": false, "error": error }));
     }
     eprintln!("rigel: {error}");
     ExitCode::from(2)

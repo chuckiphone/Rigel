@@ -20,16 +20,8 @@ pub fn run(command: RulesCommand) -> ExitCode {
     let RulesCommand::Explain { project, json } = command;
     let resolution = rigel_core::agent::rules::resolve(&project);
     if json {
-        match serde_json::to_string_pretty(&resolution) {
-            Ok(text) => {
-                println!("{text}");
-                ExitCode::SUCCESS
-            }
-            Err(error) => {
-                eprintln!("rigel: {error}");
-                ExitCode::from(2)
-            }
-        }
+        crate::json::print_pretty(&resolution);
+        ExitCode::SUCCESS
     } else {
         print!("{}", rigel_core::agent::rules::explain(&resolution));
         ExitCode::SUCCESS

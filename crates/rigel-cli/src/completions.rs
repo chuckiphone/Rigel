@@ -126,10 +126,7 @@ pub enum CompletionCommand {
 
 fn failure(as_json: bool, error: String) -> ExitCode {
     if as_json {
-        println!(
-            "{}",
-            serde_json::json!({ "installed": false, "error": error })
-        );
+        crate::json::print(serde_json::json!({ "installed": false, "error": error }));
     } else {
         eprintln!("rigel completions: {error}");
     }
@@ -145,10 +142,7 @@ pub fn run(command: CompletionCommand) -> ExitCode {
         CompletionCommand::Install { shell, dir, json } => match install(shell, dir.as_deref()) {
             Ok(report) => {
                 if json {
-                    println!(
-                        "{}",
-                        serde_json::to_string_pretty(&report).unwrap_or_default()
-                    );
+                    crate::json::print_pretty(&report);
                 } else {
                     println!("installed {} completion → {}", report.shell, report.path);
                 }

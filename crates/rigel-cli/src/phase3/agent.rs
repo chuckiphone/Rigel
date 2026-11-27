@@ -22,9 +22,7 @@ struct PrintSink {
 impl EventSink for PrintSink {
     fn emit(&self, event: AgentEvent) {
         if self.json {
-            if let Ok(line) = serde_json::to_string(&event) {
-                println!("{line}");
-            }
+            crate::json::print(&event);
             return;
         }
         match event {
@@ -90,8 +88,12 @@ impl EventSink for PrintSink {
                         .map(|rows| !rows.is_empty())
                         .unwrap_or(false);
                     println!(
-                        "\n  $ {command}  → {code}{}",
-                        if destructive { "  · destructive" } else { "" }
+                        "\n  $ {command}  â†’ {code}{}",
+                        if destructive {
+                            "  Â· destructive"
+                        } else {
+                            ""
+                        }
                     );
                 }
                 "web_search" => {
@@ -126,7 +128,7 @@ impl EventSink for PrintSink {
                 ..
             } => {
                 println!(
-                    "\n{status} ({stop}) · {} tok · ${:.6}{}",
+                    "\n{status} ({stop}) Â· {} tok Â· ${:.6}{}",
                     usage.total_tokens(),
                     session_spend_micros as f64 / 1_000_000.0,
                     cap_micros
@@ -140,7 +142,7 @@ impl EventSink for PrintSink {
                 ..
             } => {
                 println!(
-                    "\nbudget: ${:.4} of ${:.2} — raise the cap or stop",
+                    "\nbudget: ${:.4} of ${:.2} â€” raise the cap or stop",
                     spend_micros as f64 / 1_000_000.0,
                     cap_micros as f64 / 1_000_000.0
                 );
@@ -162,7 +164,7 @@ impl EventSink for PrintSink {
                 cap_micros,
             } => {
                 println!(
-                    "\ndaily budget for {day}: ${:.4} of ${:.2} — raise the cap in the window's Safety settings",
+                    "\ndaily budget for {day}: ${:.4} of ${:.2} â€” raise the cap in the window's Safety settings",
                     spend_micros as f64 / 1_000_000.0,
                     cap_micros as f64 / 1_000_000.0
                 );
@@ -192,8 +194,8 @@ fn tool_result(body: &serde_json::Value) -> &serde_json::Value {
 /// Answers the two tools that leave the patch journal: `run_command` and `fetch_url`.
 ///
 /// A command's exact text, directory and timeout are printed first, and only an explicit `o`,
-/// `y` or `yes` lets it run. Both questions ask for a scope — once, session, project or always
-/// (N2) — and the answer is returned with the decision so the tool set can remember it. End of
+/// `y` or `yes` lets it run. Both questions ask for a scope â€” once, session, project or always
+/// (N2) â€” and the answer is returned with the decision so the tool set can remember it. End of
 /// input, an unreadable line or anything else denies, the same rule the ACP prompt follows.
 struct CliApprover {
     mode: acp::ApprovalChoice,
@@ -244,7 +246,7 @@ async fn ask_plan(request: &PlanRequest) -> PlanDecision {
     );
     for agent in &request.agents {
         eprintln!(
-            "\n  {} — files: {}\n  task: {}\n  plan:\n{}",
+            "\n  {} â€” files: {}\n  task: {}\n  plan:\n{}",
             agent.role,
             agent.files.join(", "),
             agent.task,
@@ -325,11 +327,11 @@ fn format_command(request: &CommandRequest) -> String {
                 .map(|target| {
                     let count = target
                         .file_count
-                        .map(|count| format!(" · {count} file(s)"))
+                        .map(|count| format!(" Â· {count} file(s)"))
                         .unwrap_or_default();
                     let bytes = target
                         .byte_count
-                        .map(|bytes| format!(" · {bytes} byte(s)"))
+                        .map(|bytes| format!(" Â· {bytes} byte(s)"))
                         .unwrap_or_default();
                     let files = if target.files.is_empty() {
                         String::new()
@@ -439,7 +441,7 @@ fn format_origin(request: &OriginRequest) -> String {
     )
 }
 
-/// One line to one scope. Only an explicit answer allows, and `a` here means **always** — the
+/// One line to one scope. Only an explicit answer allows, and `a` here means **always** â€” the
 /// network prompt has a scope the command prompt deliberately does not.
 fn parse_origin_answer(line: &str) -> OriginDecision {
     match line.trim() {
@@ -467,7 +469,7 @@ fn default_model(provider: &str) -> String {
         .to_string()
 }
 
-/// A provider whose vendor publishes no default model — the picker reads its list — cannot run a
+/// A provider whose vendor publishes no default model â€” the picker reads its list â€” cannot run a
 /// turn without one. Saying so is kinder than sending an empty id and printing the provider's
 /// 400 back.
 fn missing_model(provider: &str) -> ExitCode {
@@ -673,11 +675,11 @@ fn print_run_plan(plan: &serde_json::Value) {
         _ => "no cap set".to_string(),
     };
     println!(
-        "≈ ${:.6} first step · {remaining}",
+        "â‰ˆ ${:.6} first step Â· {remaining}",
         quote["first_step_micros"].as_i64().unwrap_or_default() as f64 / 1_000_000.0
     );
     println!(
-        "  {} tok in · {} tok assumed out · {}",
+        "  {} tok in Â· {} tok assumed out Â· {}",
         quote["input_tokens"], quote["output_tokens"], quote["model"]
     );
     if quote["over_remaining"].as_bool().unwrap_or(false) {
@@ -741,10 +743,7 @@ pub async fn run_agent(dir: &Path, command: AgentCommand) -> ExitCode {
             match service.agents(&session.id).await {
                 Ok(agents) => {
                     if as_json {
-                        println!(
-                            "{}",
-                            serde_json::to_string_pretty(&agents).unwrap_or_default()
-                        );
+                        crate::json::print_pretty(&agents);
                     } else if agents.is_empty() {
                         println!("no agents in session {}", &session.id[..8]);
                     } else {
@@ -822,17 +821,13 @@ pub async fn run_agent(dir: &Path, command: AgentCommand) -> ExitCode {
             {
                 Ok(agent) => {
                     if as_json {
-                        println!(
-                            "{}",
-                            serde_json::to_string(&json!({
+                        crate::json::print(json!({
                                 "session_id": agent.session_id,
                                 "agent_id": agent.id,
                                 "harness": agent.harness,
                                 "role": agent.role,
                                 "status": agent.status,
-                            }))
-                            .unwrap_or_default()
-                        );
+                        }));
                     } else {
                         println!("agent_id={}", agent.id);
                     }
@@ -849,9 +844,7 @@ pub async fn run_agent(dir: &Path, command: AgentCommand) -> ExitCode {
         } => match super::trust::trust_claude(&project, dry_run) {
             Ok(report) => {
                 if as_json {
-                    println!(
-                        "{}",
-                        serde_json::to_string(&json!({
+                    crate::json::print(json!({
                             "settings": report.settings,
                             "settings_changed": report.settings_changed,
                             "global": report.global,
@@ -859,9 +852,7 @@ pub async fn run_agent(dir: &Path, command: AgentCommand) -> ExitCode {
                             "servers": report.servers,
                             "dry_run": report.dry_run,
                             "notes": report.notes,
-                        }))
-                        .unwrap_or_default()
-                    );
+                    }));
                 } else {
                     let state = |changed: bool| match (changed, dry_run) {
                         (true, true) => "would write",
@@ -877,7 +868,7 @@ pub async fn run_agent(dir: &Path, command: AgentCommand) -> ExitCode {
                         None => println!("~/.claude.json (not found)"),
                     }
                     for note in &report.notes {
-                        println!("· {note}");
+                        println!("Â· {note}");
                     }
                 }
                 ExitCode::SUCCESS
@@ -967,15 +958,12 @@ pub async fn run_agent(dir: &Path, command: AgentCommand) -> ExitCode {
             };
             if dry_run {
                 if as_json {
-                    println!(
-                        "{}",
-                        json!({
-                            "ok": true,
-                            "dry_run": true,
-                            "session": planned_session.as_ref().map(|session| session.id.clone()),
-                            "plan": plan,
-                        })
-                    );
+                    crate::json::print(json!({
+                        "ok": true,
+                        "dry_run": true,
+                        "session": planned_session.as_ref().map(|session| session.id.clone()),
+                        "plan": plan,
+                    }));
                 } else {
                     print_run_plan(&plan);
                     println!("dry run: nothing was sent, no agent or turn was created");
@@ -1113,23 +1101,20 @@ pub async fn run_agent(dir: &Path, command: AgentCommand) -> ExitCode {
                         .map(|stored| stored.spend_micros)
                         .unwrap_or(0);
                     if as_json {
-                        println!(
-                            "{}",
-                            json!({
-                                "ok": run.stop == StopReason::Completed,
-                                "session": session.id,
-                                "agent": worker.id,
-                                "turn": run.turn.id,
-                                "status": run.status,
-                                "stop": run.stop.as_str(),
-                                "steps": run.steps,
-                                "tool_calls": run.tool_calls,
-                                "usage": run.usage,
-                                "session_spend_micros": spend,
-                                "dry_run": false,
-                                "plan": plan,
-                            })
-                        );
+                        crate::json::print(json!({
+                            "ok": run.stop == StopReason::Completed,
+                            "session": session.id,
+                            "agent": worker.id,
+                            "turn": run.turn.id,
+                            "status": run.status,
+                            "stop": run.stop.as_str(),
+                            "steps": run.steps,
+                            "tool_calls": run.tool_calls,
+                            "usage": run.usage,
+                            "session_spend_micros": spend,
+                            "dry_run": false,
+                            "plan": plan,
+                        }));
                     }
                     match run.stop {
                         StopReason::Completed | StopReason::Cancelled => ExitCode::SUCCESS,
@@ -1140,7 +1125,7 @@ pub async fn run_agent(dir: &Path, command: AgentCommand) -> ExitCode {
                 }
                 Err(error) => {
                     if as_json {
-                        println!("{}", json!({ "ok": false, "error": error.to_string() }));
+                        crate::json::print(json!({ "ok": false, "error": error.to_string() }));
                     }
                     eprintln!("rigel: {error}");
                     ExitCode::from(error.exit_code())
