@@ -4,6 +4,7 @@ use crate::session::{Session, TurnTranscript};
 use serde::Serialize;
 
 pub mod github;
+pub mod linear;
 pub mod mock;
 pub use github::GitHubForge;
 
