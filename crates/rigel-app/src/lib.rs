@@ -2128,6 +2128,7 @@ pub fn run() {
             commands::retention::retention_apply,
             commands::patches::patch_list,
             commands::patches::patch_hunks,
+            commands::patches::diff_review_record_verdict,
             commands::patches::hunk_comment_add,
             commands::patches::hunk_comments,
             commands::patches::hunk_comment_deliver,

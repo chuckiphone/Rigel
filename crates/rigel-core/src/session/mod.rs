@@ -261,6 +261,9 @@ pub enum SessionError {
     #[error("invalid status: {0}")]
     InvalidStatus(String),
 
+    #[error("{0}")]
+    InvalidInput(String),
+
     #[error("invalid turn status: {0}")]
     InvalidTurnStatus(String),
 
@@ -1401,6 +1404,39 @@ impl SessionService {
                 .await?;
         }
         Ok(())
+    }
+
+    /// Roadmap 132: store a diff-review verdict with the turn it reviewed. The reviewer and the
+    /// accepted hunk ids live in the item body, so the transcript is the evidence and a restart
+    /// cannot lose the decision.
+    pub async fn record_diff_review_verdict(
+        &self,
+        turn_id: &str,
+        reviewer: &str,
+        accepted: &[String],
+        total_hunks: usize,
+    ) -> Result<Item, SessionError> {
+        let reviewer = reviewer.trim();
+        if reviewer.is_empty() {
+            return Err(SessionError::InvalidInput(
+                "a diff-review verdict must name the reviewer".to_string(),
+            ));
+        }
+        let now = now_ms();
+        self.append_item(
+            turn_id,
+            "note",
+            "verdict",
+            &serde_json::json!({
+                "kind": "diff_review_verdict",
+                "reviewer": reviewer,
+                "accepted": accepted,
+                "hunks": total_hunks,
+                "created_at": now,
+            }),
+            &serde_json::Value::Null,
+        )
+        .await
     }
 
     /// Append one normalised event. `raw` is stored untouched (I2).

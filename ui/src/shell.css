@@ -4062,6 +4062,118 @@ button[aria-label^="Unpin "] {
   background: var(--well);
 }
 
+/* Diff review (roadmap 132): provenance rail, split/unified panes and a named verdict. */
+.diff-review {
+  margin: 8px 0;
+  border: 1px solid var(--hairline);
+  border-radius: 9px;
+  background: var(--well);
+  padding: 8px;
+}
+
+.diff-review-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 6px;
+}
+
+.diff-modes {
+  display: inline-flex;
+  gap: 2px;
+}
+
+.diff-modes button,
+.review-actions button,
+.review-verdict button {
+  min-height: 24px;
+  padding: 2px 8px;
+  border: 1px solid var(--hairline);
+  border-radius: 6px;
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+}
+
+.diff-modes button[aria-pressed="true"],
+.review-actions button[aria-pressed="true"] {
+  border-color: var(--accent);
+  color: var(--accent-text);
+}
+
+.review-hunks {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 8px;
+}
+
+.review-hunk {
+  display: grid;
+  grid-template-columns: minmax(140px, 1fr) minmax(0, 2fr);
+  gap: 8px;
+  padding: 6px;
+  border: 1px solid var(--hairline);
+  border-radius: 6px;
+}
+
+.review-hunk.accepted {
+  border-left: 2px solid var(--accent);
+}
+
+.provenance-rail {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-size: 11px;
+  color: var(--faint);
+}
+
+.review-split {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px;
+}
+
+.review-old,
+.review-new,
+.review-unified {
+  margin: 0;
+  padding: 4px 6px;
+  border-radius: 4px;
+  background: var(--surface);
+  font-size: 11px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.review-actions,
+.review-verdict {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 4px;
+}
+
+.review-verdict input {
+  min-height: 24px;
+  border: 1px solid var(--hairline);
+  border-radius: 6px;
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+}
+
+.review-error {
+  color: var(--accent-text);
+}
+
+.review-stored {
+  color: var(--faint);
+}
+
 /* Session roster (roadmap 131): grouped, virtualised rows and one keyboard-reachable menu. */
 .roster-virtual {
   max-height: none;

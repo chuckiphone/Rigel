@@ -53,6 +53,7 @@ import McpResult from "./mcp-result";
 import { UPLOAD_CHUNK_BYTES } from "./composer/dropzone";
 import { MemoryInspector } from "./inspector/memory";
 import CompareTurns from "./compare-turns";
+import DiffReview from "./diff-review";
 import PublishPreviewPanel from "./publish-preview";
 import { RequestInspector, RequestInspectorPreview, fromUsage } from "./inspector/request";
 import { StepCost } from "./inspector/step-cost";
@@ -572,6 +573,11 @@ export default function SessionView({
   const [forking, setForking] = useState(false);
   const [publishing, setPublishing] = useState(false);
   const [publishPreview, setPublishPreview] = useState<import("./api").PublishPreview | null>(null);
+  const [diffReview, setDiffReview] = useState<{
+    hunks: import("./api").AttributedHunk[];
+    turnId: string;
+    reviewer: string;
+  } | null>(null);
   const [testRun, setTestRun] = useState<TestRun | null>(null);
   const [testRunning, setTestRunning] = useState(false);
   const testRunFor = useRef<string | null>(null);
@@ -3738,6 +3744,27 @@ export default function SessionView({
             {session ? (
               <button
                 className="chip"
+                title="Review this session's recorded hunks in split or unified mode"
+                onClick={() => {
+                  void Promise.all([api.patchHunks(project, session.id), api.cloudStatus()])
+                    .then(([hunks, status]) =>
+                      setDiffReview({
+                        hunks,
+                        turnId: activeTurnId ?? session.id,
+                        reviewer: status.email ?? status.uid ?? "user",
+                      }),
+                    )
+                    .catch((failure) =>
+                      onNotice(failure instanceof Error ? failure.message : "Review failed."),
+                    );
+                }}
+              >
+                Review diff
+              </button>
+            ) : null}
+            {session ? (
+              <button
+                className="chip"
                 title="List every row this session would publish, with tool output and diffs redacted by default"
                 onClick={() => {
                   void api
@@ -4076,6 +4103,23 @@ export default function SessionView({
             </div>
           </>
         )}
+
+        {diffReview ? (
+          <DiffReview
+            hunks={diffReview.hunks}
+            turnId={diffReview.turnId}
+            reviewer={diffReview.reviewer}
+            onVerdict={(accepted, reviewer) =>
+              api.diffReviewRecordVerdict(
+                project,
+                diffReview.turnId,
+                reviewer,
+                accepted,
+                diffReview.hunks.length,
+              )
+            }
+          />
+        ) : null}
 
         {publishPreview ? (
           <PublishPreviewPanel

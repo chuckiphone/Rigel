@@ -33,6 +33,27 @@ pub(crate) fn patch_hunks(project: String, session: String) -> Result<Vec<Attrib
     })
 }
 
+/// Roadmap 132: store the diff-review verdict as a note on the turn that was reviewed. The
+/// reviewer is the identity from the account panel, never a name the renderer invents.
+#[tauri::command]
+pub(crate) fn diff_review_record_verdict(
+    project: String,
+    turn: String,
+    reviewer: String,
+    accepted: Vec<String>,
+    total_hunks: usize,
+) -> Result<rigel_core::session::Item, String> {
+    tauri::async_runtime::block_on(async move {
+        let service = SessionService::open(Path::new(&project))
+            .await
+            .map_err(message)?;
+        service
+            .record_diff_review_verdict(&turn, &reviewer, &accepted, total_hunks)
+            .await
+            .map_err(message)
+    })
+}
+
 #[tauri::command]
 pub(crate) fn hunk_comment_add(
     project: String,
