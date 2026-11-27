@@ -41,7 +41,10 @@ pub fn plan(project: &Path) -> Vec<Repair> {
     if let Ok(entries) = std::fs::read_dir(&rigel) {
         for entry in entries.flatten() {
             let name = entry.file_name().to_string_lossy().to_string();
-            if name.ends_with(".db-journal") || name.ends_with(".journal") || name.ends_with(".tmp") {
+            if name.ends_with(".db-journal")
+                || name.ends_with(".journal")
+                || name.ends_with(".tmp")
+            {
                 repairs.push(Repair {
                     id: "stale-journal".to_string(),
                     detail: format!("remove {}", entry.path().display()),
@@ -52,19 +55,19 @@ pub fn plan(project: &Path) -> Vec<Repair> {
 
     // Orphan blobs: files in .rigel/blobs whose name is not a valid sha256 hash.
     let blobs = rigel.join("blobs");
-    if blobs.exists() {
-        if let Ok(entries) = std::fs::read_dir(&blobs) {
-            for entry in entries.flatten() {
-                if !entry.file_type().map(|t| t.is_file()).unwrap_or(false) {
-                    continue;
-                }
-                let name = entry.file_name().to_string_lossy().to_string();
-                if !is_sha256(&name) {
-                    repairs.push(Repair {
-                        id: "orphan-blob".to_string(),
-                        detail: format!("remove {}", entry.path().display()),
-                    });
-                }
+    if blobs.exists()
+        && let Ok(entries) = std::fs::read_dir(&blobs)
+    {
+        for entry in entries.flatten() {
+            if !entry.file_type().map(|t| t.is_file()).unwrap_or(false) {
+                continue;
+            }
+            let name = entry.file_name().to_string_lossy().to_string();
+            if !is_sha256(&name) {
+                repairs.push(Repair {
+                    id: "orphan-blob".to_string(),
+                    detail: format!("remove {}", entry.path().display()),
+                });
             }
         }
     }
@@ -116,19 +119,12 @@ pub async fn apply(project: &Path, repairs: &[Repair]) -> usize {
                     applied += 1;
                 }
             }
-            "stale-journal" => {
+            "stale-journal" | "orphan-blob" => {
                 // detail contains the path after "remove "
-                if let Some(path) = repair.detail.strip_prefix("remove ") {
-                    if std::fs::remove_file(path).is_ok() {
-                        applied += 1;
-                    }
-                }
-            }
-            "orphan-blob" => {
-                if let Some(path) = repair.detail.strip_prefix("remove ") {
-                    if std::fs::remove_file(path).is_ok() {
-                        applied += 1;
-                    }
+                if let Some(path) = repair.detail.strip_prefix("remove ")
+                    && std::fs::remove_file(path).is_ok()
+                {
+                    applied += 1;
                 }
             }
             _ => {}

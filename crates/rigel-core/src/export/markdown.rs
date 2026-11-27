@@ -65,13 +65,13 @@ pub fn redact_markdown(input: &str, options: &ExportOptions) -> ExportResult {
         );
     }
 
-    if options.relativise_paths {
-        if let Some(root) = &options.root {
-            let (text, count) = relativise_paths(&out, root);
-            out = text;
-            if count > 0 {
-                manifest.push("path", format!("{count} absolute path(s) relativised"));
-            }
+    if options.relativise_paths
+        && let Some(root) = &options.root
+    {
+        let (text, count) = relativise_paths(&out, root);
+        out = text;
+        if count > 0 {
+            manifest.push("path", format!("{count} absolute path(s) relativised"));
         }
     }
 
@@ -93,12 +93,12 @@ pub fn redact_json_value(value: &Value, options: &ExportOptions) -> (Value, Expo
     }
 
     let mut value = redacted;
-    if options.relativise_paths {
-        if let Some(root) = &options.root {
-            let changed = relativise_json_paths(&mut value, root);
-            if changed > 0 {
-                manifest.push("path", format!("{changed} absolute path(s) relativised"));
-            }
+    if options.relativise_paths
+        && let Some(root) = &options.root
+    {
+        let changed = relativise_json_paths(&mut value, root);
+        if changed > 0 {
+            manifest.push("path", format!("{changed} absolute path(s) relativised"));
         }
     }
 
