@@ -546,63 +546,125 @@ async fn find_session(
 /// Price the first step of a turn without sending anything: no model call, no agent row, no
 /// turn row and no chat history. A session is read when one exists so the quote uses its
 /// spend and cap; when none exists the quote still works, with the cap reported as unset.
+struct RunPlanOptions<'a> {
+    project: &'a Path,
+    index_dir: &'a Path,
+    prompt: &'a str,
+    requested_session: Option<&'a str>,
+    provider: &'a str,
+    model: Option<&'a str>,
+    script: Option<&'a Path>,
+    agent: &'a str,
+    max_steps: usize,
+    approval: acp::ApprovalChoice,
+    no_network: bool,
+    allow_origin: &'a [String],
+}
+
 async fn quote_run(
     service: &SessionService,
-    prompt: &str,
-    requested: Option<&str>,
-    provider: &str,
-    model: Option<String>,
-    script: Option<&std::path::Path>,
-    as_json: bool,
-) -> ExitCode {
-    let session = match find_session(service, requested).await {
-        Ok(session) => session,
-        Err(error) => {
-            eprintln!("rigel: {error}");
-            return ExitCode::from(1);
-        }
-    };
+    options: RunPlanOptions<'_>,
+) -> Result<(Option<rigel_core::Session>, serde_json::Value), String> {
+    let RunPlanOptions {
+        project,
+        index_dir,
+        prompt,
+        requested_session,
+        provider,
+        model,
+        script,
+        agent,
+        max_steps,
+        approval,
+        no_network,
+        allow_origin,
+    } = options;
+    let session = find_session(service, requested_session).await?;
 
     // The quote prices the exact request the first step would send: the same system prompt
     // and tool schemas the coordinator measures, plus the typed prompt.
-    let model_name = model.unwrap_or_else(|| default_model(provider));
+    let model_name = model.map(str::to_string).unwrap_or_else(|| {
+        if script.is_some() {
+            "script".to_string()
+        } else {
+            default_model(provider)
+        }
+    });
     if model_name.trim().is_empty() {
-        return missing_model(provider);
+        return Err(format!("no default model for `{provider}`"));
     }
     let context_chars = rigel_core::agent::fixed_context_chars(&model_name);
     let quote = match &session {
         Some(session) => {
             let budget = BudgetService::with_null_interrupt(service.pool().clone());
-            match budget
+            budget
                 .quote_session(&session.id, &model_name, context_chars, prompt)
                 .await
-            {
-                Ok(quote) => quote,
-                Err(error) => {
-                    eprintln!("rigel: {error}");
-                    return ExitCode::from(1);
-                }
-            }
+                .map_err(|error| error.to_string())?
         }
         None => rigel_core::quote_turn(&model_name, context_chars, prompt, 0, None),
     };
 
-    if as_json {
-        println!(
-            "{}",
-            json!({
-                "ok": true,
-                "dry_run": true,
-                "session": session.as_ref().map(|session| session.id.clone()),
-                "model": model_name,
-                "script": script.is_some(),
-                "quote": quote,
-            })
-        );
-        return ExitCode::SUCCESS;
-    }
+    let plan_tools = Tools::new(
+        project.to_path_buf(),
+        service.clone(),
+        Arc::new(BudgetService::with_null_interrupt(service.pool().clone())),
+        index_dir.to_path_buf(),
+        StopAt::Never,
+    );
+    let mut tools: Vec<String> = plan_tools
+        .specs()
+        .into_iter()
+        .map(|spec| spec.name)
+        .collect();
+    tools.sort();
+    let approval_mode = match approval {
+        acp::ApprovalChoice::Ask => "ask",
+        acp::ApprovalChoice::Allow => "allow",
+        acp::ApprovalChoice::Deny => "deny",
+    };
+    let base_url = rigel_core::agent::providers::find(provider)
+        .ok_or_else(|| rigel_core::agent::providers::unknown_provider(provider))
+        .and_then(rigel_core::agent::providers::base_url)?;
+    let network_policy = if no_network || !allow_origin.is_empty() {
+        NetworkPolicy::new(!no_network, allow_origin.to_vec())
+    } else {
+        NetworkPolicy::load(project)
+    };
+    let plan = json!({
+        "route": {"provider": provider, "model": model_name, "base_url": base_url},
+        "agent": agent,
+        "max_steps": max_steps,
+        "tools": tools,
+        "prompt_budget": quote,
+        "required_approvals": {
+            "commands": approval_mode,
+            "fetch_url": approval_mode,
+            "plans": approval_mode,
+            "network": if no_network { "disabled" } else { "ask-before-unapproved-origin" },
+            "allowed_origins": allow_origin,
+            "network_policy": network_policy,
+        },
+    });
+    Ok((session, plan))
+}
 
-    let remaining = match (quote.remaining_micros, quote.cap_micros) {
+fn print_run_plan(plan: &serde_json::Value) {
+    let route = &plan["route"];
+    println!("route: {} / {}", route["provider"], route["model"]);
+    let tools = plan["tools"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(serde_json::Value::as_str)
+        .collect::<Vec<_>>();
+    println!("tools: {}", tools.join(", "));
+    let quote = &plan["prompt_budget"];
+
+    let remaining = match (
+        quote["remaining_micros"].as_i64(),
+        quote["cap_micros"].as_i64(),
+    ) {
         (Some(left), Some(cap)) => format!(
             "${:.6} left of ${:.2}",
             left as f64 / 1_000_000.0,
@@ -612,22 +674,21 @@ async fn quote_run(
     };
     println!(
         "≈ ${:.6} first step · {remaining}",
-        quote.first_step_micros as f64 / 1_000_000.0
+        quote["first_step_micros"].as_i64().unwrap_or_default() as f64 / 1_000_000.0
     );
     println!(
         "  {} tok in · {} tok assumed out · {}",
-        quote.input_tokens, quote.output_tokens, quote.model
+        quote["input_tokens"], quote["output_tokens"], quote["model"]
     );
-    if quote.over_remaining {
+    if quote["over_remaining"].as_bool().unwrap_or(false) {
         println!(
             "  over the remaining budget; the cap would stop the turn after the step that crosses"
         );
     }
-    if script.is_some() {
+    if plan["route"]["model"] == "script" {
         println!("  scripted model: the real bill comes from the script's reported usage");
     }
-    println!("dry run: nothing was sent, no agent or turn was created");
-    ExitCode::SUCCESS
+    println!("required approvals: {}", plan["required_approvals"]);
 }
 
 async fn resolve_session(
@@ -879,24 +940,57 @@ pub async fn run_agent(dir: &Path, command: AgentCommand) -> ExitCode {
                     return ExitCode::from(1);
                 }
             };
-            if dry_run {
-                return quote_run(
-                    &service,
-                    &prompt,
-                    session.as_deref(),
-                    &provider,
-                    model,
-                    script.as_deref(),
-                    as_json,
-                )
-                .await;
-            }
-            let session = match resolve_session(&service, session.as_deref()).await {
-                Ok(session) => session,
+            let (planned_session, plan) = match quote_run(
+                &service,
+                RunPlanOptions {
+                    project: &project,
+                    index_dir: dir,
+                    prompt: &prompt,
+                    requested_session: session.as_deref(),
+                    provider: &provider,
+                    model: model.as_deref(),
+                    script: script.as_deref(),
+                    agent: &agent,
+                    max_steps,
+                    approval,
+                    no_network,
+                    allow_origin: &allow_origin,
+                },
+            )
+            .await
+            {
+                Ok(plan) => plan,
                 Err(error) => {
                     eprintln!("rigel: {error}");
                     return ExitCode::from(1);
                 }
+            };
+            if dry_run {
+                if as_json {
+                    println!(
+                        "{}",
+                        json!({
+                            "ok": true,
+                            "dry_run": true,
+                            "session": planned_session.as_ref().map(|session| session.id.clone()),
+                            "plan": plan,
+                        })
+                    );
+                } else {
+                    print_run_plan(&plan);
+                    println!("dry run: nothing was sent, no agent or turn was created");
+                }
+                return ExitCode::SUCCESS;
+            }
+            let session = match planned_session {
+                Some(session) => session,
+                None => match resolve_session(&service, session.as_deref()).await {
+                    Ok(session) => session,
+                    Err(error) => {
+                        eprintln!("rigel: {error}");
+                        return ExitCode::from(1);
+                    }
+                },
             };
             // A scripted model has a fixed number of steps; spending three on advice would
             // change the turn it was written to test. Scripted runs record that advice was not
@@ -1032,6 +1126,8 @@ pub async fn run_agent(dir: &Path, command: AgentCommand) -> ExitCode {
                                 "tool_calls": run.tool_calls,
                                 "usage": run.usage,
                                 "session_spend_micros": spend,
+                                "dry_run": false,
+                                "plan": plan,
                             })
                         );
                     }
