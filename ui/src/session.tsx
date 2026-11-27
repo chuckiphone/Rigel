@@ -23,6 +23,7 @@ import {
   type PendingApproval,
   type Session,
   type SessionTemplate,
+  type TemplateModel,
   type SkillPin,
   type SkillPinReview,
   type SkillRow,
@@ -538,7 +539,7 @@ export default function SessionView({
   const [snippets, setSnippets] = useState<Snippet[]>(() => readSnippets(project));
 
   // D152: project-local templates, offered by the "+ session" button. Never committed.
-  const [templates, setTemplates] = useState<SessionTemplate[]>([]);
+  const [templates, setTemplates] = useState<TemplateModel[]>([]);
   const [templateOpen, setTemplateOpen] = useState(false);
   const [templateSaving, setTemplateSaving] = useState(false);
   const templateRef = useRef<HTMLDivElement | null>(null);
@@ -1775,7 +1776,7 @@ export default function SessionView({
       const existing = templates.find(
         (row) => row.name.toLowerCase() === name.toLowerCase(),
       );
-      const saved = await api.templates.save(project, {
+      const candidate: TemplateModel = {
         id: existing?.id ?? "",
         name,
         model,
@@ -1789,7 +1790,21 @@ export default function SessionView({
         skills: pins.map((pin) => ({ skill_id: pin.skill_id, body_sha: pin.body_sha })),
         prompt: text,
         created_at: existing?.created_at ?? 0,
-      });
+        variables: existing?.variables ?? {},
+        slots: existing?.slots ?? [],
+        agent_sections: existing?.agent_sections ?? [],
+        variable_defs: existing?.variable_defs ?? [],
+      };
+      const changes = await api.templates.preview(project, candidate);
+      if (existing && changes.length > 0) {
+        const summary = changes
+          .map(({ field, old, new: next }) => `${field}: ${old ?? "(empty)"} → ${next ?? "(empty)"}`)
+          .join("\n");
+        if (!window.confirm(`Review changes to “${candidate.name}” before saving:\n\n${summary}`)) {
+          return;
+        }
+      }
+      const saved = await api.templates.save(project, candidate);
       setTemplates((current) =>
         [...current.filter((row) => row.id !== saved.id), saved].sort((a, b) =>
           a.name.localeCompare(b.name),

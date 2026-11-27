@@ -1192,6 +1192,20 @@ export interface SessionTemplate {
   created_at: number;
 }
 
+/** Roadmap 94: persisted template extensions with a reviewable save diff. */
+export interface TemplateModel extends SessionTemplate {
+  variables: Record<string, string>;
+  slots: string[];
+  agent_sections: { agent_id: string; section: string }[];
+  variable_defs: { name: string; default: string | null }[];
+}
+
+export interface TemplateFieldDiff {
+  field: string;
+  old: string | null;
+  new: string | null;
+}
+
 /** D156: the recorded chain behind a patch. Empty links are printed as "unknown". */
 export interface Provenance {
   patch_id: string;
@@ -2556,14 +2570,36 @@ export const api = {
 
   /** D152: the project's own templates. Nothing here is committed to the repository. */
   templates: {
-    async list(project: string): Promise<SessionTemplate[]> {
-      if (!isTauri()) return previewTemplateList();
-      return call<SessionTemplate[]>("template_list", { project });
+    async list(project: string): Promise<TemplateModel[]> {
+      if (!isTauri())
+        return previewTemplateList().map((template) => ({
+          ...template,
+          variables: {},
+          slots: [],
+          agent_sections: [],
+          variable_defs: [],
+        }));
+      return call<TemplateModel[]>("template_list_v2", { project });
     },
 
-    async save(project: string, template: SessionTemplate): Promise<SessionTemplate> {
-      if (!isTauri()) return previewTemplateSave(template);
-      return call<SessionTemplate>("template_save", { project, template });
+    async preview(project: string, template: TemplateModel): Promise<TemplateFieldDiff[]> {
+      if (!isTauri()) {
+        const existing = previewTemplateList().find((row) => row.id === template.id);
+        if (!existing) return [];
+        return ["name", "model", "effort", "max_steps", "prompt"]
+          .filter((field) => existing[field as keyof SessionTemplate] !== template[field as keyof SessionTemplate])
+          .map((field) => ({
+            field,
+            old: String(existing[field as keyof SessionTemplate] ?? ""),
+            new: String(template[field as keyof SessionTemplate] ?? ""),
+          }));
+      }
+      return call<TemplateFieldDiff[]>("template_preview_save", { project, template });
+    },
+
+    async save(project: string, template: TemplateModel): Promise<TemplateModel> {
+      if (!isTauri()) return { ...previewTemplateSave(template), ...template };
+      return call<TemplateModel>("template_save_v2", { project, template });
     },
 
     async delete(project: string, id: string): Promise<void> {

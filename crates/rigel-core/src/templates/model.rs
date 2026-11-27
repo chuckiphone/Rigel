@@ -87,6 +87,21 @@ impl TemplateModel {
         }
     }
 
+    /// Project a v2 template back to the legacy shape for existing callers.
+    pub fn to_v1(&self) -> crate::templates::SessionTemplate {
+        crate::templates::SessionTemplate {
+            id: self.id.clone(),
+            name: self.name.clone(),
+            model: self.model.clone(),
+            effort: self.effort.clone(),
+            max_steps: self.max_steps,
+            agents: self.agents.clone(),
+            skills: self.skills.clone(),
+            prompt: self.prompt.clone(),
+            created_at: self.created_at,
+        }
+    }
+
     /// Fill variables into the prompt, replacing `{{name}}` with the value.
     pub fn render_prompt(&self) -> String {
         let mut out = self.prompt.clone();
@@ -97,7 +112,7 @@ impl TemplateModel {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct FieldDiff {
     pub field: String,
     pub old: Option<String>,
@@ -135,6 +150,20 @@ pub fn diff(old: &TemplateModel, new: &TemplateModel) -> Vec<FieldDiff> {
             new: new.max_steps.map(|v| v.to_string()),
         });
     }
+    if old.agents != new.agents {
+        out.push(FieldDiff {
+            field: "agents".to_string(),
+            old: Some(format!("{:?}", old.agents)),
+            new: Some(format!("{:?}", new.agents)),
+        });
+    }
+    if old.skills != new.skills {
+        out.push(FieldDiff {
+            field: "skills".to_string(),
+            old: Some(format!("{:?}", old.skills)),
+            new: Some(format!("{:?}", new.skills)),
+        });
+    }
     if old.prompt != new.prompt {
         out.push(FieldDiff {
             field: "prompt".to_string(),
@@ -161,6 +190,13 @@ pub fn diff(old: &TemplateModel, new: &TemplateModel) -> Vec<FieldDiff> {
             field: "agent_sections".to_string(),
             old: Some(format!("{:?}", old.agent_sections)),
             new: Some(format!("{:?}", new.agent_sections)),
+        });
+    }
+    if old.variable_defs != new.variable_defs {
+        out.push(FieldDiff {
+            field: "variable_defs".to_string(),
+            old: Some(format!("{:?}", old.variable_defs)),
+            new: Some(format!("{:?}", new.variable_defs)),
         });
     }
     out
