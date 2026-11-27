@@ -4,7 +4,7 @@ import test from "node:test";
 import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 
-import { MarkdownText, highlightCode, inlineTokens, parseMarkdown } from "../src/markdown";
+import { MarkdownPreview, MarkdownText, highlightCode, inlineTokens, parseMarkdown } from "../src/markdown";
 
 const SCRIPT = "# Cause\n\nUse `tree_hash()` now.\n\n```rust\nfn go() -> u64 { 42 } // fine\n```\n\nA model can say <script>alert(1)</script> and it stays text.\n";
 
@@ -50,6 +50,61 @@ test("the highlighter emits kinds without emitting markup", () => {
     assert.ok(kinds.has(kind as never), `${kind} is highlighted`);
   }
   assert.equal(tokens.map((token) => token.text).join(""), code);
+});
+
+test("only ordinary absolute web URLs become links", () => {
+  assert.deepEqual(inlineTokens("[up](HTTPS://example.test)"), [
+    { kind: "link", text: "up", url: "HTTPS://example.test" },
+  ]);
+  for (const url of [
+    "javascript:alert(1)",
+    "data:text/html,<script>",
+    "vbscript:msgbox(1)",
+    "mailto:someone@example.test",
+    "/a/relative/path",
+    "https://example.test onmouseover=alert(1)",
+  ]) {
+    const tokens = inlineTokens(`[bad](${url})`);
+    assert.ok(tokens.every((token) => token.kind === "text"), `${url} is not a link`);
+    assert.equal(tokens.map((token) => token.text).join(""), `[bad](${url})`);
+  }
+});
+
+test("a half-written stream uses the same safe renderer as a finished answer", () => {
+  const partial = "## Working\n\nA model can say <script>alert(1)</script> mid-turn.\n\n```rust\nfn go() -> u64 { 42 }\n";
+  const html = renderToStaticMarkup(<MarkdownText source={partial} streaming />);
+  assert.match(html, /data-streaming="true"/);
+  assert.match(html, /aria-busy="true"/);
+  assert.match(html, /class="markdown-code"/);
+  assert.match(html, /Copy code/);
+  assert.doesNotMatch(html, /<script/i);
+  assert.match(html, /&lt;script&gt;alert\(1\)&lt;\/script&gt;/);
+  assert.match(html, /Raw/, "the raw toggle is still available mid-stream");
+  assert.doesNotMatch(html, /class="markdown-raw-body"/);
+
+  const done = renderToStaticMarkup(<MarkdownText source="# Done" />);
+  assert.match(done, /aria-busy="false"/);
+  assert.doesNotMatch(done, /data-streaming="true"/);
+});
+
+test("the preview fixture exposes both paths for the browser test", () => {
+  assert.equal(renderToStaticMarkup(<MarkdownPreview />), "");
+  const html = renderToStaticMarkup(<MarkdownPreview enabled />);
+  assert.match(html, /aria-label="Markdown preview"/);
+  assert.match(html, /data-testid="markdown-streaming"/);
+  assert.match(html, /data-testid="markdown-complete"/);
+  assert.match(html, /&lt;script&gt;alert\(1\)&lt;\/script&gt;/);
+  assert.doesNotMatch(html, /<script/i);
+});
+
+test("the markdown token styles use the token sheet, not colour literals", () => {
+  const css = readFileSync(new URL("../src/shell.css", import.meta.url), "utf8");
+  const block = css.slice(css.indexOf(".markdown {"), css.indexOf(".markdown-raw-body"));
+  for (const selector of [".markdown-heading", ".markdown-paragraph", ".markdown-code", ".markdown-tok-keyword"]) {
+    assert.ok(block.includes(selector), `${selector} is styled`);
+  }
+  assert.match(block, /var\(--/);
+  assert.doesNotMatch(block, /#[0-9a-fA-F]{3,8}\b|\b(?:rgba?|hsla?)\(/);
 });
 
 test("a script tag fixture renders strictly as text with a copy button and raw toggle", () => {

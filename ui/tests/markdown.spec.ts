@@ -44,3 +44,29 @@ test("the assistant answer renders script text, highlighted code and a raw toggl
   await markdown.getByRole("button", { name: "Rendered" }).click();
   await expect(code).toBeVisible();
 });
+
+test("a half-written stream renders the same safe markdown as a finished answer", async ({
+  page,
+}) => {
+  await page.goto("/?markdown=1");
+  await page.getByRole("button", { name: "Session", exact: true }).click();
+  const preview = page.getByRole("region", { name: "Markdown preview" });
+  await expect(preview).toBeVisible();
+
+  const streaming = preview.getByTestId("markdown-streaming").locator(".markdown");
+  await expect(streaming).toHaveAttribute("data-streaming", "true");
+  await expect(streaming).toHaveAttribute("aria-busy", "true");
+  await expect(streaming.locator("h2")).toContainText("Working");
+  await expect(streaming.locator(".markdown-code")).toBeVisible();
+  await expect(streaming.locator("script")).toHaveCount(0);
+  await expect(streaming).toContainText("<script>alert(1)</script>");
+  await expect(streaming.getByRole("button", { name: "Copy code" })).toBeVisible();
+  await streaming.getByRole("button", { name: "Raw" }).click();
+  await expect(streaming.locator(".markdown-raw-body")).toContainText("```rust");
+
+  const complete = preview.getByTestId("markdown-complete").locator(".markdown");
+  await expect(complete).toHaveAttribute("data-streaming", "false");
+  await expect(complete.locator("script")).toHaveCount(0);
+  await expect(complete.locator("a")).toHaveCount(0);
+  await expect(complete).toContainText("[Unsafe](javascript:alert(1))");
+});
