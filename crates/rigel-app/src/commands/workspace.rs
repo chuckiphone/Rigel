@@ -75,10 +75,15 @@ fn attachment_dir(root: &Path) -> Result<PathBuf, String> {
     Ok(dir)
 }
 
-fn remove_upload(key: &str) {
-    if let Some(state) = uploads().lock().expect("upload lock").remove(key) {
+fn remove_upload(key: &str) -> Result<(), String> {
+    if let Some(state) = uploads()
+        .lock()
+        .map_err(|_| "upload state poisoned".to_string())?
+        .remove(key)
+    {
         let _ = fs::remove_file(&state.temp);
     }
+    Ok(())
 }
 
 /// Open (creating if needed) a project and report where its session database lives.
@@ -200,19 +205,22 @@ pub(crate) fn attachment_upload_start(
     }
 
     let key = upload_key(&project, &token);
-    remove_upload(&key); // a retried token must not strand the earlier temporary file
+    remove_upload(&key)?; // a retried token must not strand the earlier temporary file
     let dir = attachment_dir(&root)?;
     let temp = dir.join(format!(".upload-{token}"));
     fs::write(&temp, []).map_err(message)?;
-    uploads().lock().expect("upload lock").insert(
-        key,
-        UploadState {
-            temp,
-            name,
-            size,
-            written: 0,
-        },
-    );
+    uploads()
+        .lock()
+        .map_err(|_| "upload state poisoned".to_string())?
+        .insert(
+            key,
+            UploadState {
+                temp,
+                name,
+                size,
+                written: 0,
+            },
+        );
     Ok(())
 }
 
@@ -228,7 +236,9 @@ pub(crate) fn attachment_upload_chunk(
     let bytes = base64::engine::general_purpose::STANDARD
         .decode(data)
         .map_err(|error| format!("Bad upload chunk: {error}"))?;
-    let mut states = uploads().lock().expect("upload lock");
+    let mut states = uploads()
+        .lock()
+        .map_err(|_| "upload state poisoned".to_string())?;
     let state = states.get_mut(&key).ok_or("Upload is no longer active.")?;
     let next = state
         .written
@@ -264,7 +274,7 @@ pub(crate) fn attachment_upload_finish(project: String, token: String) -> Result
     let key = upload_key(&project, &token);
     let state = uploads()
         .lock()
-        .expect("upload lock")
+        .map_err(|_| "upload state poisoned".to_string())?
         .remove(&key)
         .ok_or("Upload is no longer active.")?;
     if state.written != state.size {
@@ -288,8 +298,7 @@ pub(crate) fn attachment_upload_finish(project: String, token: String) -> Result
 /// attachment directory, and no blob is left to clean up later.
 #[tauri::command]
 pub(crate) fn attachment_upload_cancel(project: String, token: String) -> Result<(), String> {
-    remove_upload(&upload_key(&project, &token));
-    Ok(())
+    remove_upload(&upload_key(&project, &token))
 }
 
 #[tauri::command]
