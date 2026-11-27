@@ -1,0 +1,37 @@
+{
+  "version": 1,
+  "benchmarks": {
+    "index.tree_hash": {
+      "median_ns": 68394440,
+      "regression_limit_percent": 25
+    },
+    "patch.apply": {
+      "median_ns": 10193500,
+      "regression_limit_percent": 25
+    },
+    "patch.apply_patch_text": {
+      "median_ns": 157710,
+      "regression_limit_percent": 25
+    },
+    "patch.parse_diff_hunks": {
+      "median_ns": 1340,
+      "regression_limit_percent": 25
+    },
+    "patch.propose": {
+      "median_ns": 26697880,
+      "regression_limit_percent": 25
+    },
+    "patch.unified_diff": {
+      "median_ns": 65400,
+      "regression_limit_percent": 25
+    },
+    "search.query": {
+      "median_ns": 1925910,
+      "regression_limit_percent": 25
+    },
+    "search.workspace": {
+      "median_ns": 517670,
+      "regression_limit_percent": 25
+    }
+  }
+}
