@@ -161,7 +161,11 @@ impl SnapshotService {
             &uuid::Uuid::new_v4().simple().to_string()[..8]
         );
 
-        let git = GitRepo::detect(&root);
+        // Jujutsu owns its working copy state independently of the Git index, including when
+        // the workspace is colocated with Git. Preserve the working copy through the same
+        // byte-copy snapshot path used for non-Git trees instead of asking Git to stash it.
+        let jj = crate::git::jj::JjWorkspace::detect(&root);
+        let git = jj.is_none().then(|| GitRepo::detect(&root)).flatten();
         let (kind, files) = match &git {
             Some(repo) if repo_has_head(&root) => {
                 // The stash object holds tracked state, but checkout is subject to the user's
@@ -620,7 +624,7 @@ fn walk(
     for entry in entries {
         let entry = entry?;
         let name = entry.file_name().to_string_lossy().to_string();
-        if name == ".git" || name == ".rigel" {
+        if name == ".git" || name == ".jj" || name == ".rigel" {
             continue;
         }
         let path = entry.path();

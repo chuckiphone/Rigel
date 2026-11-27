@@ -24,6 +24,7 @@ pub mod domain;
 pub mod export;
 pub mod flakes;
 pub mod forge;
+pub mod git;
 pub mod gravity;
 pub mod index;
 pub mod mcp;

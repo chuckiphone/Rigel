@@ -102,6 +102,68 @@ fn a_git_snapshot_restores_tracked_and_untracked_files() {
 }
 
 #[test]
+fn a_jj_working_copy_uses_the_tree_snapshot_path_and_restores_exact_bytes() {
+    if !has_git() {
+        return;
+    }
+    let tmp = repo();
+    std::fs::create_dir_all(tmp.path().join(".jj")).unwrap();
+    std::fs::write(tmp.path().join(".jj/workspace"), "jj workspace metadata\n").unwrap();
+    std::fs::write(
+        tmp.path().join("src/lib.rs"),
+        "fn jj_state() -> u8 { 2 }\r\n",
+    )
+    .unwrap();
+    std::fs::write(tmp.path().join("new.txt"), "working copy file\n").unwrap();
+
+    let detected = rigel_core::git::jj::JjWorkspace::detect(&tmp.path().join("src")).unwrap();
+    assert_eq!(detected.root(), tmp.path().canonicalize().unwrap());
+
+    let (snapshots, _data) = service(tmp.path());
+    let snapshot = snapshots.capture("jj working copy").unwrap();
+    assert_eq!(snapshot.kind, SnapshotKind::Tree);
+    assert!(snapshot.stash.is_none());
+
+    let manifest = snapshots.load(&snapshot.id).unwrap();
+    assert!(manifest.files.iter().any(|file| file.path == "src/lib.rs"));
+    assert!(manifest.files.iter().any(|file| file.path == "new.txt"));
+    assert!(
+        manifest
+            .files
+            .iter()
+            .all(|file| !file.path.starts_with(".jj/"))
+    );
+
+    std::fs::write(tmp.path().join("src/lib.rs"), "destroyed\n").unwrap();
+    std::fs::remove_file(tmp.path().join("new.txt")).unwrap();
+    let report = snapshots.restore(&snapshot.id, tmp.path()).unwrap();
+    assert!(!report.git_restored);
+    assert_eq!(
+        std::fs::read(tmp.path().join("src/lib.rs")).unwrap(),
+        b"fn jj_state() -> u8 { 2 }\r\n"
+    );
+    assert_eq!(
+        std::fs::read_to_string(tmp.path().join("new.txt")).unwrap(),
+        "working copy file\n"
+    );
+    assert!(tmp.path().join(".jj/workspace").exists());
+}
+
+#[test]
+fn a_plain_git_repository_does_not_match_jj_detection() {
+    if !has_git() {
+        return;
+    }
+    let tmp = repo();
+    assert!(rigel_core::git::jj::JjWorkspace::detect(tmp.path()).is_none());
+    let (snapshots, _data) = service(tmp.path());
+    assert_eq!(
+        snapshots.capture("plain Git").unwrap().kind,
+        SnapshotKind::Git
+    );
+}
+
+#[test]
 fn a_deleted_tracked_file_comes_back_deleted() {
     if !has_git() {
         return;
