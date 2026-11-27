@@ -1033,6 +1033,10 @@ impl Coordinator {
             .ok_or_else(|| AgentError::PauseAlreadyResumed(turn_id.to_string()))?;
         self.session.set_agent_status(agent_id, "running").await?;
         let prompt = turn.prompt.clone().unwrap_or_default();
+        crate::telemetry::spans::record(
+            "turn",
+            serde_json::json!({ "event": "started", "turn_id": turn.id, "session_id": session_id, "agent_id": agent_id, "seq": turn.seq, "resumed": true }),
+        );
         self.sink.emit(AgentEvent::TurnStarted {
             session_id: session_id.to_string(),
             agent_id: agent_id.to_string(),
@@ -1103,6 +1107,10 @@ impl Coordinator {
             )
             .await?;
         }
+        crate::telemetry::spans::record(
+            "turn",
+            serde_json::json!({ "event": "started", "turn_id": turn.id, "session_id": session_id, "agent_id": agent_id, "seq": turn.seq, "resumed": false }),
+        );
         self.sink.emit(AgentEvent::TurnStarted {
             session_id: session_id.to_string(),
             agent_id: agent_id.to_string(),
@@ -1822,8 +1830,32 @@ chat_send/chat_wait.",
                     .all(|(name, _)| Tools::parallel_read_only(name))
             {
                 let tasks = parallel_calls.iter().map(|(name, args)| {
-                    self.tools
-                        .execute_for_turn(session_id, agent_id, &turn.id, name, args.clone())
+                    let tool_started = Instant::now();
+                    crate::telemetry::spans::record(
+                        "tool",
+                        serde_json::json!({ "event": "started", "turn_id": turn.id, "tool": name, "step": steps }),
+                    );
+                    let execution = self.tools.execute_for_turn(
+                        session_id,
+                        agent_id,
+                        &turn.id,
+                        name,
+                        args.clone(),
+                    );
+                    async move {
+                        let outcome = execution.await;
+                        crate::telemetry::spans::record(
+                            "tool",
+                            serde_json::json!({
+                                "event": "finished",
+                                "turn_id": turn.id,
+                                "tool": name,
+                                "outcome": if outcome.ok { "ok" } else { "error" },
+                                "duration_ms": tool_started.elapsed().as_millis(),
+                            }),
+                        );
+                        outcome
+                    }
                 });
                 tokio::select! {
                     _ = token.cancelled() => None,
@@ -1872,6 +1904,14 @@ chat_send/chat_wait.",
                 // `merge_subagent`, `subagent_results` and the chat tools) do not pass through
                 // `Tools::execute`. Check the project ceiling and role before this dispatch, so a
                 // model that calls a tool it was not offered is still refused.
+                let instrument_here = parallel_outcomes.is_none();
+                let tool_started = Instant::now();
+                if instrument_here {
+                    crate::telemetry::spans::record(
+                        "tool",
+                        serde_json::json!({ "event": "started", "turn_id": turn.id, "tool": call_name, "step": steps }),
+                    );
+                }
                 let outcome = if let Some(outcomes) = &parallel_outcomes {
                     outcomes[call_index].clone()
                 } else if let Some(reason) = self.tools.denied_reason(&call_name) {
@@ -1903,6 +1943,18 @@ chat_send/chat_wait.",
                         .execute_for_turn(session_id, agent_id, &turn.id, &call_name, args.clone())
                         .await
                 };
+                if instrument_here {
+                    crate::telemetry::spans::record(
+                        "tool",
+                        serde_json::json!({
+                            "event": "finished",
+                            "turn_id": turn.id,
+                            "tool": call_name,
+                            "outcome": if outcome.ok { "ok" } else { "error" },
+                            "duration_ms": tool_started.elapsed().as_millis(),
+                        }),
+                    );
+                }
 
                 let mut recorded = serde_json::json!({
                     "tool": call_name,
@@ -3690,6 +3742,10 @@ chat_send/chat_wait.",
             let mut on_delta = |delta: Delta| match delta {
                 Delta::Text(piece) => {
                     text.push_str(&piece);
+                    crate::telemetry::spans::record(
+                        "turn",
+                        serde_json::json!({ "event": "delta", "turn_id": turn, "kind": "message" }),
+                    );
                     sink.emit(AgentEvent::Delta {
                         turn_id: turn.clone(),
                         kind: ItemKind::Message,
@@ -3698,6 +3754,10 @@ chat_send/chat_wait.",
                 }
                 Delta::Reasoning(piece) => {
                     reasoning.push_str(&piece);
+                    crate::telemetry::spans::record(
+                        "turn",
+                        serde_json::json!({ "event": "delta", "turn_id": turn, "kind": "reasoning" }),
+                    );
                     sink.emit(AgentEvent::Delta {
                         turn_id: turn.clone(),
                         kind: ItemKind::Reasoning,
@@ -3709,7 +3769,13 @@ chat_send/chat_wait.",
                     id,
                     name,
                     arguments,
-                } => builder.apply(index, id.as_deref(), name.as_deref(), &arguments),
+                } => {
+                    crate::telemetry::spans::record(
+                        "tool",
+                        serde_json::json!({ "event": "delta", "turn_id": turn, "tool": name, "index": index }),
+                    );
+                    builder.apply(index, id.as_deref(), name.as_deref(), &arguments)
+                }
                 Delta::Usage(raw) => {
                     usage = crate::agent::model::usage_from_raw(raw, &self.model_name);
                 }
@@ -3781,6 +3847,19 @@ chat_send/chat_wait.",
             .session
             .append_item(&turn.id, kind.as_str(), status, &body, &raw)
             .await?;
+        if let Some(tool) = body.get("tool") {
+            crate::telemetry::spans::record(
+                "tool",
+                serde_json::json!({
+                    "event": "item_emitted",
+                    "turn_id": turn.id,
+                    "item_id": item.id,
+                    "kind": item.kind,
+                    "status": item.status,
+                    "tool": tool,
+                }),
+            );
+        }
         self.sink.emit(AgentEvent::Item { item });
         Ok(())
     }
@@ -3803,6 +3882,10 @@ chat_send/chat_wait.",
             .map(|snapshot| (snapshot.session_micros, snapshot.cap_micros))
             .unwrap_or((0, None));
 
+        crate::telemetry::spans::record(
+            "turn",
+            serde_json::json!({ "event": "finished", "turn_id": turn.id, "agent_id": turn.agent_id, "status": status, "stop": stop.as_str() }),
+        );
         self.sink.emit(AgentEvent::TurnFinished {
             turn_id: turn.id.clone(),
             status: status.to_string(),

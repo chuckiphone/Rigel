@@ -3,7 +3,7 @@
 use std::collections::HashMap;
 use std::future::Future;
 use std::sync::{Arc, Mutex, OnceLock};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use thiserror::Error;
 
@@ -58,16 +58,21 @@ pub enum ClientError {
 pub struct ProviderClient {
     client: reqwest::Client,
     config: ClientConfig,
+    provider: String,
 }
 
 impl ProviderClient {
-    fn build(config: ClientConfig) -> Result<Self, ClientError> {
+    fn build(provider: &str, config: ClientConfig) -> Result<Self, ClientError> {
         let client = reqwest::Client::builder()
             .pool_max_idle_per_host(config.pool_max_idle_per_host)
             .pool_idle_timeout(Duration::from_secs(90))
             .connect_timeout(config.connect_timeout)
             .build()?;
-        Ok(Self { client, config })
+        Ok(Self {
+            client,
+            config,
+            provider: provider.to_owned(),
+        })
     }
 
     pub fn client(&self) -> &reqwest::Client {
@@ -82,14 +87,34 @@ impl ProviderClient {
     where
         F: Future<Output = T>,
     {
+        let started = Instant::now();
+        crate::telemetry::spans::record(
+            "request",
+            serde_json::json!({
+                "provider": self.provider,
+                "phase": phase.to_string(),
+                "event": "started",
+            }),
+        );
         let timeout = match phase {
             HttpPhase::Connect => self.config.connect_timeout,
             HttpPhase::Response => self.config.response_timeout,
             HttpPhase::Body => self.config.body_timeout,
         };
-        tokio::time::timeout(timeout, work)
+        let result = tokio::time::timeout(timeout, work)
             .await
-            .map_err(|_| ClientError::Timeout { phase })
+            .map_err(|_| ClientError::Timeout { phase });
+        crate::telemetry::spans::record(
+            "request",
+            serde_json::json!({
+                "provider": self.provider,
+                "phase": phase.to_string(),
+                "event": "finished",
+                "outcome": if result.is_ok() { "completed" } else { "timeout" },
+                "duration_ms": started.elapsed().as_millis(),
+            }),
+        );
+        result
     }
 }
 
@@ -116,7 +141,7 @@ impl ClientRegistry {
         if let Some(client) = clients.get(provider) {
             return Ok(Arc::clone(client));
         }
-        let client = Arc::new(ProviderClient::build(config)?);
+        let client = Arc::new(ProviderClient::build(provider, config)?);
         clients.insert(provider.to_owned(), Arc::clone(&client));
         Ok(client)
     }
@@ -125,7 +150,14 @@ impl ClientRegistry {
 /// Process-wide registry used by provider adapters to share their connection pools.
 pub fn shared_provider_client(provider: &str) -> Result<Arc<ProviderClient>, ClientError> {
     static REGISTRY: OnceLock<ClientRegistry> = OnceLock::new();
-    REGISTRY.get_or_init(ClientRegistry::default).get(provider)
+    let client = REGISTRY
+        .get_or_init(ClientRegistry::default)
+        .get(provider)?;
+    crate::telemetry::spans::record(
+        "request",
+        serde_json::json!({ "provider": provider, "event": "client_acquired" }),
+    );
+    Ok(client)
 }
 
 #[cfg(test)]
@@ -192,5 +224,42 @@ mod tests {
             .await
             .unwrap_err();
         assert_eq!(error.to_string(), "HTTP response phase timed out");
+    }
+
+    #[tokio::test]
+    async fn enabled_request_phases_emit_stable_local_spans() {
+        let _guard = crate::telemetry::spans::TEST_LOCK.lock().await;
+        crate::telemetry::spans::configure(crate::telemetry::spans::Config { enabled: true });
+        let provider = "span-request-test";
+        let client = shared_provider_client(provider).unwrap();
+        assert_eq!(
+            client
+                .run_phase(HttpPhase::Body, async { 7 })
+                .await
+                .unwrap(),
+            7
+        );
+
+        let spans = crate::telemetry::spans::trace_view().spans;
+        let request_spans: Vec<_> = spans
+            .iter()
+            .filter(|span| span.name == "request" && span.fields["provider"] == provider)
+            .collect();
+        assert!(
+            request_spans.iter().any(|span| {
+                span.fields["phase"] == "body" && span.fields["event"] == "started"
+            })
+        );
+        assert!(request_spans.iter().any(|span| {
+            span.fields["phase"] == "body"
+                && span.fields["event"] == "finished"
+                && span.fields["outcome"] == "completed"
+        }));
+        assert!(
+            request_spans
+                .iter()
+                .any(|span| span.fields["event"] == "client_acquired")
+        );
+        crate::telemetry::spans::configure(crate::telemetry::spans::Config::default());
     }
 }

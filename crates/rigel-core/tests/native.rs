@@ -355,10 +355,36 @@ async fn a_scripted_turn_reads_three_files_and_patches_one() {
         .await
         .unwrap();
 
+    rigel_core::telemetry::spans::configure(rigel_core::telemetry::spans::Config { enabled: true });
     let run = coordinator(tmp.path(), &service, SCRIPT, StopAt::Never, 10)
         .run(&session.id, &agent.id, "make sub overflow-safe")
         .await
         .unwrap();
+
+    let spans = rigel_core::telemetry::spans::trace_view().spans;
+    let turn_spans: Vec<_> = spans
+        .iter()
+        .filter(|span| span.fields["turn_id"] == run.turn.id)
+        .collect();
+    assert!(turn_spans.iter().any(|span| {
+        span.name == "turn" && span.fields["event"] == "started" && span.fields["seq"] == 1
+    }));
+    assert!(turn_spans.iter().any(|span| {
+        span.name == "turn"
+            && span.fields["event"] == "finished"
+            && span.fields["status"] == "completed"
+    }));
+    assert!(turn_spans.iter().any(|span| {
+        span.name == "tool"
+            && span.fields["event"] == "started"
+            && span.fields["tool"] == "read_file"
+    }));
+    assert!(
+        turn_spans
+            .iter()
+            .any(|span| { span.name == "tool" && span.fields["event"] == "item_emitted" })
+    );
+    rigel_core::telemetry::spans::configure(rigel_core::telemetry::spans::Config::default());
 
     assert_eq!(run.stop, StopReason::Completed);
     assert_eq!(run.status, "completed");
