@@ -2,7 +2,6 @@
 
 use rigel_core::skills::contract::{Contract, ContractError};
 use rigel_core::skills::run::Script;
-use std::collections::BTreeMap;
 
 #[test]
 fn dry_run_prints_exact_command_and_refusal_works() {

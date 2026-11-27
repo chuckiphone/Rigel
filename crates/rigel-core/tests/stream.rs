@@ -35,7 +35,7 @@ async fn commit_removes_the_spill_file_and_drain_clears() {
 #[tokio::test]
 async fn write_trait_and_async_alias() {
     let mut buf = StreamBuffer::new(4);
-    write!(buf, "hello {}", "world").unwrap();
+    write!(buf, "hello world").unwrap();
     buf.push_async(b"!").await.unwrap();
     assert_eq!(buf.read_all(), b"hello world!");
 }
