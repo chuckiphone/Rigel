@@ -63,7 +63,7 @@ pub struct ProviderClient {
 
 impl ProviderClient {
     fn build(provider: &str, config: ClientConfig) -> Result<Self, ClientError> {
-        let client = reqwest::Client::builder()
+        let client = crate::net::proxy::configure_builder(reqwest::Client::builder())
             .pool_max_idle_per_host(config.pool_max_idle_per_host)
             .pool_idle_timeout(Duration::from_secs(90))
             .connect_timeout(config.connect_timeout)

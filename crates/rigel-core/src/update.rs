@@ -381,11 +381,8 @@ async fn fetch_manifest_with(
     if !url.starts_with("https://") && !(allow_loopback && loopback) {
         return Err(UpdateError::NotHttps(url.to_string()));
     }
-    let client = reqwest::Client::builder()
-        .timeout(timeout)
-        .user_agent("rigel/0.1")
-        .build()
-        .map_err(|error| UpdateError::Network(error.to_string()))?;
+    let client =
+        build_update_client(timeout).map_err(|error| UpdateError::Network(error.to_string()))?;
     let response = client
         .get(url)
         .send()
@@ -483,12 +480,7 @@ pub async fn download_artifact(
     std::fs::create_dir_all(&dir)?;
     let path = dir.join(artifact_name(url));
 
-    let client = reqwest::Client::builder()
-        // A release can be a few hundred MB; 300 seconds total was too eager on a slow link.
-        .connect_timeout(std::time::Duration::from_secs(15))
-        .timeout(std::time::Duration::from_secs(900))
-        .user_agent("rigel/0.1")
-        .build()
+    let client = build_update_client(std::time::Duration::from_secs(900))
         .map_err(|error| UpdateError::Network(error.to_string()))?;
     let response = client
         .get(url)
@@ -555,6 +547,21 @@ pub async fn download_artifact(
         });
     }
     Ok(path)
+}
+
+fn build_update_client(timeout: std::time::Duration) -> Result<reqwest::Client, reqwest::Error> {
+    build_update_client_with_settings(timeout, &crate::net::proxy::settings())
+}
+
+fn build_update_client_with_settings(
+    timeout: std::time::Duration,
+    settings: &crate::net::proxy::ProxySettings,
+) -> Result<reqwest::Client, reqwest::Error> {
+    crate::net::proxy::configure_builder_with_settings(reqwest::Client::builder(), settings)
+        .connect_timeout(std::time::Duration::from_secs(15))
+        .timeout(timeout)
+        .user_agent("rigel/0.1")
+        .build()
 }
 
 /// A fixed basename from the URL, with only filename-safe characters. The asset name is
@@ -974,6 +981,48 @@ mod tests {
             .expect("a loopback release server");
         let port = listener.local_addr().unwrap().port();
         (listener, port)
+    }
+
+    #[tokio::test]
+    async fn update_and_mcp_clients_use_the_shared_explicit_proxy() {
+        let proxy = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = proxy.local_addr().unwrap();
+        let server = tokio::spawn(async move {
+            let mut targets = Vec::new();
+            for _ in 0..2 {
+                let (mut stream, _) = proxy.accept().await.unwrap();
+                let mut bytes = [0u8; 2048];
+                let count = stream.read(&mut bytes).await.unwrap();
+                let request = String::from_utf8_lossy(&bytes[..count]);
+                targets.push(request.lines().next().unwrap_or_default().to_string());
+                stream
+                    .write_all(
+                        b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nok",
+                    )
+                    .await
+                    .unwrap();
+            }
+            targets
+        });
+        let settings = crate::net::proxy::ProxySettings {
+            explicit: Some(format!("http://{address}")),
+            bypass: Vec::new(),
+        };
+        let update = build_update_client_with_settings(Duration::from_secs(3), &settings).unwrap();
+        let update_response = update
+            .get("http://updates.example.test/latest.json")
+            .send()
+            .await
+            .unwrap();
+        assert!(update_response.status().is_success());
+
+        let mcp = crate::mcp::transport::http_client_with_settings(&settings).unwrap();
+        let mcp_response = mcp.get("http://mcp.example.test/rpc").send().await.unwrap();
+        assert!(mcp_response.status().is_success());
+
+        let targets = server.await.unwrap();
+        assert!(targets[0].contains("http://updates.example.test/latest.json"));
+        assert!(targets[1].contains("http://mcp.example.test/rpc"));
     }
 
     /// A two-route release channel: the signed manifest and the installer named by it. `seen`

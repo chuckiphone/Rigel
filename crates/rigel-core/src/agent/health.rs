@@ -76,7 +76,10 @@ const PROBE_TIMEOUT: Duration = Duration::from_secs(8);
 /// `GET {base}/models` through the same headers and credential the catalogue uses.
 pub async fn probe(target: ProbeTarget) -> DoorHealth {
     let started = Instant::now();
-    let client = match reqwest::Client::builder().timeout(PROBE_TIMEOUT).build() {
+    let client = match crate::net::proxy::configure_builder(reqwest::Client::builder())
+        .timeout(PROBE_TIMEOUT)
+        .build()
+    {
         Ok(client) => client,
         Err(error) => {
             return target.row(

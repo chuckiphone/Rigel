@@ -22,5 +22,5 @@ pub use resources::{
 
 pub use transport::{
     ENVIRONMENT_ALLOWLIST, MAX_MESSAGE_BYTES, TransportError, check_http, check_message,
-    check_stdio_environment, scrub_environment,
+    check_stdio_environment, http_client, scrub_environment,
 };

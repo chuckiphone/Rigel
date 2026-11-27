@@ -461,7 +461,7 @@ enum Health {
 }
 
 async fn health_at(host: &str, port: u16) -> Health {
-    let client = match reqwest::Client::builder()
+    let client = match crate::net::proxy::configure_builder(reqwest::Client::builder())
         .timeout(Duration::from_secs(2))
         .connect_timeout(Duration::from_secs(1))
         .build()

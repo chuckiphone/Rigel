@@ -15,6 +15,18 @@ use std::collections::BTreeMap;
 /// in a file, not in a JSON-RPC line.
 pub const MAX_MESSAGE_BYTES: usize = 4 * 1024 * 1024;
 
+/// Construct the HTTP transport client with the same proxy policy as provider and update calls.
+pub fn http_client() -> Result<reqwest::Client, reqwest::Error> {
+    crate::net::proxy::configure_builder(reqwest::Client::builder()).build()
+}
+
+#[cfg(test)]
+pub(crate) fn http_client_with_settings(
+    settings: &crate::net::proxy::ProxySettings,
+) -> Result<reqwest::Client, reqwest::Error> {
+    crate::net::proxy::configure_builder_with_settings(reqwest::Client::builder(), settings).build()
+}
+
 /// The variables a stdio server may inherit. `PATH` is needed to resolve the command; the
 /// Windows variables are needed by the loader; the rest make a Unix child behave.
 pub const ENVIRONMENT_ALLOWLIST: &[&str] = &[
