@@ -229,7 +229,8 @@ async fn a_tree_that_moved_after_the_checkpoint_needs_a_decision() {
         .unwrap();
 
     // The kill happened after someone (or some patch) changed the tree.
-    std::fs::write(tmp.path().join("notes.txt"), "after\n").unwrap();
+    // Same-length edits must invalidate the cached content hash too.
+    std::fs::write(tmp.path().join("notes.txt"), "after!\n").unwrap();
 
     let outcome = resume(&service, tmp.path(), &session.id, false)
         .await
