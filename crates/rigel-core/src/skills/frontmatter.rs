@@ -16,6 +16,27 @@ pub struct Frontmatter {
     pub body: String,
 }
 
+/// The metadata projection used when an indexed skill is built from its frontmatter.
+/// Keep authoring tools on this exact fallback and truncation behavior.
+pub fn indexed_metadata(src: &str, fallback_name: &str) -> (String, String) {
+    let parsed = parse(src);
+    let name = parsed
+        .get("name")
+        .map(str::trim)
+        .filter(|name| !name.is_empty())
+        .unwrap_or(fallback_name)
+        .to_string();
+    let description = parsed
+        .get("description")
+        .map(str::trim)
+        .filter(|description| !description.is_empty())
+        .unwrap_or("No description in frontmatter.")
+        .chars()
+        .take(240)
+        .collect();
+    (name, description)
+}
+
 impl Frontmatter {
     pub fn get(&self, key: &str) -> Option<&str> {
         self.data.get(key).map(String::as_str)

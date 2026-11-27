@@ -34,6 +34,7 @@ mod proof;
 mod route;
 mod rules;
 mod serve;
+mod skills;
 mod stats;
 mod testing;
 mod tools;
@@ -439,6 +440,26 @@ enum SessionCommand {
 
 #[derive(Subcommand)]
 enum SkillCommand {
+    /// Create a starter `SKILL.md` in a new skill directory.
+    Init {
+        #[arg(default_value = "SKILL.md", value_name = "FILE")]
+        file: PathBuf,
+        #[arg(long)]
+        name: Option<String>,
+    },
+
+    /// Validate frontmatter and run the same security scanner used during install.
+    Lint {
+        #[arg(default_value = "SKILL.md", value_name = "FILE")]
+        file: PathBuf,
+    },
+
+    /// Exercise the install-time load gate for a local skill file.
+    Test {
+        #[arg(default_value = "SKILL.md", value_name = "FILE")]
+        file: PathBuf,
+    },
+
     /// Full-text search over the local index. Never touches the network.
     Search {
         query: Vec<String>,
@@ -903,6 +924,13 @@ async fn entry() -> ExitCode {
 }
 
 async fn run_skills(dir: &Path, command: SkillCommand) -> ExitCode {
+    match &command {
+        SkillCommand::Init { file, name } => return skills::init(file, name.as_deref()),
+        SkillCommand::Lint { file } => return skills::lint(file).await,
+        SkillCommand::Test { file } => return skills::test(file).await,
+        _ => {}
+    }
+
     if let SkillCommand::Restore {
         project,
         lock,
@@ -948,6 +976,9 @@ async fn run_skills(dir: &Path, command: SkillCommand) -> ExitCode {
     };
 
     match command {
+        SkillCommand::Init { .. } | SkillCommand::Lint { .. } | SkillCommand::Test { .. } => {
+            unreachable!("authoring commands run before opening the skill index")
+        }
         SkillCommand::Seed { url, limit, json } => {
             let index = match SkillIndex::open(dir).await {
                 Ok(index) => index,

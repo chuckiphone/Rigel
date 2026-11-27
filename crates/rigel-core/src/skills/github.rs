@@ -378,27 +378,14 @@ fn build_skill(
     path: &str,
     stars: i64,
 ) -> FetchedSkill {
-    let parsed = frontmatter::parse(raw);
-    let name = parsed
-        .get("name")
-        .map(str::trim)
+    let dir = parent_dir(path);
+    let fallback_name = dir
+        .rsplit('/')
+        .next()
         .filter(|name| !name.is_empty())
-        .map(ToOwned::to_owned)
-        .or_else(|| {
-            let dir = parent_dir(path);
-            let last = dir.rsplit('/').next().unwrap_or_default().to_string();
-            if last.is_empty() { None } else { Some(last) }
-        })
-        .unwrap_or_else(|| repo.to_string());
-
-    let description = parsed
-        .get("description")
-        .map(str::trim)
-        .filter(|description| !description.is_empty())
-        .unwrap_or("No description in frontmatter.")
-        .chars()
-        .take(240)
-        .collect::<String>();
+        .unwrap_or(repo);
+    let (name, description) = frontmatter::indexed_metadata(raw, fallback_name);
+    let parsed = frontmatter::parse(raw);
 
     let capabilities = scan::scan(&parsed.body, path);
     let grade = scan::grade(&capabilities);
