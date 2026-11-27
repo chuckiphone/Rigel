@@ -1097,6 +1097,31 @@ export interface BrowserHarnessCapture {
  * D113/D116: the safety knobs and today's ledger. The window reads this in Settings and
  * after a raise; the cap itself is enforced in the core, not here.
  */
+/** Per-project retention policy: 0 disables a category, otherwise a day count up to 3650. */
+export interface RetentionPolicy {
+  turns_days: number;
+  blobs_days: number;
+  logs_days: number;
+  snapshots_days: number;
+}
+
+export interface RetentionCategory {
+  count: number;
+  bytes: number;
+}
+
+/** What a retention apply would delete, with the totals that unlock it. */
+export interface RetentionPreview {
+  project: string;
+  policy: RetentionPolicy;
+  turns: RetentionCategory;
+  blobs: RetentionCategory;
+  logs: RetentionCategory;
+  snapshots: RetentionCategory;
+  total_count: number;
+  total_bytes: number;
+}
+
 /** Roadmap 82: one session's safe mode and the phrase required to leave it. */
 export interface SafeModeView {
   mode: 'normal' | 'safe';
@@ -2458,6 +2483,14 @@ let previewSafeMode: SafeModeView = {
   leave_phrase: 'leave safe mode',
 }
 
+/** The preview keeps retention state in memory; no file is deleted in a browser. */
+let previewRetentionPolicy: RetentionPolicy = {
+  turns_days: 90,
+  blobs_days: 90,
+  logs_days: 90,
+  snapshots_days: 90,
+}
+
 export const api = {
   isTauri,
 
@@ -3115,6 +3148,43 @@ export const api = {
 
   async raiseBudget(project: string, session: string, capCents: number): Promise<Session> {
     return call<Session>("budget_raise", { project, session, capCents });
+  },
+
+  /** Retention: policy, non-destructive preview and a confirmation-bound apply. */
+  retention: {
+    async getPolicy(project: string): Promise<RetentionPolicy> {
+      if (!isTauri()) return { ...previewRetentionPolicy };
+      return call<RetentionPolicy>("retention_get_policy", { project });
+    },
+
+    async setPolicy(project: string, policy: RetentionPolicy): Promise<RetentionPolicy> {
+      if (!isTauri()) {
+        previewRetentionPolicy = { ...policy };
+        return { ...previewRetentionPolicy };
+      }
+      return call<RetentionPolicy>("retention_set_policy", { project, policy });
+    },
+
+    async preview(project: string): Promise<RetentionPreview> {
+      if (!isTauri()) {
+        return {
+          project,
+          policy: { ...previewRetentionPolicy },
+          turns: { count: 3, bytes: 1_200 },
+          blobs: { count: 2, bytes: 500 },
+          logs: { count: 1, bytes: 100 },
+          snapshots: { count: 1, bytes: 2_000 },
+          total_count: 7,
+          total_bytes: 3_800,
+        };
+      }
+      return call<RetentionPreview>("retention_preview", { project });
+    },
+
+    async apply(project: string, count: number, bytes: number): Promise<RetentionPreview> {
+      if (!isTauri()) throw new Error("Retention apply runs in the desktop app, not the browser preview.");
+      return call<RetentionPreview>("retention_apply", { project, count, bytes });
+    },
   },
 
   /** Roadmap 82: read the session's safe mode. The preview keeps it in memory. */

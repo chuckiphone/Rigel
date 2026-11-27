@@ -12,6 +12,7 @@ pub(crate) mod mcp;
 pub(crate) mod memory;
 pub(crate) mod patches;
 pub(crate) mod providers;
+pub(crate) mod retention;
 pub(crate) mod safety;
 pub(crate) mod sessions;
 pub(crate) mod settings;

@@ -47,6 +47,7 @@ import { UI_SCALES, applyDisplay } from "./display";
 import { AboutSettingsPage } from "./about";
 import { CrashReportSurface } from "./crash-report";
 import CostDashboard, { PREVIEW_SPEND } from "./cost-dashboard";
+import RetentionSettings from "./settings/retention";
 import {
   buildIndex,
   resolveLink,
@@ -300,6 +301,7 @@ const PAGES = [
   { id: "network", group: "Guardrails", label: "Network", blurb: "The project kill switch, ordered host rules and disabled sessions" },
   { id: "spending", group: "Guardrails", label: "Spending", blurb: "Recorded turns, grouped by day and session" },
   { id: "audit", group: "Guardrails", label: "Audit log", blurb: "Every approval, denial and override, with a filter and a CSV view" },
+  { id: "retention", group: "Guardrails", label: "Retention", blurb: "Preview and apply per-project day limits for turns, blobs, logs and snapshots" },
   { id: "shelf", group: "Workspace", label: "Skill shelf", blurb: "Sources, freshness and indexing a repository" },
   { id: "plugins", group: "Workspace", label: "Plugins", blurb: "The searchable catalogue, installed tools and their capabilities" },
   { id: "rules", group: "Workspace", label: "Project rules", blurb: "AGENTS.md, CLAUDE.md and memory export" },
@@ -356,6 +358,7 @@ const PAGE_ICONS: Record<PageId, string> = {
   network:
     "M10 3a7 7 0 1 0 0 14 7 7 0 0 0 0-14Z M3 10h14 M10 3c2.2 2.2 2.2 11.8 0 14 M10 3c-2.2 2.2-2.2 11.8 0 14",
   spending: "M3 16.5h14 M5.5 13v-3 M10 13V6 M14.5 13V8.5",
+  retention: "M4 5h12v10H4z M7 5v10 M13 5v10 M4 10h12",
   audit: "M4 5h12 M4 10h12 M4 15h6 M13.5 14.5a2.5 2.5 0 1 0 0 5 2.5 2.5 0 0 0 0-5Z M15.3 18.3l1.7 1.7",
   appearance:
     "M10 6.5a3.5 3.5 0 1 0 0 7 3.5 3.5 0 0 0 0-7Z M10 2.5v1.5 M10 16v1.5 M2.5 10H4 M16 10h1.5 M4.7 4.7l1 1 M14.3 14.3l1 1 M15.3 4.7l-1 1 M5.7 14.3l-1 1",
@@ -389,6 +392,7 @@ const SETTINGS_KEYWORDS: Record<PageId, string> = {
   network: "network egress fetch allowlist denylist rules kill switch disabled sessions origins hosts",
   spending: "cost usage tokens spend money",
   audit: "approval denials overrides audit ledger chain export csv session agent turn tamper",
+  retention: "retention purge cleanup days turns blobs logs snapshots preview apply",
   appearance: "theme dark light scale density compact display",
   shortcuts: "keyboard keys bindings rebind shortcut palette focus search",
   shelf: "skills sources refresh index repository stale roblox",
@@ -1745,6 +1749,8 @@ export default function SettingsView({
         return { text: settings ? Object.keys(settings).length + " fields" : "…", dot: null };
       case "diagnostics":
         return { text: diagnostics ? "ready" : "local", dot: null };
+      case "retention":
+        return { text: "project policy", dot: null };
     }
   };
 
@@ -4183,6 +4189,8 @@ export default function SettingsView({
         return advancedPage;
       case "diagnostics":
         return diagnosticsPage;
+      case "retention":
+        return <RetentionSettings project={project} />;
     }
   })();
 

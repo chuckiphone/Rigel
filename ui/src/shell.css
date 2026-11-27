@@ -3336,6 +3336,78 @@ input[type="checkbox"] {
   overflow-wrap: anywhere;
 }
 
+/* Per-project retention: preview counts and bytes before any destructive apply. */
+.retention-days {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin: 12px 0;
+}
+
+.retention-days label,
+.retention-confirm {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.retention-days input,
+.retention-confirm input {
+  height: 26px;
+  padding: 0 6px;
+  border: 1px solid var(--hairline);
+  background: var(--well);
+  color: var(--text);
+  font-family: var(--mono);
+  font-size: 11px;
+}
+
+.retention-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.retention-preview {
+  margin-top: 14px;
+  padding: 12px;
+  border: 1px solid var(--hairline);
+  background: var(--raised);
+}
+
+.retention-preview h3 {
+  margin: 0 0 8px;
+  font-size: 12px;
+}
+
+.retention-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 11px;
+}
+
+.retention-table th,
+.retention-table td {
+  padding: 5px 8px;
+  border-bottom: 1px solid var(--hairline);
+  text-align: left;
+}
+
+.retention-table tfoot td {
+  color: var(--accent-text);
+  font-weight: 600;
+}
+
+.retention-confirm {
+  margin: 12px 0 8px;
+}
+
+.retention-error {
+  color: var(--danger-text);
+  font-size: 11px;
+}
+
 /* MCP result rows (roadmap 145): typed, capped, with the exact body one click away. */
 .mcp-result {
   margin: 4px 0;

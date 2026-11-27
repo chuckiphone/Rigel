@@ -2118,6 +2118,10 @@ pub fn run() {
             commands::safety::safety_set,
             commands::safety::safe_mode_get,
             commands::safety::safe_mode_set,
+            commands::retention::retention_get_policy,
+            commands::retention::retention_set_policy,
+            commands::retention::retention_preview,
+            commands::retention::retention_apply,
             commands::patches::patch_list,
             commands::patches::patch_hunks,
             commands::patches::hunk_comment_add,
@@ -2260,6 +2264,9 @@ pub fn run() {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::commands::retention::{
+        retention_get_policy, retention_preview, retention_set_policy,
+    };
     use crate::commands::safety::{network_get, network_set};
     use crate::commands::sessions::{
         session_skill_pin, session_skill_pins, session_skill_review, session_start, template_save,
@@ -2287,6 +2294,40 @@ mod tests {
         assert!(REFINE_MODEL.starts_with("antigravity/"));
         assert!(REFINE_MODEL.contains("3.8-flash-tiered"));
         assert!(providers::is_model(spec, REFINE_MODEL));
+    }
+
+    #[test]
+    fn retention_commands_round_trip_the_policy_and_preview_without_deleting() {
+        let tmp = tempfile::tempdir().unwrap();
+        let project = path_string(tmp.path());
+        let mut policy = retention_get_policy(project.clone()).unwrap();
+        assert_eq!(
+            policy.turns_days, 90,
+            "a project with no policy opens on defaults"
+        );
+
+        policy.logs_days = 7;
+        let saved = retention_set_policy(project.clone(), policy).unwrap();
+        assert_eq!(saved.logs_days, 7);
+        assert_eq!(retention_get_policy(project.clone()).unwrap(), saved);
+        assert!(tmp.path().join(".rigel/retention.json").is_file());
+
+        let mut invalid = saved;
+        invalid.blobs_days = 4_000;
+        assert!(retention_set_policy(project.clone(), invalid).is_err());
+        assert_eq!(
+            retention_get_policy(project.clone()).unwrap(),
+            saved,
+            "a bad policy was not stored"
+        );
+
+        let preview = retention_preview(project).unwrap();
+        assert_eq!(preview.policy, saved);
+        assert_eq!(
+            preview.total_count, 0,
+            "an empty project has nothing to purge"
+        );
+        assert_eq!(preview.total_bytes, 0);
     }
 
     #[test]
