@@ -31,6 +31,18 @@ pub enum BackupCommand {
         json: bool,
     },
 
+    /// Create or verify today's encrypted backup and retain the newest N daily archives.
+    Daily {
+        /// Number of verified daily archives to retain.
+        #[arg(long, default_value_t = 7, value_name = "COUNT")]
+        keep: usize,
+        /// Read the passphrase from this file instead of RIGEL_BACKUP_PASSPHRASE.
+        #[arg(long, value_name = "FILE")]
+        passphrase_file: Option<PathBuf>,
+        #[arg(long)]
+        json: bool,
+    },
+
     /// Decrypt and check every file and the manifest without writing anything.
     Verify {
         archive: PathBuf,
@@ -118,6 +130,43 @@ pub async fn run(command: BackupCommand, data_dir: PathBuf) -> ExitCode {
             }
         }
 
+        BackupCommand::Daily {
+            keep,
+            passphrase_file,
+            json: as_json,
+        } => {
+            let passphrase = match read_passphrase(passphrase_file.as_deref(), PASSPHRASE_ENV) {
+                Ok(passphrase) => passphrase,
+                Err(error) => return fail(&error, as_json),
+            };
+            let backups_dir = data_dir.join("backups");
+            match backup::create_daily(&data_dir, &backups_dir, &passphrase, keep).await {
+                Ok(report) => {
+                    if as_json {
+                        print_json(&report);
+                    } else {
+                        let action = if report.created {
+                            "created"
+                        } else {
+                            "verified"
+                        };
+                        println!(
+                            "{action} daily backup {}  {} files, {} bytes  ({} retained)",
+                            report.path.display(),
+                            report.files,
+                            report.bytes,
+                            report.kept
+                        );
+                        for path in &report.pruned {
+                            println!("  pruned {}", path.display());
+                        }
+                    }
+                    ExitCode::SUCCESS
+                }
+                Err(error) => fail(&error.to_string(), as_json),
+            }
+        }
+
         BackupCommand::Verify {
             archive,
             passphrase_file,
@@ -156,14 +205,15 @@ pub async fn run(command: BackupCommand, data_dir: PathBuf) -> ExitCode {
                 Ok(passphrase) => passphrase,
                 Err(error) => return fail(&error, as_json),
             };
-            match backup::restore(&archive, &into, &passphrase) {
+            match backup::restore(&archive, &into, &passphrase).await {
                 Ok(report) => {
                     if as_json {
                         print_json(&report);
                     } else {
                         println!(
-                            "restored {} files into {}",
+                            "rehearsed and restored {} files ({} bytes) into {}",
                             report.files,
+                            report.bytes,
                             report.into.display()
                         );
                     }

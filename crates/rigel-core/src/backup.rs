@@ -64,6 +64,8 @@ pub enum BackupError {
     Tar(String),
     #[error("the SQLite snapshot failed: {0}")]
     Database(String),
+    #[error("daily backup retention must keep at least one backup")]
+    InvalidRetention,
     #[error("{path}: {source}")]
     Io {
         path: PathBuf,
@@ -116,6 +118,17 @@ pub struct RestoreReport {
     pub into: PathBuf,
     pub files: usize,
     pub bytes: u64,
+    pub rehearsal: DrillReport,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct DailyReport {
+    pub path: PathBuf,
+    pub created: bool,
+    pub files: usize,
+    pub bytes: u64,
+    pub kept: usize,
+    pub pruned: Vec<PathBuf>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -138,6 +151,11 @@ pub struct DrillReport {
 struct SourceFile {
     relative: String,
     absolute: PathBuf,
+    bytes: u64,
+}
+
+struct RestoreCounts {
+    files: usize,
     bytes: u64,
 }
 
@@ -189,6 +207,83 @@ pub async fn create(
     report.path = destination;
     report.source = source;
     Ok(report)
+}
+
+/// Create or verify today's UTC backup and prune older verified daily archives to `keep`.
+/// A backup is never published until its encrypted contents and manifest verify successfully.
+pub async fn create_daily(
+    data_dir: &Path,
+    backups_dir: &Path,
+    passphrase: &str,
+    keep: usize,
+) -> Result<DailyReport, BackupError> {
+    create_daily_at(data_dir, backups_dir, passphrase, keep, now_ms()).await
+}
+
+async fn create_daily_at(
+    data_dir: &Path,
+    backups_dir: &Path,
+    passphrase: &str,
+    keep: usize,
+    timestamp: i64,
+) -> Result<DailyReport, BackupError> {
+    if keep == 0 {
+        return Err(BackupError::InvalidRetention);
+    }
+    let day = timestamp.div_euclid(86_400_000);
+    let destination = backups_dir.join(format!("rigel-day-{day}.{ARCHIVE_EXTENSION}"));
+    create_dir(backups_dir)?;
+    let created = if destination.exists() {
+        verify(&destination, passphrase)?;
+        false
+    } else {
+        create(data_dir, &destination, passphrase).await?;
+        true
+    };
+
+    let mut daily = Vec::new();
+    for entry in fs::read_dir(backups_dir).map_err(|source| io_error(backups_dir, source))? {
+        let entry = entry.map_err(|source| io_error(backups_dir, source))?;
+        if !entry
+            .file_type()
+            .map_err(|source| io_error(&entry.path(), source))?
+            .is_file()
+        {
+            continue;
+        }
+        let Some(day) = daily_backup_day(&entry.file_name().to_string_lossy()) else {
+            continue;
+        };
+        let verified = verify(&entry.path(), passphrase)?;
+        daily.push((day, entry.path(), verified));
+    }
+    daily.sort_by(|left, right| right.0.cmp(&left.0).then(left.1.cmp(&right.1)));
+    let kept = daily.len().min(keep);
+    let keep = keep.min(daily.len());
+    let pruned = daily
+        .drain(keep..)
+        .map(|(_, path, _)| {
+            fs::remove_file(&path).map_err(|source| io_error(&path, source))?;
+            Ok(path)
+        })
+        .collect::<Result<Vec<_>, BackupError>>()?;
+    let verified = verify(&destination, passphrase)?;
+    Ok(DailyReport {
+        path: destination,
+        created,
+        files: verified.files,
+        bytes: verified.bytes,
+        kept,
+        pruned,
+    })
+}
+
+fn daily_backup_day(filename: &str) -> Option<i64> {
+    filename
+        .strip_prefix("rigel-day-")?
+        .strip_suffix(&format!(".{ARCHIVE_EXTENSION}"))?
+        .parse()
+        .ok()
 }
 
 async fn create_at(
@@ -355,14 +450,75 @@ pub fn verify(path: &Path, passphrase: &str) -> Result<VerifyReport, BackupError
     })
 }
 
-/// Restore into a directory that does not exist or is empty. Verification happens before any
-/// destination file is created; the extraction is staged beside the destination and renamed only
-/// after every hash matches.
-pub fn restore(
+/// Rehearse a restore into a sibling scratch project before installing that exact tree.
+/// The scratch tree is retained as the staged restore, so the real destination receives only the
+/// files that passed archive hash checks, count checks, and SQLite integrity validation.
+pub async fn restore(
     archive: &Path,
     into: &Path,
     passphrase: &str,
 ) -> Result<RestoreReport, BackupError> {
+    let destination = checked_restore_destination(into)?;
+    let scratch = sibling_temp(&destination);
+    let staged = restore_verified(archive, &scratch, passphrase)?;
+    let rehearsal = async {
+        let database = check_database(&scratch.join("index.db")).await?;
+        Ok(DrillReport {
+            ok: true,
+            archive: archive.display().to_string(),
+            files: staged.files,
+            bytes: staged.bytes,
+            database,
+            checked_at: now_ms(),
+        })
+    }
+    .await;
+    let rehearsal = match rehearsal {
+        Ok(report) => report,
+        Err(error) => {
+            let _ = fs::remove_dir_all(&scratch);
+            return Err(error);
+        }
+    };
+    if destination.is_dir() {
+        fs::remove_dir(&destination).map_err(|source| io_error(&destination, source))?;
+    }
+    if let Err(source) = fs::rename(&scratch, &destination) {
+        let _ = fs::remove_dir_all(&scratch);
+        return Err(io_error(&destination, source));
+    }
+    Ok(RestoreReport {
+        path: archive.to_path_buf(),
+        into: destination,
+        files: staged.files,
+        bytes: staged.bytes,
+        rehearsal,
+    })
+}
+
+fn checked_restore_destination(into: &Path) -> Result<PathBuf, BackupError> {
+    let destination = normalize_path(&absolute_path(into)?);
+    if destination.is_file() {
+        return Err(BackupError::RestoreOverFile(destination));
+    }
+    if destination.is_dir()
+        && fs::read_dir(&destination)
+            .map_err(|source| io_error(&destination, source))?
+            .next()
+            .is_some()
+    {
+        return Err(BackupError::RestoreNotEmpty(destination));
+    }
+    Ok(destination)
+}
+
+/// Extract a verified archive to an empty staging directory. This is used by the rehearsal and
+/// drill paths; callers must perform database integrity checks before exposing the restored tree.
+fn restore_verified(
+    archive: &Path,
+    into: &Path,
+    passphrase: &str,
+) -> Result<RestoreCounts, BackupError> {
     let (manifest, expected) = scan(archive, passphrase)?;
     let destination = normalize_path(&absolute_path(into)?);
     if destination.is_file() {
@@ -396,9 +552,7 @@ pub fn restore(
         let _ = fs::remove_dir_all(&staging);
         return Err(io_error(&destination, source));
     }
-    Ok(RestoreReport {
-        path: archive.to_path_buf(),
-        into: destination,
+    Ok(RestoreCounts {
         files: manifest.files.len(),
         bytes: manifest.total_bytes,
     })
@@ -458,7 +612,7 @@ pub async fn drill(archive: &Path, passphrase: &str) -> Result<DrillReport, Back
         uuid::Uuid::new_v4().simple()
     ));
     let result = async {
-        let restored = restore(archive, &temp, passphrase)?;
+        let restored = restore_verified(archive, &temp, passphrase)?;
         let database = check_database(&temp.join("index.db")).await?;
         Ok(DrillReport {
             ok: true,
@@ -980,7 +1134,13 @@ mod tests {
         assert!(verify(&archive, "wrong passphrase").is_err());
 
         let restored = data.path().join("restored");
-        restore(&archive, &restored, "correct horse battery staple").unwrap();
+        let restored_report = restore(&archive, &restored, "correct horse battery staple")
+            .await
+            .unwrap();
+        assert!(restored_report.rehearsal.ok);
+        assert_eq!(restored_report.rehearsal.database, "ok");
+        assert_eq!(restored_report.rehearsal.files, restored_report.files);
+        assert_eq!(restored_report.rehearsal.bytes, restored_report.bytes);
         assert_eq!(
             fs::read_to_string(restored.join("snapshots/one/files/a.txt")).unwrap(),
             "the only copy\n"
@@ -1012,7 +1172,11 @@ mod tests {
         let non_empty = data.path().join("not-empty");
         fs::create_dir(&non_empty).unwrap();
         fs::write(non_empty.join("keep.txt"), "keep").unwrap();
-        assert!(restore(&archive, &non_empty, "correct horse battery staple").is_err());
+        assert!(
+            restore(&archive, &non_empty, "correct horse battery staple")
+                .await
+                .is_err()
+        );
 
         let mut tampered = encrypted_bytes(&archive);
         let last = tampered.len() - 1;
