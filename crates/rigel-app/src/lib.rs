@@ -1791,9 +1791,14 @@ fn warm_skills(app: tauri::AppHandle) {
                     STARTED.store(false, Ordering::SeqCst);
                     return;
                 };
+                let eval_setup = commands::skills::eval_setup();
                 // Forced, GitHub repositories included: a shelf that was fresh on the last
                 // launch is still checked against its remote on this one.
-                if index.refresh_all().await.is_ok() {
+                let initial_refresh = match &eval_setup {
+                    Ok((suites, runner)) => index.refresh_all_with_evals(suites, runner).await,
+                    Err(error) => Err(SkillsError::Other(error.clone())),
+                };
+                if initial_refresh.is_ok() {
                     let _ = app.emit("rigel://skills", ());
                 }
                 loop {
@@ -1804,7 +1809,13 @@ fn warm_skills(app: tauri::AppHandle) {
                     // The core leaves fresh sources alone and spaces out retries of a dead one.
                     // Only a pass that actually wrote rows reloads the shelf's list; the status
                     // read has its own poll, so a failed retry still updates its row.
-                    if matches!(index.refresh_stale().await, Ok(report) if report.refreshed > 0) {
+                    let refresh = match &eval_setup {
+                        Ok((suites, runner)) => {
+                            index.refresh_stale_with_evals(suites, runner).await
+                        }
+                        Err(error) => Err(SkillsError::Other(error.clone())),
+                    };
+                    if matches!(refresh, Ok(report) if report.refreshed > 0) {
                         let _ = app.emit("rigel://skills", ());
                     }
                 }
@@ -2215,6 +2226,7 @@ pub fn run() {
             commands::skills::skills_index,
             commands::skills::skills_refresh,
             commands::skills::skills_install,
+            commands::skills::skills_eval_set,
             commands::skills::skills_installed,
             commands::skills::plugins_catalog,
             commands::skills::plugins_list,

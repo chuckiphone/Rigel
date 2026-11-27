@@ -440,6 +440,11 @@ enum SessionCommand {
 
 #[derive(Subcommand)]
 enum SkillCommand {
+    /// Save a JSON golden-task suite for a skill id before it is installed or updated.
+    Eval {
+        #[command(subcommand)]
+        command: SkillEvalCommand,
+    },
     /// Create a starter `SKILL.md` in a new skill directory.
     Init {
         #[arg(default_value = "SKILL.md", value_name = "FILE")]
@@ -626,6 +631,15 @@ enum SkillCommand {
         to: Vec<PathBuf>,
         #[arg(long)]
         json: bool,
+    },
+}
+
+#[derive(Subcommand)]
+enum SkillEvalCommand {
+    Set {
+        id: String,
+        #[arg(value_name = "FILE")]
+        file: PathBuf,
     },
 }
 
@@ -928,6 +942,34 @@ async fn run_skills(dir: &Path, command: SkillCommand) -> ExitCode {
         SkillCommand::Init { file, name } => return skills::init(file, name.as_deref()),
         SkillCommand::Lint { file } => return skills::lint(file).await,
         SkillCommand::Test { file } => return skills::test(file).await,
+        SkillCommand::Eval {
+            command: SkillEvalCommand::Set { id, file },
+        } => {
+            let text = match std::fs::read_to_string(file) {
+                Ok(text) => text,
+                Err(error) => {
+                    eprintln!("rigel: {}: {error}", file.display());
+                    return ExitCode::from(1);
+                }
+            };
+            let tasks = match serde_json::from_str::<Vec<rigel_core::skills::GoldenTask>>(&text) {
+                Ok(tasks) => tasks,
+                Err(error) => {
+                    eprintln!("rigel: invalid golden task JSON: {error}");
+                    return ExitCode::from(1);
+                }
+            };
+            return match rigel_core::skills::GoldenSuiteStore::new(dir).set(id, tasks) {
+                Ok(()) => {
+                    println!("saved golden task suite for {id}");
+                    ExitCode::SUCCESS
+                }
+                Err(error) => {
+                    eprintln!("rigel: {error}");
+                    ExitCode::from(1)
+                }
+            };
+        }
         _ => {}
     }
 
@@ -976,7 +1018,10 @@ async fn run_skills(dir: &Path, command: SkillCommand) -> ExitCode {
     };
 
     match command {
-        SkillCommand::Init { .. } | SkillCommand::Lint { .. } | SkillCommand::Test { .. } => {
+        SkillCommand::Init { .. }
+        | SkillCommand::Lint { .. }
+        | SkillCommand::Test { .. }
+        | SkillCommand::Eval { .. } => {
             unreachable!("authoring commands run before opening the skill index")
         }
         SkillCommand::Seed { url, limit, json } => {
@@ -1147,12 +1192,23 @@ async fn run_skills(dir: &Path, command: SkillCommand) -> ExitCode {
             limit,
             json: as_json,
         } => {
+            let suites = match rigel_core::skills::GoldenSuiteStore::new(dir).load() {
+                Ok(suites) => suites,
+                Err(error) => {
+                    eprintln!("rigel: {error}");
+                    return ExitCode::from(1);
+                }
+            };
+            let runner = phase3::CliSkillEvalRunner;
             let policy = if force {
                 rigel_core::SyncPolicy::forced()
             } else {
                 rigel_core::SyncPolicy::normal()
             };
-            match index.index_repo_with_limit(&target, policy, limit).await {
+            match index
+                .index_repo_with_limit_and_evals(&target, policy, limit, &suites, &runner)
+                .await
+            {
                 Ok(report) => {
                     if as_json {
                         println!("{}", serde_json::to_string(&report).unwrap_or_default());
@@ -1247,29 +1303,45 @@ async fn run_skills(dir: &Path, command: SkillCommand) -> ExitCode {
             interval,
             json: as_json,
         } => {
+            let suites = match rigel_core::skills::GoldenSuiteStore::new(dir).load() {
+                Ok(suites) => suites,
+                Err(error) => {
+                    return skills_failure(SkillsError::Other(error.to_string()), as_json);
+                }
+            };
+            let runner = phase3::CliSkillEvalRunner;
             let every = Duration::from_secs(interval.max(30));
             // The first pass is forced, matching the window's launch pass: a shelf that looked
             // fresh when this process was started is still checked against its remote.
-            match index.refresh_all().await {
+            match index.refresh_all_with_evals(&suites, &runner).await {
                 Ok(report) => print_refresh(&report, as_json),
                 Err(error) => return skills_failure(error, as_json),
             }
             loop {
                 tokio::time::sleep(every).await;
-                match index.refresh_stale().await {
+                match index.refresh_stale_with_evals(&suites, &runner).await {
                     Ok(report) => print_refresh(&report, as_json),
                     Err(error) => return skills_failure(error, as_json),
                 }
             }
         }
 
-        SkillCommand::Refresh { json: as_json } => match index.refresh_stale().await {
-            Ok(report) => {
-                print_refresh(&report, as_json);
-                ExitCode::SUCCESS
+        SkillCommand::Refresh { json: as_json } => {
+            let suites = match rigel_core::skills::GoldenSuiteStore::new(dir).load() {
+                Ok(suites) => suites,
+                Err(error) => {
+                    return skills_failure(SkillsError::Other(error.to_string()), as_json);
+                }
+            };
+            let runner = phase3::CliSkillEvalRunner;
+            match index.refresh_stale_with_evals(&suites, &runner).await {
+                Ok(report) => {
+                    print_refresh(&report, as_json);
+                    ExitCode::SUCCESS
+                }
+                Err(error) => skills_failure(error, as_json),
             }
-            Err(error) => skills_failure(error, as_json),
-        },
+        }
 
         SkillCommand::Sweep {
             skillhub_pages,
@@ -1453,9 +1525,25 @@ async fn run_skills(dir: &Path, command: SkillCommand) -> ExitCode {
                 return ExitCode::from(2);
             }
             let mut installed = Vec::new();
+            let suites = match rigel_core::skills::GoldenSuiteStore::new(dir).load() {
+                Ok(suites) => suites,
+                Err(error) => {
+                    return skills_failure(SkillsError::Other(error.to_string()), as_json);
+                }
+            };
+            let runner = phase3::CliSkillEvalRunner;
             for skill in rigel_core::skills::builtin::all() {
-                match index.install(&skill.id(), &roots).await {
-                    Ok(report) => installed.push(report),
+                let id = skill.id();
+                let Some(tasks) = suites.get(&id) else {
+                    return skills_failure(
+                        SkillsError::Other(format!(
+                            "skill {id} has no golden task suite; refusing to enable it"
+                        )),
+                        as_json,
+                    );
+                };
+                match index.install_with_eval(&id, &roots, tasks, &runner).await {
+                    Ok((report, _)) => installed.push(report),
                     Err(error) => return skills_failure(error, as_json),
                 }
             }

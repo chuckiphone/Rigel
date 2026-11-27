@@ -5,6 +5,65 @@
 
 use crate::*;
 
+pub(crate) struct AppSkillEvalRunner {
+    provider: String,
+    model_id: String,
+    effort: Option<String>,
+}
+
+#[async_trait::async_trait]
+impl rigel_core::skills::GoldenTaskRunner for AppSkillEvalRunner {
+    async fn run(&self, id: &str, body: &str, prompt: &str) -> Result<String, String> {
+        if self.model_id.trim().is_empty() && std::env::var_os("RIGEL_SKILL_EVAL_SCRIPT").is_none()
+        {
+            return Err(format!(
+                "no model configured for provider `{}`",
+                self.provider
+            ));
+        }
+        let model: Arc<dyn Model> = if let Some(path) = std::env::var_os("RIGEL_SKILL_EVAL_SCRIPT")
+        {
+            Arc::new(ScriptedModel::from_path(Path::new(&path)).map_err(message)?)
+        } else {
+            providers::build(&self.provider, &credentials::KeychainCredentialStore).await?
+        };
+        let runner =
+            rigel_core::skills::ModelTaskRunner::new(model, &self.model_id, self.effort.clone());
+        rigel_core::skills::GoldenTaskRunner::run(&runner, id, body, prompt).await
+    }
+}
+
+pub(crate) fn eval_setup() -> Result<
+    (
+        std::collections::HashMap<String, Vec<rigel_core::skills::GoldenTask>>,
+        AppSkillEvalRunner,
+    ),
+    String,
+> {
+    let suites = rigel_core::skills::GoldenSuiteStore::new(&index_dir())
+        .load()
+        .map_err(message)?;
+    let settings = crate::load_settings();
+    Ok((
+        suites,
+        AppSkillEvalRunner {
+            provider: settings.provider,
+            model_id: settings.model,
+            effort: Some(settings.effort),
+        },
+    ))
+}
+
+#[tauri::command]
+pub(crate) fn skills_eval_set(
+    id: String,
+    tasks: Vec<rigel_core::skills::GoldenTask>,
+) -> Result<(), String> {
+    rigel_core::skills::GoldenSuiteStore::new(&index_dir())
+        .set(&id, tasks)
+        .map_err(message)
+}
+
 /// Shelf search. Reads only the local index, so it works offline (§9, Shelf: offline state).
 /// `offset` pages through the whole catalogue; a page is capped at 500 rows in the core.
 #[tauri::command]
@@ -78,12 +137,16 @@ pub(crate) fn skills_status() -> Result<Vec<rigel_core::SourceStatus>, String> {
 pub(crate) fn skills_index(repo: String, force: bool) -> Result<rigel_core::IngestReport, String> {
     tauri::async_runtime::block_on(async move {
         let index = SkillIndex::open(&index_dir()).await.map_err(message)?;
+        let (suites, runner) = eval_setup()?;
         let policy = if force {
             SyncPolicy::forced()
         } else {
             SyncPolicy::normal()
         };
-        index.index_repo(&repo, policy).await.map_err(message)
+        index
+            .index_repo_with_evals(&repo, policy, &suites, &runner)
+            .await
+            .map_err(message)
     })
 }
 
@@ -93,10 +156,11 @@ pub(crate) fn skills_index(repo: String, force: bool) -> Result<rigel_core::Inge
 #[tauri::command]
 pub(crate) fn skills_refresh() -> Result<rigel_core::skills::RefreshReport, String> {
     tauri::async_runtime::block_on(async move {
+        let (suites, runner) = eval_setup()?;
         SkillIndex::open(&index_dir())
             .await
             .map_err(message)?
-            .refresh_stale()
+            .refresh_stale_with_evals(&suites, &runner)
             .await
             .map_err(message)
     })
@@ -107,11 +171,15 @@ pub(crate) fn skills_refresh() -> Result<rigel_core::skills::RefreshReport, Stri
 pub(crate) fn skills_install(id: String) -> Result<rigel_core::skills::InstallReport, String> {
     let roots = skill_roots()?;
     tauri::async_runtime::block_on(async move {
-        SkillIndex::open(&index_dir())
+        let (suites, runner) = eval_setup()?;
+        let index = SkillIndex::open(&index_dir()).await.map_err(message)?;
+        let tasks = suites
+            .get(&id)
+            .ok_or_else(|| format!("skill {id} has no golden task suite; refusing to enable it"))?;
+        index
+            .install_with_eval(&id, &roots, tasks, &runner)
             .await
-            .map_err(message)?
-            .install(&id, &roots)
-            .await
+            .map(|(report, _)| report)
             .map_err(message)
     })
 }
@@ -176,9 +244,10 @@ pub(crate) fn plugins_install(name: String) -> Result<serde_json::Value, String>
         match entry.kind {
             rigel_core::plugin::CatalogKind::Skill => {
                 let index = SkillIndex::open(&dir).await.map_err(message)?;
+                let (suites, runner) = eval_setup()?;
                 let roots = skill_roots()?;
                 let installed = index
-                    .install_builtin_skills(&entry.skills, &roots)
+                    .install_builtin_skills_with_evals(&entry.skills, &roots, &suites, &runner)
                     .await
                     .map_err(message)?;
                 Ok(serde_json::json!({

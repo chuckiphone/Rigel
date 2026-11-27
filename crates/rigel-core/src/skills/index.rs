@@ -20,6 +20,7 @@ use sqlx::Row;
 
 use super::blob::BlobStore;
 use super::cluster;
+use super::eval::{self, EvalReport, GoldenTask, GoldenTaskRunner};
 use super::evidence::{Evidence, EvidenceSummary, claims_from_description};
 use super::github::{GitHubSource, parse_repo_input};
 use super::hub::{SkillHubSource, SkillsMpSource};
@@ -42,6 +43,11 @@ pub struct SkillIndex {
     scanner: Arc<dyn SkillScanner>,
     fetcher: Arc<dyn RepoFetcher>,
 }
+
+type EvalGate<'a> = Option<(
+    &'a HashMap<String, Vec<GoldenTask>>,
+    &'a dyn GoldenTaskRunner,
+)>;
 
 /// The production repository walker. It owns the same pool, blob store and freshness policy as
 /// `SkillIndex`; tests replace the whole walker, not only its HTTP client.
@@ -252,6 +258,29 @@ impl SkillIndex {
         self.walk_repo(target, policy, None, Some(limit)).await
     }
 
+    pub async fn index_repo_with_evals(
+        &self,
+        target: &str,
+        policy: SyncPolicy,
+        suites: &HashMap<String, Vec<GoldenTask>>,
+        runner: &dyn GoldenTaskRunner,
+    ) -> Result<IngestReport, SkillsError> {
+        self.walk_repo_inner(target, policy, None, None, Some((suites, runner)))
+            .await
+    }
+
+    pub async fn index_repo_with_limit_and_evals(
+        &self,
+        target: &str,
+        policy: SyncPolicy,
+        limit: usize,
+        suites: &HashMap<String, Vec<GoldenTask>>,
+        runner: &dyn GoldenTaskRunner,
+    ) -> Result<IngestReport, SkillsError> {
+        self.walk_repo_inner(target, policy, None, Some(limit), Some((suites, runner)))
+            .await
+    }
+
     /// Index one skill by its directory name. The skills.sh import uses this so a page costs
     /// one body, not a whole repository's worth of requests.
     pub async fn index_skill(
@@ -269,6 +298,18 @@ impl SkillIndex {
         policy: SyncPolicy,
         slug: Option<&str>,
         limit: Option<usize>,
+    ) -> Result<IngestReport, SkillsError> {
+        self.walk_repo_inner(target, policy, slug, limit, None)
+            .await
+    }
+
+    async fn walk_repo_inner(
+        &self,
+        target: &str,
+        policy: SyncPolicy,
+        slug: Option<&str>,
+        limit: Option<usize>,
+        eval_gate: EvalGate<'_>,
     ) -> Result<IngestReport, SkillsError> {
         // The target preflight runs before `github()` constructs a source and before any
         // metadata or body request. An explicit single-skill URL can be refused here. A base
@@ -297,7 +338,12 @@ impl SkillIndex {
                 let (scan, blocked) = self
                     .gate_snapshot(&mut snapshot, explicit_skill.then_some(&preflight))
                     .await?;
-                let mut report = self.ingest(&snapshot).await?;
+                let mut report = match eval_gate {
+                    Some((suites, runner)) => {
+                        self.ingest_with_evals(&snapshot, suites, runner).await?.0
+                    }
+                    None => self.ingest(&snapshot).await?,
+                };
                 report.scan = Some(scan);
                 report.blocked = blocked;
                 Ok(report)
@@ -378,6 +424,41 @@ impl SkillIndex {
             scan: None,
             blocked: 0,
         })
+    }
+
+    /// Evaluate every changed body before writing any rows. New skills have no prior behavior
+    /// to regress; updates must provide a golden suite and pass it before the row can advance.
+    pub async fn ingest_with_evals<R: GoldenTaskRunner + ?Sized>(
+        &self,
+        snapshot: &RepoSnapshot,
+        suites: &std::collections::HashMap<String, Vec<GoldenTask>>,
+        runner: &R,
+    ) -> Result<(IngestReport, Vec<EvalReport>), SkillsError> {
+        let mut reports = Vec::new();
+        for skill in &snapshot.skills {
+            let next_sha = super::blob::sha256_hex(skill.body.as_bytes());
+            let previous: Option<String> =
+                sqlx::query_scalar("SELECT body_sha FROM skills WHERE id = ?")
+                    .bind(&skill.record.id)
+                    .fetch_optional(self.store.pool())
+                    .await?;
+            if previous.as_deref().is_some_and(|sha| sha != next_sha) {
+                let suite = suites.get(&skill.record.id).ok_or_else(|| {
+                    SkillsError::Other(format!(
+                        "skill {} changed without a golden task suite; refusing update",
+                        skill.record.id
+                    ))
+                })?;
+                let report = eval::evaluate(&skill.record.id, &skill.body, suite, runner)
+                    .await
+                    .map_err(|error| SkillsError::Other(error.to_string()))?;
+                eval::require_pass(&report)
+                    .map_err(|error| SkillsError::Other(error.to_string()))?;
+                reports.push(report);
+            }
+        }
+        let ingest = self.ingest(snapshot).await?;
+        Ok((ingest, reports))
     }
 
     /// Scan the exact bodies a repository walk produced, drop the ones SkillSpector blocks,
@@ -682,17 +763,37 @@ impl SkillIndex {
     /// finally every six hours. That recovers a short outage quickly without turning a dead URL
     /// into a request loop. A success resets the count.
     pub async fn refresh_stale(&self) -> Result<RefreshReport, SkillsError> {
-        self.refresh_sources(false).await
+        self.refresh_sources(false, None).await
+    }
+
+    pub async fn refresh_stale_with_evals(
+        &self,
+        suites: &HashMap<String, Vec<GoldenTask>>,
+        runner: &dyn GoldenTaskRunner,
+    ) -> Result<RefreshReport, SkillsError> {
+        self.refresh_sources(false, Some((suites, runner))).await
     }
 
     /// Re-sync every source now, ignoring the freshness window. The launch pass uses it, so a
     /// GitHub shelf that was fresh when the window last closed is still compared with its remote
     /// on this launch instead of waiting out the stale window.
     pub async fn refresh_all(&self) -> Result<RefreshReport, SkillsError> {
-        self.refresh_sources(true).await
+        self.refresh_sources(true, None).await
     }
 
-    async fn refresh_sources(&self, force: bool) -> Result<RefreshReport, SkillsError> {
+    pub async fn refresh_all_with_evals(
+        &self,
+        suites: &HashMap<String, Vec<GoldenTask>>,
+        runner: &dyn GoldenTaskRunner,
+    ) -> Result<RefreshReport, SkillsError> {
+        self.refresh_sources(true, Some((suites, runner))).await
+    }
+
+    async fn refresh_sources(
+        &self,
+        force: bool,
+        eval_gate: EvalGate<'_>,
+    ) -> Result<RefreshReport, SkillsError> {
         let statuses = self.status().await?;
         let mut report = RefreshReport {
             checked: statuses.len(),
@@ -737,7 +838,7 @@ impl SkillIndex {
                 continue;
             };
 
-            let (state, detail) = match self.refresh_source(kind).await {
+            let (state, detail) = match self.refresh_source(kind, eval_gate).await {
                 Ok(detail) => {
                     report.refreshed += 1;
                     (SourceState::Ok, detail)
@@ -755,7 +856,11 @@ impl SkillIndex {
     }
 
     /// What one typed source's refresh does. Unknown persisted ids never reach this function.
-    async fn refresh_source(&self, kind: SourceKind) -> Result<String, SkillsError> {
+    async fn refresh_source(
+        &self,
+        kind: SourceKind,
+        eval_gate: EvalGate<'_>,
+    ) -> Result<String, SkillsError> {
         match kind {
             SourceKind::Github => {
                 let repos = self.indexed_repos(AUTO_REFRESH_REPOS).await?;
@@ -765,7 +870,14 @@ impl SkillIndex {
                 let mut rows = 0;
                 let mut failure: Option<SkillsError> = None;
                 for repo in &repos {
-                    match self.index_repo(repo, SyncPolicy::normal()).await {
+                    let result = match eval_gate {
+                        Some((suites, runner)) => {
+                            self.index_repo_with_evals(repo, SyncPolicy::normal(), suites, runner)
+                                .await
+                        }
+                        None => self.index_repo(repo, SyncPolicy::normal()).await,
+                    };
+                    match result {
                         Ok(report) => rows += report.added + report.updated,
                         Err(error) => {
                             failure.get_or_insert(error);
@@ -1304,6 +1416,26 @@ impl SkillIndex {
         })
     }
 
+    /// Run a skill's golden tasks before copying it into any harness store.
+    pub async fn install_with_eval<R: GoldenTaskRunner + ?Sized>(
+        &self,
+        id: &str,
+        roots: &[PathBuf],
+        tasks: &[GoldenTask],
+        runner: &R,
+    ) -> Result<(InstallReport, EvalReport), SkillsError> {
+        let (body, _) = self
+            .body(id)
+            .await?
+            .ok_or_else(|| SkillsError::NoBody(id.to_string()))?;
+        let report = eval::evaluate(id, &body, tasks, runner)
+            .await
+            .map_err(|error| SkillsError::Other(error.to_string()))?;
+        eval::require_pass(&report).map_err(|error| SkillsError::Other(error.to_string()))?;
+        let installed = self.install(id, roots).await?;
+        Ok((installed, report))
+    }
+
     /// Scan the exact `SKILL.md` bytes an install would write. SkillSpector reads a directory,
     /// so the body gets a disposable one; it is removed before an install can write anything.
     async fn scan_body(&self, body: &str) -> Result<ScanVerdict, SkillsError> {
@@ -1348,6 +1480,30 @@ impl SkillIndex {
         let mut reports = Vec::with_capacity(ids.len());
         for id in ids {
             reports.push(self.install(&format!("builtin:{id}"), roots).await?);
+        }
+        Ok(reports)
+    }
+
+    pub async fn install_builtin_skills_with_evals(
+        &self,
+        ids: &[String],
+        roots: &[PathBuf],
+        suites: &HashMap<String, Vec<GoldenTask>>,
+        runner: &dyn GoldenTaskRunner,
+    ) -> Result<Vec<InstallReport>, SkillsError> {
+        if ids.is_empty() {
+            return Ok(Vec::new());
+        }
+        self.install_builtin().await?;
+        let mut reports = Vec::with_capacity(ids.len());
+        for id in ids {
+            let id = format!("builtin:{id}");
+            let tasks = suites.get(&id).ok_or_else(|| {
+                SkillsError::Other(format!(
+                    "skill {id} has no golden task suite; refusing to enable it"
+                ))
+            })?;
+            reports.push(self.install_with_eval(&id, roots, tasks, runner).await?.0);
         }
         Ok(reports)
     }
@@ -1797,7 +1953,21 @@ struct PrototypeEntry {
 mod tests {
     use super::super::scanner::ScannedSkill;
     use super::*;
-    use crate::skills::FetchedSkill;
+    use crate::skills::{FetchedSkill, GoldenTask};
+
+    struct FixedGoldenRunner(&'static str);
+
+    #[async_trait]
+    impl GoldenTaskRunner for FixedGoldenRunner {
+        async fn run(
+            &self,
+            _skill_id: &str,
+            _skill_body: &str,
+            _prompt: &str,
+        ) -> Result<String, String> {
+            Ok(self.0.to_string())
+        }
+    }
 
     fn verdict(score: i64, recommendation: &str, severity: &str) -> ScanVerdict {
         ScanVerdict {
@@ -1845,6 +2015,61 @@ mod tests {
             http_requests: 5,
             skills: vec![fetched("safe"), fetched("bad"), fetched("caution")],
         }
+    }
+
+    fn golden_task() -> GoldenTask {
+        GoldenTask {
+            name: "readme lookup".into(),
+            prompt: "Find the README".into(),
+            expected_contains: vec!["README.md".into()],
+        }
+    }
+
+    #[tokio::test]
+    async fn failed_update_eval_preserves_the_indexed_version() {
+        let data = tempfile::tempdir().unwrap();
+        let index = SkillIndex::open(data.path()).await.unwrap();
+        let mut initial = snapshot();
+        initial.skills.truncate(1);
+        index.ingest(&initial).await.unwrap();
+        let original_sha = index.body_sha("safe").await.unwrap().unwrap();
+
+        let mut changed = initial.clone();
+        changed.skills[0].body.push_str("Updated guidance.\n");
+        let suites = std::collections::HashMap::from([("safe".into(), vec![golden_task()])]);
+        let error = index
+            .ingest_with_evals(&changed, &suites, &FixedGoldenRunner("not found"))
+            .await
+            .unwrap_err();
+
+        assert!(error.to_string().contains("readme lookup"));
+        assert_eq!(
+            index.body_sha("safe").await.unwrap().as_deref(),
+            Some(original_sha.as_str())
+        );
+    }
+
+    #[tokio::test]
+    async fn failed_install_eval_does_not_enable_the_skill() {
+        let data = tempfile::tempdir().unwrap();
+        let stores = tempfile::tempdir().unwrap();
+        let index = SkillIndex::open(data.path()).await.unwrap();
+        let mut initial = snapshot();
+        initial.skills.truncate(1);
+        index.ingest(&initial).await.unwrap();
+
+        let error = index
+            .install_with_eval(
+                "safe",
+                &[stores.path().join("agents")],
+                &[golden_task()],
+                &FixedGoldenRunner("not found"),
+            )
+            .await
+            .unwrap_err();
+
+        assert!(error.to_string().contains("readme lookup"));
+        assert!(!stores.path().join("agents/safe/SKILL.md").exists());
     }
 
     fn collection() -> CollectionScan {

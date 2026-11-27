@@ -26,6 +26,7 @@ pub mod builtin;
 pub mod cluster;
 pub mod conflict;
 pub mod contract;
+pub mod eval;
 pub mod evidence;
 pub mod frontmatter;
 pub mod github;
@@ -51,6 +52,10 @@ pub use builtin::{BUILTIN_SKILLS, BuiltinSkill};
 pub use cluster::{HAMMING_THRESHOLD, simhash};
 pub use conflict::{Conflict, ConflictKind, SkillSpec as SkillConflictSpec, detect, detect_all};
 pub use contract::{ArgSpec, Contract, ContractError, EnvSpec, ScriptContract};
+pub use eval::{
+    EvalError, EvalReport, EvalStoreError, GoldenSuiteStore, GoldenTask, GoldenTaskRunner,
+    ModelTaskRunner, TaskResult,
+};
 pub use evidence::{Evidence, EvidenceSummary};
 pub use github::GitHubSource;
 pub use http::{Fetched, Http, HttpError};
