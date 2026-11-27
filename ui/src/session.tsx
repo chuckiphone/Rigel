@@ -48,6 +48,7 @@ import SessionFilters, {
   sessionHash,
   type SessionFilter,
 } from "./session-filters";
+import ForkLineage from "./fork-lineage";
 import MarkdownText, { MarkdownPreview } from "./markdown";
 import McpResult from "./mcp-result";
 import { MemoryInspector } from "./inspector/memory";
@@ -3468,6 +3469,7 @@ export default function SessionView({
                           </span>
                         ) : null}
                         <span className="session-name">{row.title ?? "Untitled session"}</span>
+                        <ForkLineage parentSessionId={row.parent_session_id} parentTurnId={row.parent_turn_id} />
                         {row.archived_at !== null ? <span className="tag">archived</span> : null}
                       </span>
                       <span className="row-meta session-meta">

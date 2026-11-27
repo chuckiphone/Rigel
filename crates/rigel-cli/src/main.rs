@@ -1902,12 +1902,24 @@ async fn run_session(command: SessionCommand) -> ExitCode {
                         println!("no sessions");
                     } else {
                         for session in sessions {
+                            let lineage = match (
+                                session.parent_session_id.as_deref(),
+                                session.parent_turn_id.as_deref(),
+                            ) {
+                                (Some(parent), Some(turn)) => format!(
+                                    "  fork of {} at {}",
+                                    &parent[..8.min(parent.len())],
+                                    &turn[..8.min(turn.len())]
+                                ),
+                                _ => String::new(),
+                            };
                             println!(
-                                "{}  {:<11}  {:<13}  {}",
+                                "{}  {:<11}  {:<13}  {}{}",
                                 &session.id[..8.min(session.id.len())],
                                 format!("{:?}", session.status).to_lowercase(),
                                 session.created_at,
-                                session.title.unwrap_or_default()
+                                session.title.unwrap_or_default(),
+                                lineage
                             );
                         }
                     }
