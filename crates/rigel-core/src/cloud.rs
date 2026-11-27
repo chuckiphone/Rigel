@@ -23,17 +23,18 @@
 //!   own words are sent; tool calls, command output, file changes and the project path stay local.
 //! * App Check — an optional, per-project attestation. A desktop binary has no built-in Firebase
 //!   provider, so Rigel asks a service the user runs for a short-lived App Check token and
-//!   attaches it to every Firebase request. `docs/cloud.md` has the endpoint contract.
+//!   attaches it to every Firebase request. [`app_check`] owns the gate; `docs/cloud.md` has the
+//!   endpoint contract and `docs/troubleshooting.md` names every refusal.
 //!
 //! The Firestore document shape is documented in `docs/cloud.md`, so another client — the phone
 //! app, a script — can read the same collection with the same rules.
+
+pub(crate) mod app_check;
 
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
-
-use tokio::sync::Mutex as AsyncMutex;
 
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
@@ -79,8 +80,6 @@ const MIN_PASSWORD_CHARS: usize = 6;
 /// `INVALID_LOGIN_CREDENTIALS` all become. Named because the reset path has to recognise it
 /// again to answer an unknown address the same way it answers a known one.
 const BAD_CREDENTIALS: &str = "the email or password is wrong";
-/// Fetch a new App Check token before the old one expires, so a request does not race it.
-const APP_CHECK_MARGIN_MS: i64 = 60_000;
 
 #[derive(Debug, thiserror::Error)]
 pub enum CloudError {
@@ -671,138 +670,9 @@ pub struct PullReport {
     pub deleted: usize,
 }
 
-/// The client half of a custom App Check provider.
-///
-/// It is deliberately not a Firebase SDK: Rigel asks the endpoint the user configured for an
-/// App Check token the Firebase Admin SDK minted for this project's app, then attaches it to
-/// every Firebase request. The token is a bearer credential, so it lives in memory only and is
-/// never serialized, logged or sent to the renderer.
-struct AppCheck {
-    attest_url: String,
-    /// The per-install credential the endpoint checks before minting a token. `None` means this
-    /// installation has not been enrolled; the endpoint decides whether that is acceptable.
-    client_token: Option<String>,
-    http: reqwest::Client,
-    cached: AsyncMutex<Option<CachedAppCheckToken>>,
-}
-
-struct CachedAppCheckToken {
-    token: String,
-    expires_at: i64,
-}
-
-/// The sentence a 401/403 from the attestation endpoint produces. The endpoint is reachable, so it
-/// must never read like the offline error; the two fixes are different (enrol this install versus
-/// start the endpoint).
-fn app_check_refusal(status: reqwest::StatusCode, has_client_token: bool) -> String {
-    if has_client_token {
-        format!(
-            "the attestation endpoint refused this client ({status}); the stored client token is not on its allowlist"
-        )
-    } else {
-        format!(
-            "the attestation endpoint refused this client ({status}); set the App Check client token for this installation"
-        )
-    }
-}
-
-impl AppCheck {
-    fn new(attest_url: String, client_token: Option<String>, http: reqwest::Client) -> Self {
-        Self {
-            attest_url,
-            client_token: client_token.filter(|token| !token.trim().is_empty()),
-            http,
-            cached: AsyncMutex::new(None),
-        }
-    }
-
-    fn has_client_token(&self) -> bool {
-        self.client_token.is_some()
-    }
-
-    /// A token good for at least another minute, fetching one when the cache is empty or close
-    /// to expiry. The lock spans the fetch on purpose: a burst of Firestore commits should cost
-    /// one attestation, not one per request.
-    async fn token(&self) -> Result<String, CloudError> {
-        let mut cached = self.cached.lock().await;
-        if let Some(current) = cached.as_ref()
-            && current.expires_at - now_ms() > APP_CHECK_MARGIN_MS
-        {
-            return Ok(current.token.clone());
-        }
-
-        let answer = self.fetch().await?;
-        let token = answer.token.trim().to_string();
-        if token.is_empty() {
-            return Err(CloudError::AppCheck(
-                "the attestation endpoint returned an empty token".into(),
-            ));
-        }
-
-        let now = now_ms();
-        let expires_at = answer.expires_at.saturating_mul(1_000);
-        if expires_at <= now {
-            return Err(CloudError::AppCheck(format!(
-                "the attestation endpoint returned a token that expired at {}",
-                rfc3339(expires_at)
-            )));
-        }
-        // Firebase's own ceiling for a custom provider is seven days. A larger number is almost
-        // certainly milliseconds, which would otherwise be cached as if it never expired.
-        if expires_at > now + 7 * 24 * 60 * 60 * 1_000 {
-            return Err(CloudError::AppCheck(
-                "`expires_at` is more than seven days away; it must be Unix seconds, not milliseconds"
-                    .into(),
-            ));
-        }
-
-        *cached = Some(CachedAppCheckToken {
-            token: token.clone(),
-            expires_at,
-        });
-        Ok(token)
-    }
-
-    async fn fetch(&self) -> Result<AppCheckAnswer, CloudError> {
-        let mut request = self
-            .http
-            .get(&self.attest_url)
-            .header("accept", "application/json");
-        if let Some(token) = &self.client_token {
-            request = request.bearer_auth(token);
-        }
-        let response = request.send().await.map_err(|error| {
-            CloudError::AppCheck(format!(
-                "the attestation endpoint is not reachable: {error}"
-            ))
-        })?;
-        let status = response.status();
-        let text = response.text().await.map_err(|error| {
-            CloudError::AppCheck(format!(
-                "the attestation endpoint's answer could not be read: {error}"
-            ))
-        })?;
-        if !status.is_success() {
-            let detail = text.trim();
-            let message = if matches!(status.as_u16(), 401 | 403) {
-                app_check_refusal(status, self.has_client_token())
-            } else if detail.is_empty() {
-                format!("the attestation endpoint answered {status}")
-            } else {
-                format!(
-                    "the attestation endpoint answered {status}: {}",
-                    truncate(detail, 200)
-                )
-            };
-            return Err(CloudError::AppCheck(message));
-        }
-        serde_json::from_str(&text).map_err(|error| {
-            CloudError::AppCheck(format!(
-                "the attestation endpoint must answer with {{\"token\": \"…\", \"expires_at\": <unix seconds>}}: {error}"
-            ))
-        })
-    }
-}
+// Roadmap 165: attestation lives in `app_check`; the only hook the client needs is `token`, and
+// `enforced_token` decides whether a configured project may send a request at all.
+use app_check::{AppCheck, enforced_token};
 
 impl Cloud {
     /// Build a client over an explicit store. The window and the CLI call [`Cloud::open`]; this
@@ -1621,10 +1491,7 @@ impl Cloud {
     /// it un-attested: with enforcement on, Firebase would reject it anyway, and a local error
     /// names the endpoint that needs fixing.
     async fn app_check_token(&self) -> Result<Option<String>, CloudError> {
-        match &self.app_check {
-            Some(check) => Ok(Some(check.token().await?)),
-            None => Ok(None),
-        }
+        enforced_token(self.app_check.as_ref()).await
     }
 
     async fn post_json<T: serde::de::DeserializeOwned>(
@@ -1740,13 +1607,6 @@ impl RefreshAnswer {
 struct ResetAnswer {
     #[serde(default)]
     email: Option<String>,
-}
-
-#[derive(Deserialize)]
-struct AppCheckAnswer {
-    token: String,
-    /// Unix seconds. Milliseconds are refused by the caller, not silently reinterpreted.
-    expires_at: i64,
 }
 
 #[derive(Deserialize)]
@@ -2264,6 +2124,7 @@ fn truncate(text: &str, limit: usize) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::cloud::app_check::{AppCheckAnswer, app_check_refusal};
     use crate::domain::Usage;
     use crate::session::{SessionStatus, Turn};
 
