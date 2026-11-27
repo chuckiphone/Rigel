@@ -64,6 +64,7 @@ import { CustomProvider } from "./settings/custom-provider";
 import NetworkPolicyEditor from "./settings/network-policy";
 import PermissionsEditor from "./settings/permissions";
 import PluginsPage from "./settings/plugins";
+import SetupWizard from "./onboarding/setup";
 import { humanize, sourceLabel } from "./display";
 import { SkillScanReceipt } from "./skill-scan";
 import { ensurePermission } from "./notify";
@@ -2802,6 +2803,13 @@ export default function SettingsView({
 
   const diagnosticsPage = (
     <>
+      <section className="settings-section" id="first-run-setup">
+        <div className="settings-head">
+          <h3>First-run setup</h3>
+          <span className="pill">real probes</span>
+        </div>
+        <SetupWizard />
+      </section>
       <section className="settings-section" data-setting-key="diagnostics" tabIndex={-1}>
         <div className="settings-head">
           <h3>Bug-report bundle</h3>

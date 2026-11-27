@@ -30,6 +30,7 @@ import BootSequence from "./boot";
 import ChatView from "./agentchat";
 import AboutDialog from "./about";
 import { RigelMark } from "./mark";
+import SetupWizard from "./onboarding/setup";
 import { useMenu } from "./menu";
 import { PreviewSkillSource } from "./mock";
 import DiffView from "./diff";
@@ -138,6 +139,12 @@ export default function App() {
   const [query, setQuery] = useState("");
   const [rows, setRows] = useState<SkillRow[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  // `?setup=1` opens the first-run wizard in the shell (and in the browser preview for tests).
+  const [showSetup, setShowSetup] = useState(
+    () =>
+      typeof window !== "undefined" &&
+      new URLSearchParams(window.location.search).get("setup") === "1",
+  );
   const [detail, setDetail] = useState<SkillDetail | null>(null);
   const [statuses, setStatuses] = useState<SourceStatus[]>([]);
   const [reload, setReload] = useState(0);
@@ -1776,6 +1783,10 @@ ${task}`,
         <p className="notice" role="status">
           {notice}
         </p>
+
+        {showSetup ? (
+          <SetupWizard onDone={() => setShowSetup(false)} />
+        ) : null}
 
         {!selected ? (
           <section className="settings-section onboarding">

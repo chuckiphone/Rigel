@@ -16,6 +16,7 @@ pub(crate) mod retention;
 pub(crate) mod safety;
 pub(crate) mod sessions;
 pub(crate) mod settings;
+pub(crate) mod setup;
 pub(crate) mod shell;
 pub(crate) mod skills;
 pub(crate) mod swarm;
