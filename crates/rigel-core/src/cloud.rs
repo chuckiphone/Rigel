@@ -33,6 +33,7 @@ pub mod account;
 pub(crate) mod app_check;
 pub mod metadata;
 pub mod publish;
+pub mod queue;
 
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
@@ -375,6 +376,16 @@ pub struct QueuedRun {
     pub state: String,
     pub max_minutes: u32,
     pub created_at_ms: i64,
+    #[serde(default)]
+    pub attempts: u32,
+    #[serde(default = "default_run_attempts")]
+    pub max_attempts: u32,
+    #[serde(default)]
+    pub lease_owner: Option<String>,
+    #[serde(default)]
+    pub lease_until_ms: Option<i64>,
+    #[serde(default)]
+    pub last_error: Option<String>,
     /// The sponsor paying for this run, once one exists. Absent means nobody is paying yet.
     pub sponsor: Option<String>,
 }
@@ -400,12 +411,26 @@ impl QueuedRun {
                 .parse::<i64>()
                 .ok()
         };
+        let optional_text = |key: &str| {
+            fields
+                .get(key)
+                .and_then(|value| value.get("stringValue"))
+                .and_then(Value::as_str)
+                .map(str::to_owned)
+        };
         Some(QueuedRun {
             id: name.rsplit('/').next()?.to_owned(),
             prompt: text("prompt")?,
             state: text("state")?,
             max_minutes: number("maxMinutes")? as u32,
             created_at_ms: number("createdAtMs").unwrap_or(0),
+            attempts: number("attempts").unwrap_or(0).max(0) as u32,
+            max_attempts: number("maxAttempts")
+                .unwrap_or(i64::from(default_run_attempts()))
+                .max(1) as u32,
+            lease_owner: optional_text("leaseOwner"),
+            lease_until_ms: number("leaseUntilMs"),
+            last_error: optional_text("lastError"),
             sponsor: fields
                 .get("sponsor")
                 .and_then(|value| value.get("stringValue"))
@@ -413,6 +438,10 @@ impl QueuedRun {
                 .map(str::to_owned),
         })
     }
+}
+
+const fn default_run_attempts() -> u32 {
+    3
 }
 
 /// A signed-in account. The two tokens never reach the renderer or a log line: [`CloudStatus`] is
@@ -1426,6 +1455,11 @@ impl Cloud {
                     "state": { "stringValue": "queued" },
                     "maxMinutes": { "integerValue": max_minutes.to_string() },
                     "createdAtMs": { "integerValue": created_at.to_string() },
+                    "attempts": { "integerValue": "0" },
+                    "maxAttempts": { "integerValue": default_run_attempts().to_string() },
+                    "leaseOwner": { "nullValue": null },
+                    "leaseUntilMs": { "nullValue": null },
+                    "lastError": { "nullValue": null },
                     "sponsor": { "nullValue": null },
                 },
             }
@@ -1493,6 +1527,189 @@ impl Cloud {
         self.move_run(id, "queued").await
     }
 
+    /// Runs whose retry budget is exhausted, paired with their last failure.
+    pub async fn dead_letter_runs(&self, limit: u32) -> Result<Vec<QueuedRun>, CloudError> {
+        let session = self.token().await?;
+        let url = format!(
+            "{}/v1/projects/{}/databases/(default)/documents/users/{}/runs",
+            self.endpoints.firestore, self.config.project_id, session.uid
+        );
+        let page_size = limit.clamp(1, 100).to_string();
+        let mut page_token: Option<String> = None;
+        let mut seen_tokens = std::collections::HashSet::new();
+        let mut dead_letters = Vec::new();
+
+        loop {
+            let mut request = self
+                .http
+                .get(&url)
+                .bearer_auth(&session.id_token)
+                .query(&[("pageSize", page_size.as_str())]);
+            if let Some(token) = &page_token {
+                request = request.query(&[("pageToken", token)]);
+            }
+            if let Some(token) = self.app_check_token().await? {
+                request = request.header("X-Firebase-AppCheck", token);
+            }
+            let answer: Value = self.decode(request.send().await?).await?;
+            if let Some(documents) = answer.get("documents").and_then(Value::as_array) {
+                dead_letters.extend(
+                    documents
+                        .iter()
+                        .filter_map(QueuedRun::from_document)
+                        .filter(|run| run.state == "dead_letter"),
+                );
+            }
+            let next_token = answer
+                .get("nextPageToken")
+                .and_then(Value::as_str)
+                .filter(|token| !token.is_empty())
+                .map(str::to_owned);
+            let Some(next_token) = next_token else {
+                break;
+            };
+            if !seen_tokens.insert(next_token.clone()) {
+                break;
+            }
+            page_token = Some(next_token);
+        }
+        Ok(dead_letters)
+    }
+
+    /// Lease a queued run for one worker. An expired lease is reclaimed; an exhausted run is
+    /// moved to the dead-letter view instead of being leased forever.
+    pub async fn lease_run(
+        &self,
+        id: &str,
+        worker: &str,
+        now_ms: i64,
+        lease_ms: i64,
+    ) -> Result<QueuedRun, CloudError> {
+        if worker.trim().is_empty() || lease_ms <= 0 {
+            return Err(CloudError::Input(
+                "a worker name and positive lease duration are required".to_owned(),
+            ));
+        }
+        let current = self.run(id).await?;
+        let expired = current.state == "leased"
+            && current.lease_until_ms.is_some_and(|until| until <= now_ms);
+        if current.state != "queued" && !expired {
+            return Err(CloudError::Rejected {
+                status: 409,
+                message: format!(
+                    "run {} is {}, and cannot be leased",
+                    current.id, current.state
+                ),
+            });
+        }
+        if expired && current.attempts >= current.max_attempts {
+            return self
+                .update_run_fields(
+                    id,
+                    json!({
+                        "state": { "stringValue": "dead_letter" },
+                        "lastError": { "stringValue": "worker lease expired" },
+                        "leaseOwner": { "nullValue": null },
+                        "leaseUntilMs": { "nullValue": null },
+                    }),
+                )
+                .await;
+        }
+        let session = self.token().await?;
+        let attempt = current.attempts.saturating_add(1);
+        let until = now_ms.saturating_add(lease_ms);
+        let write = json!({
+            "update": {
+                "name": run_document(&self.config.project_id, &session.uid, id),
+                "fields": {
+                    "state": { "stringValue": "leased" },
+                    "attempts": { "integerValue": attempt.to_string() },
+                    "leaseOwner": { "stringValue": worker },
+                    "leaseUntilMs": { "integerValue": until.to_string() },
+                    "lastError": { "nullValue": null },
+                },
+            },
+            "updateMask": { "fieldPaths": ["state", "attempts", "leaseOwner", "leaseUntilMs", "lastError"] },
+        });
+        self.commit(&session, vec![write]).await?;
+        Ok(QueuedRun {
+            state: "leased".to_owned(),
+            attempts: attempt,
+            lease_owner: Some(worker.to_owned()),
+            lease_until_ms: Some(until),
+            last_error: None,
+            ..current
+        })
+    }
+
+    /// Record a worker failure and either return the original request to the queue or dead-letter it.
+    pub async fn fail_run(
+        &self,
+        id: &str,
+        worker: &str,
+        error: &str,
+    ) -> Result<QueuedRun, CloudError> {
+        let current = self.run(id).await?;
+        if current.state != "leased" || current.lease_owner.as_deref() != Some(worker) {
+            return Err(CloudError::Rejected {
+                status: 409,
+                message: "only the worker holding the lease may fail this run".to_owned(),
+            });
+        }
+        let state = if current.attempts >= current.max_attempts {
+            "dead_letter"
+        } else {
+            "queued"
+        };
+        self.update_run_fields(
+            id,
+            json!({
+                "state": { "stringValue": state },
+                "lastError": { "stringValue": error },
+                "leaseOwner": { "nullValue": null },
+                "leaseUntilMs": { "nullValue": null },
+            }),
+        )
+        .await
+    }
+
+    async fn update_run_fields(&self, id: &str, fields: Value) -> Result<QueuedRun, CloudError> {
+        let current = self.run(id).await?;
+        let session = self.token().await?;
+        let state = fields
+            .get("state")
+            .and_then(|value| value.get("stringValue"))
+            .and_then(Value::as_str)
+            .unwrap_or(&current.state)
+            .to_owned();
+        let last_error = fields
+            .get("lastError")
+            .and_then(|value| value.get("stringValue"))
+            .and_then(Value::as_str)
+            .map(str::to_owned)
+            .or(current.last_error.clone());
+        let field_paths: Vec<&str> = fields
+            .as_object()
+            .into_iter()
+            .flat_map(|map| map.keys().map(String::as_str))
+            .collect();
+        let write = json!({
+            "update": {
+                "name": run_document(&self.config.project_id, &session.uid, id),
+                "fields": fields.clone(),
+            },
+            "updateMask": { "fieldPaths": field_paths },
+        });
+        self.commit(&session, vec![write]).await?;
+        Ok(QueuedRun {
+            state,
+            last_error,
+            lease_owner: None,
+            lease_until_ms: None,
+            ..current
+        })
+    }
+
     async fn move_run(&self, id: &str, to: &str) -> Result<QueuedRun, CloudError> {
         let current = self.run(id).await?;
         if !allows_move(&current.state, to) {
@@ -1505,19 +1722,36 @@ impl Cloud {
             });
         }
         let session = self.token().await?;
+        let mut fields = json!({
+            "state": { "stringValue": to },
+            "updatedAtMs": { "integerValue": crate::migrate::now_ms().to_string() },
+        });
+        let mut field_paths = vec!["state", "updatedAtMs"];
+        if to == "queued" {
+            fields["attempts"] = json!({ "integerValue": "0" });
+            fields["lastError"] = json!({ "nullValue": null });
+            fields["leaseOwner"] = json!({ "nullValue": null });
+            fields["leaseUntilMs"] = json!({ "nullValue": null });
+            field_paths.extend(["attempts", "lastError", "leaseOwner", "leaseUntilMs"]);
+        }
         let write = json!({
             "update": {
                 "name": run_document(&self.config.project_id, &session.uid, id),
-                "fields": {
-                    "state": { "stringValue": to },
-                    "updatedAtMs": { "integerValue": crate::migrate::now_ms().to_string() },
-                },
+                "fields": fields,
             },
-            "updateMask": { "fieldPaths": ["state", "updatedAtMs"] },
+            "updateMask": { "fieldPaths": field_paths },
         });
         self.commit(&session, vec![write]).await?;
         Ok(QueuedRun {
             state: to.to_string(),
+            attempts: if to == "queued" { 0 } else { current.attempts },
+            last_error: if to == "queued" {
+                None
+            } else {
+                current.last_error.clone()
+            },
+            lease_owner: None,
+            lease_until_ms: None,
             ..current
         })
     }
@@ -1845,7 +2079,10 @@ fn session_title(session: &ProjectSession) -> String {
 fn allows_move(from: &str, to: &str) -> bool {
     matches!(
         (from, to),
-        ("queued", "cancelled") | ("failed", "queued") | ("cancelled", "queued")
+        ("queued", "cancelled")
+            | ("failed", "queued")
+            | ("cancelled", "queued")
+            | ("dead_letter", "queued")
     )
 }
 
