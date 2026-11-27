@@ -674,6 +674,28 @@ input[type="checkbox"] {
   min-width: 0;
 }
 
+/* Roadmap 126: at the narrow breakpoints the detail column gives its width back to the content. */
+@media (max-width: 480px) {
+  .detail {
+    padding: 16px 10px 24px;
+  }
+
+  .session-tools {
+    flex: 1 1 100%;
+    justify-content: flex-start;
+  }
+
+  .approval-card {
+    min-width: 0;
+  }
+
+  .approval-wait,
+  .approval-command {
+    max-width: 100%;
+    overflow-wrap: anywhere;
+  }
+}
+
 .detail-actions {
   display: flex;
   flex: 0 0 auto;
@@ -783,13 +805,15 @@ input[type="checkbox"] {
 
 .model-picker {
   position: relative;
+  min-width: 0;
+  max-width: 100%;
 }
 
 .model-button {
   display: flex;
   align-items: center;
   gap: 6px;
-  max-width: 270px;
+  max-width: 100%;
   height: 28px;
   padding: 0 8px;
   border: 1px solid var(--hairline);
@@ -1664,6 +1688,13 @@ input[type="checkbox"] {
   color: var(--faint);
 }
 
+/* Roadmap 126: the status line drops telemetry before it widens the document. */
+@media (max-width: 900px) {
+  .status .metric {
+    display: none;
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
   * {
     transition: none !important;
@@ -1683,6 +1714,13 @@ input[type="checkbox"] {
 .wide {
   width: 100%;
   margin-top: 4px;
+}
+
+/* Roadmap 126: control labels stay on one line at every verified breakpoint. */
+.chip,
+.primary,
+.ghost-btn {
+  white-space: nowrap;
 }
 
 .chip {
@@ -2238,6 +2276,7 @@ input[type="checkbox"] {
   justify-content: flex-end;
   gap: 8px;
   flex: 1 1 360px;
+  min-width: 0;
 }
 
 .session-tools .harness-pick {
@@ -5225,6 +5264,20 @@ button[aria-label^="Unpin "] {
   .shell.session,
   .shell.settings {
     grid-template-columns: 48px var(--list-w, 240px) minmax(0, 1fr) var(--insp-w, 280px);
+  }
+}
+
+/* Roadmap 126: below the narrowest verified width the roster folds away so the transcript keeps
+   a usable column; the rail still reaches it, and focus mode can hide the rail as well. */
+@media (max-width: 360px) {
+  .shell.session,
+  .shell.settings {
+    grid-template-columns: 48px minmax(0, 1fr);
+  }
+
+  .shell.session .list-pane,
+  .shell.settings .list-pane {
+    display: none;
   }
 }
 
@@ -9992,6 +10045,8 @@ html[data-surface="tray"] #root {
 .paper-engraving {
   display: block;
   width: 100%;
+  /* Decorative strokes are drawn past the viewBox; clipping keeps them out of the document. */
+  overflow: hidden;
   aspect-ratio: 4 / 3;
   object-fit: cover;
   background: var(--paper-wash);
