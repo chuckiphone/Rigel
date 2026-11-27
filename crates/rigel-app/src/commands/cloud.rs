@@ -204,6 +204,63 @@ pub(crate) fn cloud_push() -> Result<rigel_core::cloud::PushReport, String> {
     })
 }
 
+/// Roadmap 179: metadata decisions live beside the other local cloud state, never in the project
+/// tree. A publish consults the same log the account page shows.
+fn metadata_log_path() -> PathBuf {
+    index_dir().join("cloud-metadata-decisions.json")
+}
+
+fn metadata_view() -> Result<rigel_core::cloud::metadata::MetadataView, String> {
+    rigel_core::cloud::metadata::MetadataView::load(&metadata_log_path())
+}
+
+fn metadata_publish_gate() -> Result<(), String> {
+    metadata_view()?.can_publish().map_err(|fields| {
+        format!(
+            "resolve the metadata conflict(s) before publishing: {}",
+            fields.join(", ")
+        )
+    })
+}
+
+/// Replace the fields under review. The account page supplies them from the last sync, so the
+/// shell is never asked to guess which metadata disagreed.
+#[tauri::command]
+pub(crate) fn cloud_metadata_fields(
+    fields: Vec<rigel_core::cloud::metadata::MetadataField>,
+) -> Result<rigel_core::cloud::metadata::MetadataView, String> {
+    let path = metadata_log_path();
+    let mut view = rigel_core::cloud::metadata::MetadataView::load(&path)?;
+    view.fields = fields;
+    // A field that changed identity is no longer covered by an older decision.
+    let names: std::collections::BTreeSet<&str> =
+        view.fields.iter().map(|f| f.name.as_str()).collect();
+    view.decisions
+        .retain(|decision| names.contains(decision.field.as_str()));
+    view.save(&path)?;
+    Ok(view)
+}
+
+/// The fields and decisions the account page shows.
+#[tauri::command]
+pub(crate) fn cloud_metadata_view() -> Result<rigel_core::cloud::metadata::MetadataView, String> {
+    metadata_view()
+}
+
+/// Record one merge decision with the signed-in author's identity and a fresh timestamp.
+#[tauri::command]
+pub(crate) fn cloud_metadata_decide(
+    field: String,
+    choice: rigel_core::cloud::metadata::MetadataChoice,
+    author: String,
+) -> Result<rigel_core::cloud::metadata::MetadataView, String> {
+    let path = metadata_log_path();
+    let mut view = rigel_core::cloud::metadata::MetadataView::load(&path)?;
+    view.decide(&field, choice, &author)?;
+    view.save(&path)?;
+    Ok(view)
+}
+
 /// Publish one session's prompts and assistant text to the user's Firestore project, where the
 /// phone lists and reads them. Tool calls, file changes and the project path never leave here.
 #[tauri::command]
@@ -211,6 +268,7 @@ pub(crate) fn cloud_publish_session(
     project: String,
     session: String,
 ) -> Result<rigel_core::cloud::PublishReport, String> {
+    metadata_publish_gate()?;
     let dir = index_dir();
     tauri::async_runtime::block_on(async move {
         let cloud = rigel_core::cloud::Cloud::open(&dir).map_err(message)?;
@@ -230,6 +288,7 @@ pub(crate) fn cloud_publish_session(
 pub(crate) fn cloud_publish_all(
     project: String,
 ) -> Result<rigel_core::cloud::PublishAllReport, String> {
+    metadata_publish_gate()?;
     let dir = index_dir();
     tauri::async_runtime::block_on(async move {
         let cloud = rigel_core::cloud::Cloud::open(&dir).map_err(message)?;

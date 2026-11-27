@@ -5,8 +5,11 @@ import {
   when,
   type CloudPublishAllReport,
   type CloudStatus,
+  type MetadataChoice,
+  type MetadataView,
   type Settings,
 } from "./api";
+import MetadataConflict, { canPublish } from "./metadata-conflict";
 import { useMenu } from "./menu";
 
 interface Props {
@@ -33,14 +36,20 @@ export default function AccountView({ project, onNotice, onOpenSettings }: Props
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [report, setReport] = useState<CloudPublishAllReport | null>(null);
+  const [metadata, setMetadata] = useState<MetadataView | null>(null);
 
   const load = useCallback(async () => {
     setBusy(true);
     setError(null);
     try {
-      const [status, prefs] = await Promise.all([api.cloudStatus(), api.getSettings()]);
+      const [status, prefs, fields] = await Promise.all([
+        api.cloudStatus(),
+        api.getSettings(),
+        api.cloudMetadataView(),
+      ]);
       setCloud(status);
       setSettings(prefs);
+      setMetadata(fields);
     } catch (failure) {
       setError(message(failure));
     } finally {
@@ -91,6 +100,23 @@ export default function AccountView({ project, onNotice, onOpenSettings }: Props
     }
   };
 
+  const metadataReady = metadata ? canPublish(metadata) : false;
+
+  const decideMetadata = async (field: string, choice: MetadataChoice) => {
+    if (!cloud?.email && !cloud?.uid) {
+      onNotice("Sign in before recording a merge decision.");
+      return;
+    }
+    try {
+      setMetadata(
+        await api.cloudMetadataDecide(field, choice, cloud.email ?? cloud.uid ?? ""),
+      );
+      onNotice(`Recorded the decision for ${field}.`);
+    } catch (failure) {
+      setError(message(failure));
+    }
+  };
+
   const publishAll = async () => {
     if (!project) {
       onNotice("Open a project before publishing its sessions.");
@@ -98,6 +124,10 @@ export default function AccountView({ project, onNotice, onOpenSettings }: Props
     }
     if (!signedIn) {
       onNotice("Sign in from Cloud settings before publishing sessions.");
+      return;
+    }
+    if (!metadataReady) {
+      onNotice("Resolve every metadata conflict before publishing.");
       return;
     }
     setBusy(true);
@@ -404,13 +434,15 @@ export default function AccountView({ project, onNotice, onOpenSettings }: Props
             <button
               className="chip"
               onClick={() => void publishAll()}
-              disabled={busy || !signedIn || !project}
+              disabled={busy || !signedIn || !project || !metadataReady}
               title={
                 !project
                   ? "Open a project first"
                   : !signedIn
                     ? "Sign in first"
-                    : "Publish every session in this project"
+                    : !metadataReady
+                      ? "Resolve the metadata conflicts first"
+                      : "Publish every session in this project"
               }
             >
               {busy ? "Working…" : "Publish all sessions"}
@@ -431,6 +463,17 @@ export default function AccountView({ project, onNotice, onOpenSettings }: Props
             </p>
           ) : null}
         </section>
+
+        {metadata ? (
+          <section className="settings-section" id="account-metadata">
+            <MetadataConflict
+              view={metadata}
+              author={cloud?.email ?? cloud?.uid ?? ""}
+              onDecide={decideMetadata}
+              busy={busy}
+            />
+          </section>
+        ) : null}
 
         <section className="settings-section" id="account-shelf">
           <div className="settings-head">

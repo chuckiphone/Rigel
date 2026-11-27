@@ -30,6 +30,7 @@
 //! app, a script — can read the same collection with the same rules.
 
 pub(crate) mod app_check;
+pub mod metadata;
 
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
