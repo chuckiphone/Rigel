@@ -94,6 +94,11 @@ impl SessionTemplates {
     }
 
     pub fn list(&self) -> Result<Vec<SessionTemplate>, TemplateError> {
+        Ok(self.list_v2()?.iter().map(TemplateModel::to_v1).collect())
+    }
+
+    /// Load templates in the v2 model; v1 files upgrade through serde defaults.
+    pub fn list_v2(&self) -> Result<Vec<TemplateModel>, TemplateError> {
         let text = match fs::read_to_string(&self.path) {
             Ok(text) => text,
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
@@ -108,7 +113,7 @@ impl SessionTemplates {
         if text.trim().is_empty() || text.trim() == "{}" {
             return Ok(Vec::new());
         }
-        let templates: Vec<SessionTemplate> = serde_json::from_str(&text)?;
+        let templates: Vec<TemplateModel> = serde_json::from_str(&text)?;
         Ok(templates)
     }
 
@@ -133,7 +138,60 @@ impl SessionTemplates {
             template.id = uuid::Uuid::new_v4().to_string();
         }
 
-        let mut list = self.list()?;
+        let mut model = TemplateModel::from_v1(&template);
+        if !template.id.is_empty()
+            && let Some(existing) = self
+                .list_v2()?
+                .into_iter()
+                .find(|row| row.id == template.id)
+        {
+            model.variables = existing.variables;
+            model.slots = existing.slots;
+            model.agent_sections = existing.agent_sections;
+            model.variable_defs = existing.variable_defs;
+        }
+        let saved = self.save_v2(model)?;
+        template = saved.to_v1();
+        Ok(template)
+    }
+
+    /// Return the field-level changes that saving this model would apply.
+    pub fn preview_save(
+        &self,
+        template: &TemplateModel,
+    ) -> Result<Vec<model::FieldDiff>, TemplateError> {
+        let Some(existing) = self
+            .list_v2()?
+            .into_iter()
+            .find(|row| row.id == template.id)
+        else {
+            return Ok(Vec::new());
+        };
+        Ok(model::diff(&existing, template))
+    }
+
+    /// Insert or replace a v2 template, preserving the existing file format and atomic write.
+    pub fn save_v2(&self, mut template: TemplateModel) -> Result<TemplateModel, TemplateError> {
+        let name = template
+            .name
+            .lines()
+            .next()
+            .unwrap_or("")
+            .trim()
+            .to_string();
+        if name.is_empty() || name.chars().count() > MAX_NAME {
+            return Err(TemplateError::InvalidName);
+        }
+        template.name = name;
+        template.prompt = template.prompt.trim_end().to_string();
+        if template.created_at <= 0 {
+            template.created_at = crate::migrate::now_ms();
+        }
+        if template.id.trim().is_empty() {
+            template.id = uuid::Uuid::new_v4().to_string();
+        }
+
+        let mut list = self.list_v2()?;
         match list.iter().position(|row| row.id == template.id) {
             Some(index) => list[index] = template.clone(),
             None => {
@@ -148,7 +206,7 @@ impl SessionTemplates {
     }
 
     pub fn delete(&self, id: &str) -> Result<(), TemplateError> {
-        let mut list = self.list()?;
+        let mut list = self.list_v2()?;
         let before = list.len();
         list.retain(|row| row.id != id);
         if list.len() == before {
@@ -157,7 +215,7 @@ impl SessionTemplates {
         self.write(&list)
     }
 
-    fn write(&self, list: &[SessionTemplate]) -> Result<(), TemplateError> {
+    fn write(&self, list: &[TemplateModel]) -> Result<(), TemplateError> {
         if let Some(parent) = self.path.parent() {
             fs::create_dir_all(parent).map_err(|source| TemplateError::Write {
                 path: parent.display().to_string(),

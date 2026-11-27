@@ -285,6 +285,33 @@ pub(crate) fn template_list(project: String) -> Result<Vec<SessionTemplate>, Str
 }
 
 #[tauri::command]
+pub(crate) fn template_list_v2(project: String) -> Result<Vec<rigel_core::TemplateModel>, String> {
+    SessionTemplates::open(Path::new(&project))
+        .list_v2()
+        .map_err(message)
+}
+
+#[tauri::command]
+pub(crate) fn template_save_v2(
+    project: String,
+    template: rigel_core::TemplateModel,
+) -> Result<rigel_core::TemplateModel, String> {
+    SessionTemplates::open(Path::new(&project))
+        .save_v2(template)
+        .map_err(message)
+}
+
+#[tauri::command]
+pub(crate) fn template_preview_save(
+    project: String,
+    template: rigel_core::TemplateModel,
+) -> Result<Vec<rigel_core::FieldDiff>, String> {
+    SessionTemplates::open(Path::new(&project))
+        .preview_save(&template)
+        .map_err(message)
+}
+
+#[tauri::command]
 pub(crate) fn template_save(
     project: String,
     template: SessionTemplate,
