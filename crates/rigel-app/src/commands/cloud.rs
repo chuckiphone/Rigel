@@ -261,6 +261,60 @@ pub(crate) fn cloud_metadata_decide(
     Ok(view)
 }
 
+/// Roadmap 164: publication scopes live beside the other local cloud state, keyed by session id.
+fn publish_scopes_path() -> PathBuf {
+    index_dir().join("publish-scopes.json")
+}
+
+fn publish_scope(session: &str) -> Result<rigel_core::cloud::publish::PublishScope, String> {
+    Ok(
+        rigel_core::cloud::publish::PublishScopes::load(&publish_scopes_path())?
+            .for_session(session),
+    )
+}
+
+/// Every row publishing this session would expose, with tool output and diffs redacted unless the
+/// session's stored scope opts in.
+#[tauri::command]
+pub(crate) fn cloud_publish_preview(
+    project: String,
+    session: String,
+) -> Result<rigel_core::cloud::publish::PublishPreview, String> {
+    let scope = publish_scope(&session)?;
+    tauri::async_runtime::block_on(async move {
+        let service = SessionService::open(Path::new(&project))
+            .await
+            .map_err(message)?;
+        let transcripts = service.transcript(&session).await.map_err(message)?;
+        Ok(rigel_core::cloud::publish::preview_rows(
+            &session,
+            &transcripts,
+            scope,
+        ))
+    })
+}
+
+/// The scope stored for one session. A session never configured reads as both switches off.
+#[tauri::command]
+pub(crate) fn cloud_publish_scope(
+    session: String,
+) -> Result<rigel_core::cloud::publish::PublishScope, String> {
+    publish_scope(&session)
+}
+
+/// Store the reviewed scope for one session.
+#[tauri::command]
+pub(crate) fn cloud_publish_scope_set(
+    session: String,
+    scope: rigel_core::cloud::publish::PublishScope,
+) -> Result<rigel_core::cloud::publish::PublishScope, String> {
+    let path = publish_scopes_path();
+    let mut scopes = rigel_core::cloud::publish::PublishScopes::load(&path)?;
+    scopes.set(&session, scope);
+    scopes.save(&path)?;
+    Ok(scope)
+}
+
 /// Publish one session's prompts and assistant text to the user's Firestore project, where the
 /// phone lists and reads them. Tool calls, file changes and the project path never leave here.
 #[tauri::command]
@@ -269,6 +323,7 @@ pub(crate) fn cloud_publish_session(
     session: String,
 ) -> Result<rigel_core::cloud::PublishReport, String> {
     metadata_publish_gate()?;
+    let scope = publish_scope(&session)?;
     let dir = index_dir();
     tauri::async_runtime::block_on(async move {
         let cloud = rigel_core::cloud::Cloud::open(&dir).map_err(message)?;
@@ -276,7 +331,7 @@ pub(crate) fn cloud_publish_session(
             .await
             .map_err(message)?;
         cloud
-            .publish_session(&service, &session)
+            .publish_session_with_scope(&service, &session, scope)
             .await
             .map_err(message)
     })

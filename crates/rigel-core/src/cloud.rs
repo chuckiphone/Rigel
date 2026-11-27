@@ -31,6 +31,7 @@
 
 pub(crate) mod app_check;
 pub mod metadata;
+pub mod publish;
 
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
@@ -1193,6 +1194,18 @@ impl Cloud {
         service: &SessionService,
         session_id: &str,
     ) -> Result<PublishReport, CloudError> {
+        self.publish_session_with_scope(service, session_id, publish::PublishScope::default())
+            .await
+    }
+
+    /// Publish with the redaction scope the reviewer stored for this session. Tool output and
+    /// diffs are absent unless the scope opts in.
+    pub async fn publish_session_with_scope(
+        &self,
+        service: &SessionService,
+        session_id: &str,
+        scope: publish::PublishScope,
+    ) -> Result<PublishReport, CloudError> {
         if session_id.contains('/') {
             return Err(CloudError::Malformed(
                 "a session id cannot contain a slash".to_string(),
@@ -1220,6 +1233,7 @@ impl Cloud {
                         published + offset + 1,
                         transcript,
                         agent,
+                        scope,
                     )
                 })
                 .collect::<Vec<_>>();
@@ -1672,6 +1686,7 @@ fn turn_write(
     order: usize,
     transcript: &TurnTranscript,
     agent: Option<&Agent>,
+    scope: publish::PublishScope,
 ) -> Value {
     let turn = &transcript.turn;
     let (prompt, prompt_cut) = clipped(turn.prompt.as_deref().unwrap_or(""), MAX_PROMPT_CHARS);
@@ -1712,6 +1727,28 @@ fn turn_write(
     insert_timestamp(&mut fields, "published_at", now_ms());
     fields.insert("schema".into(), json!({ "integerValue": "1" }));
     fields.insert("app".into(), json!({ "stringValue": "Rigel" }));
+    // Roadmap 164: these fields are absent unless this session explicitly opted in. The preview
+    // names them either way, so the reader's exposure never differs from what was reviewed.
+    if scope.tool_output {
+        let output = transcript
+            .items
+            .iter()
+            .filter(|item| matches!(item.kind.as_str(), "command" | "mcp_call" | "web_search"))
+            .filter_map(|item| item.body.get("text").and_then(Value::as_str))
+            .collect::<Vec<_>>()
+            .join("\n");
+        insert_string(&mut fields, "tool_output", Some(&output));
+    }
+    if scope.diffs {
+        let diffs = transcript
+            .items
+            .iter()
+            .filter(|item| item.kind == "file_change")
+            .filter_map(|item| item.body.get("diff").and_then(Value::as_str))
+            .collect::<Vec<_>>()
+            .join("\n");
+        insert_string(&mut fields, "diffs", Some(&diffs));
+    }
 
     json!({
         "update": {
@@ -2357,6 +2394,7 @@ mod tests {
             3,
             &transcript("why is the build slow?", "It compiles twice."),
             None,
+            publish::PublishScope::default(),
         );
         let fields = &write["update"]["fields"];
         assert_eq!(
@@ -2378,10 +2416,62 @@ mod tests {
     }
 
     #[test]
+    fn turn_output_is_published_only_when_the_scope_opts_in() {
+        let mut record = transcript("prompt", "reply");
+        record.items.push(Item {
+            id: "item-3".to_string(),
+            turn_id: "turn-1".to_string(),
+            seq: 3,
+            kind: "command".to_string(),
+            status: "complete".to_string(),
+            body: json!({ "text": "secret command output" }),
+            created_at: 1,
+            raw: None,
+        });
+        let redacted = turn_write(
+            "p",
+            "u",
+            "s",
+            0,
+            &record,
+            None,
+            publish::PublishScope::default(),
+        );
+        assert!(!redacted.to_string().contains("secret command output"));
+        assert!(redacted["update"]["fields"].get("tool_output").is_none());
+
+        let opted_in = turn_write(
+            "p",
+            "u",
+            "s",
+            0,
+            &record,
+            None,
+            publish::PublishScope {
+                tool_output: true,
+                diffs: false,
+            },
+        );
+        assert_eq!(
+            opted_in["update"]["fields"]["tool_output"]["stringValue"],
+            "secret command output"
+        );
+        assert!(opted_in["update"]["fields"].get("diffs").is_none());
+    }
+
+    #[test]
     fn long_text_is_clipped_and_says_so() {
         let prompt = "p".repeat(MAX_PROMPT_CHARS + 1);
         let reply = "r".repeat(MAX_REPLY_CHARS + 1);
-        let write = turn_write("p", "u", "s", 0, &transcript(&prompt, &reply), None);
+        let write = turn_write(
+            "p",
+            "u",
+            "s",
+            0,
+            &transcript(&prompt, &reply),
+            None,
+            publish::PublishScope::default(),
+        );
         let fields = &write["update"]["fields"];
         assert_eq!(
             fields["prompt"]["stringValue"]

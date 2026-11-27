@@ -4062,6 +4062,66 @@ button[aria-label^="Unpin "] {
   background: var(--well);
 }
 
+/* Publication preview (roadmap 164): every exposed row, with redaction switches up front. */
+.publish-preview {
+  margin: 8px 0;
+  border: 1px solid var(--hairline);
+  border-radius: 9px;
+  background: var(--well);
+  padding: 8px;
+}
+
+.publish-preview header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 4px;
+}
+
+.publish-preview header button {
+  margin-left: auto;
+  min-height: 24px;
+  border: 1px solid var(--hairline);
+  border-radius: 6px;
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+}
+
+.publish-switches {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin: 4px 0;
+  font-size: 11px;
+}
+
+.publish-rows {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 11px;
+}
+
+.publish-rows th,
+.publish-rows td {
+  border-bottom: 1px solid var(--hairline);
+  padding: 3px 6px;
+  text-align: left;
+  vertical-align: top;
+}
+
+.publish-rows td:last-child {
+  overflow-wrap: anywhere;
+}
+
+.publish-rows .redacted {
+  color: var(--faint);
+}
+
+.publish-error {
+  color: var(--accent-text);
+}
+
 /* Metadata conflicts (roadmap 179): three sides per field and one recorded choice each. */
 .metadata-conflict {
   border: 1px solid var(--hairline);
