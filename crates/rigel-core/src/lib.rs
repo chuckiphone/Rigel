@@ -40,6 +40,7 @@ pub mod pins;
 pub mod plan;
 pub mod plugin;
 pub mod process;
+pub mod prompts;
 pub mod proof;
 pub mod provenance;
 pub mod redaction;

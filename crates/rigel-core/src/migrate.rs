@@ -177,6 +177,11 @@ pub const PROJECT_MIGRATIONS: &[Migration] = &[
         name: "0030_session_forks",
         sql: include_str!("../../../migrations/project/0030_session_forks.sql"),
     },
+    Migration {
+        version: 31,
+        name: "0031_prompt_library",
+        sql: include_str!("../../../migrations/project/0031_prompt_library.sql"),
+    },
 ];
 
 /// `%APPDATA%\Rigel\index.db`
