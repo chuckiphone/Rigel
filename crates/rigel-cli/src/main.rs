@@ -31,6 +31,7 @@ mod network;
 mod phase3;
 mod plugins;
 mod proof;
+mod retention;
 mod route;
 mod rules;
 mod serve;
@@ -89,6 +90,12 @@ enum Command {
     Db {
         #[command(subcommand)]
         command: db::DbCommand,
+    },
+
+    /// Configure, preview and confirm local per-project retention cleanup.
+    Retention {
+        #[command(subcommand)]
+        command: retention::RetentionCommand,
     },
 
     /// Session operations for one project.
@@ -714,6 +721,8 @@ async fn entry() -> ExitCode {
         },
 
         Command::Db { command } => db::run(command).await,
+
+        Command::Retention { command } => retention::run(command).await,
 
         Command::Serve {
             project,
