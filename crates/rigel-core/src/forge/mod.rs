@@ -92,6 +92,12 @@ pub(crate) fn build_plan(
             }
         }
     }
+    if let Some(turn_id) = turns.last().map(|turn| turn.turn.id.as_str()) {
+        body.push_str(&format!(
+            "\n<!-- rigel:session={};turn={} -->\n",
+            session.id, turn_id
+        ));
+    }
     body.push_str("\n### Review\n\nGenerated from Rigel's session transcript. Review the diff; Rigel did not push or open this pull request by itself.\n");
     Ok(PullRequestPlan {
         title,
@@ -180,6 +186,7 @@ mod conformance {
         assert_eq!(plan.branch, "feature");
         assert_eq!(plan.title, "fix parser");
         assert!(plan.body.contains("fix parser"));
+        assert!(plan.body.contains("<!-- rigel:session=s-1;turn=t-1 -->"));
         assert_eq!(forge.create(dir.path(), &plan).unwrap(), create_result);
     }
 
