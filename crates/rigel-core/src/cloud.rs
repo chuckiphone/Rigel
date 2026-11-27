@@ -2557,6 +2557,8 @@ mod tests {
             ended_at: None,
             pinned_at: None,
             archived_at: None,
+            parent_session_id: None,
+            parent_turn_id: None,
         };
         let write = session_write("rigel-cloud", "uid-1", &session, 4, 2);
         let fields = &write["update"]["fields"];

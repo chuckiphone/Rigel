@@ -72,6 +72,10 @@ pub struct Session {
     pub pinned_at: Option<i64>,
     /// D148: hidden from the default list, still searchable and still resumable.
     pub archived_at: Option<i64>,
+    /// The session this branch was forked from, when applicable.
+    pub parent_session_id: Option<String>,
+    /// The source turn at which this branch was forked.
+    pub parent_turn_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -282,6 +286,8 @@ type SessionRow = (
     Option<i64>,
     Option<i64>,
     Option<String>,
+    Option<String>,
+    Option<String>,
 );
 
 impl SessionService {
@@ -341,7 +347,7 @@ impl SessionService {
         let row: Option<SessionRow> = sqlx::query_as(
             "SELECT id, project_root, title, status, budget_cents, spend_cents, spend_micros,
                     interventions, tasks_done, created_at, ended_at, pinned_at, archived_at,
-                    title_source
+                    title_source, parent_session_id, parent_turn_id
              FROM sessions WHERE id = ?",
         )
         .bind(id)
@@ -354,6 +360,36 @@ impl SessionService {
         }
     }
 
+    /// Start a session branch linked to an existing session and the turn it forks from.
+    pub async fn fork(
+        &self,
+        source_session_id: &str,
+        turn_id: &str,
+    ) -> Result<Session, SessionError> {
+        let source = self.get(source_session_id).await?;
+        let belongs: Option<(i64,)> = sqlx::query_as(
+            "SELECT 1 FROM turns t JOIN agents a ON a.id = t.agent_id
+             WHERE a.session_id = ? AND t.id = ?",
+        )
+        .bind(source_session_id)
+        .bind(turn_id)
+        .fetch_optional(&self.pool)
+        .await?;
+        if belongs.is_none() {
+            return Err(SessionError::TurnNotFound(turn_id.to_string()));
+        }
+        let forked = self
+            .start(source.title.as_deref(), source.budget_cents)
+            .await?;
+        sqlx::query("UPDATE sessions SET parent_session_id = ?, parent_turn_id = ? WHERE id = ?")
+            .bind(source_session_id)
+            .bind(turn_id)
+            .bind(&forked.id)
+            .execute(&self.pool)
+            .await?;
+        self.get(&forked.id).await
+    }
+
     /// Pinned first, then newest: the session list is a log with a favourites shelf.
     ///
     /// Archived sessions are still returned — the window hides them behind a toggle, and the
@@ -362,7 +398,7 @@ impl SessionService {
         let rows: Vec<SessionRow> = sqlx::query_as(
             "SELECT id, project_root, title, status, budget_cents, spend_cents, spend_micros,
                     interventions, tasks_done, created_at, ended_at, pinned_at, archived_at,
-                    title_source
+                    title_source, parent_session_id, parent_turn_id
              FROM sessions
              ORDER BY (pinned_at IS NULL), pinned_at DESC, created_at DESC, id DESC",
         )
@@ -1911,6 +1947,8 @@ fn session_from_row(row: SessionRow) -> Result<Session, SessionError> {
         ended_at: row.10,
         pinned_at: row.11,
         archived_at: row.12,
+        parent_session_id: row.14,
+        parent_turn_id: row.15,
     })
 }
 

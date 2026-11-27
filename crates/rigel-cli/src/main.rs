@@ -406,6 +406,16 @@ enum SessionCommand {
         json: bool,
     },
 
+    /// Fork a session at a named turn, preserving its parent lineage.
+    Fork {
+        #[arg(long, value_name = "PATH", default_value = ".")]
+        project: PathBuf,
+        #[arg(long)]
+        id: String,
+        #[arg(long)]
+        turn: String,
+    },
+
     /// Name an untitled session with the cheapest model that answers.
     Title {
         #[arg(long, value_name = "PATH", default_value = ".")]
@@ -1901,6 +1911,17 @@ async fn run_session(command: SessionCommand) -> ExitCode {
                             );
                         }
                     }
+                    ExitCode::SUCCESS
+                }
+                Err(error) => fail(error),
+            },
+            Err(error) => fail(error),
+        },
+
+        SessionCommand::Fork { project, id, turn } => match SessionService::open(&project).await {
+            Ok(service) => match service.fork(&id, &turn).await {
+                Ok(session) => {
+                    println!("{}", session.id);
                     ExitCode::SUCCESS
                 }
                 Err(error) => fail(error),

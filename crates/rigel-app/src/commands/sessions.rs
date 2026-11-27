@@ -39,6 +39,22 @@ pub(crate) fn session_list(project: String) -> Result<Vec<Session>, String> {
     })
 }
 
+#[tauri::command]
+pub(crate) fn session_fork(
+    project: String,
+    session: String,
+    turn: String,
+) -> Result<Session, String> {
+    tauri::async_runtime::block_on(async move {
+        SessionService::open(Path::new(&project))
+            .await
+            .map_err(message)?
+            .fork(&session, &turn)
+            .await
+            .map_err(message)
+    })
+}
+
 /// D148: the session list's three edits. Each returns the row as stored, so the window renders
 /// the database's answer instead of its own optimism.
 #[tauri::command]

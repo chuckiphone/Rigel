@@ -381,6 +381,8 @@ mod tests {
             ended_at: None,
             pinned_at: None,
             archived_at: None,
+            parent_session_id: None,
+            parent_turn_id: None,
         };
         let bookmarks = [crate::session::Bookmark {
             id: "b-1".to_string(),
