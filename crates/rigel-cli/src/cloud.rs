@@ -73,6 +73,15 @@ pub enum CloudCommand {
         json: bool,
     },
 
+    /// Export every Firestore document under the signed-in account as JSON.
+    ExportAccount,
+
+    /// Show the account deletion plan, or delete after typing its exact confirmation phrase.
+    DeleteAccount {
+        #[arg(long)]
+        confirm: Option<String>,
+    },
+
     /// Queue one turn for Rigel's runner and print the run's id.
     ///
     /// The prompt is stored once, under this account, and nothing else is collected with it.
@@ -523,6 +532,53 @@ pub async fn run(dir: &Path, command: CloudCommand) -> ExitCode {
                     ExitCode::SUCCESS
                 }
                 Err(error) => failure(error, as_json),
+            }
+        }
+
+        CloudCommand::ExportAccount => {
+            let cloud = match Cloud::open(dir) {
+                Ok(cloud) => cloud,
+                Err(error) => return failure(error, false),
+            };
+            match cloud.export_account().await {
+                Ok(export) => {
+                    crate::json::print_pretty(&export);
+                    ExitCode::SUCCESS
+                }
+                Err(error) => failure(error, false),
+            }
+        }
+
+        CloudCommand::DeleteAccount { confirm } => {
+            let cloud = match Cloud::open(dir) {
+                Ok(cloud) => cloud,
+                Err(error) => return failure(error, false),
+            };
+            if let Some(confirm) = confirm {
+                match cloud.delete_account(&confirm).await {
+                    Ok(report) => {
+                        println!(
+                            "deleted    {} Firestore document(s) and the Firebase account",
+                            report.documents_deleted
+                        );
+                        println!("remains    {}", report.remains);
+                        ExitCode::SUCCESS
+                    }
+                    Err(error) => failure(error, false),
+                }
+            } else {
+                match cloud.delete_plan().await {
+                    Ok(plan) => {
+                        println!("deletes    {}", plan.documents_to_delete);
+                        println!("remains    {}", plan.remains);
+                        println!(
+                            "confirm    rigel cloud delete-account --confirm \"{}\"",
+                            plan.confirmation
+                        );
+                        ExitCode::SUCCESS
+                    }
+                    Err(error) => failure(error, false),
+                }
             }
         }
 

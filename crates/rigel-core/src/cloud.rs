@@ -29,6 +29,7 @@
 //! The Firestore document shape is documented in `docs/cloud.md`, so another client — the phone
 //! app, a script — can read the same collection with the same rules.
 
+pub mod account;
 pub(crate) mod app_check;
 pub mod metadata;
 pub mod publish;
@@ -101,6 +102,9 @@ pub enum CloudError {
     #[error("not signed in: run `rigel cloud login --email <address>`")]
     NotSignedIn,
 
+    #[error("cloud account not found: this account was deleted; sign in to another account")]
+    AccountNotFound,
+
     #[error("the App Check attestation URL `{0}` must be https (http is allowed only on loopback)")]
     InvalidAppCheck(String),
 
@@ -144,6 +148,7 @@ impl CloudError {
             | CloudError::InvalidProject(_)
             | CloudError::InvalidApiKey
             | CloudError::NotSignedIn
+            | CloudError::AccountNotFound
             | CloudError::InvalidAppCheck(_)
             | CloudError::AppCheck(_)
             | CloudError::Input(_) => 1,
@@ -623,6 +628,7 @@ pub struct Cloud {
     /// `None` in a client that only talks to the network (the older constructor); the window,
     /// the CLI and the tests that exercise tombstones give it a directory.
     state_dir: Option<PathBuf>,
+    account_deleted: std::sync::atomic::AtomicBool,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -712,6 +718,9 @@ impl Cloud {
             .app_check
             .as_ref()
             .map(|check| AppCheck::new(check.attest_url.clone(), None, http.clone()));
+        let account_deleted = state_dir
+            .as_ref()
+            .is_some_and(|dir| dir.join("cloud-account-deleted").is_file());
         Ok(Self {
             config,
             endpoints,
@@ -719,6 +728,7 @@ impl Cloud {
             app_check,
             store,
             state_dir,
+            account_deleted: std::sync::atomic::AtomicBool::new(account_deleted),
         })
     }
 
@@ -1010,7 +1020,15 @@ impl Cloud {
             expires_at: now_ms() + lifetime - TOKEN_MARGIN_MS,
             email_verified: answer.email_verified,
         };
+        if let Some(dir) = &self.state_dir {
+            let marker = dir.join("cloud-account-deleted");
+            if marker.exists() {
+                std::fs::remove_file(marker)?;
+            }
+        }
         self.store.save(&session)?;
+        self.account_deleted
+            .store(false, std::sync::atomic::Ordering::SeqCst);
         self.status()
     }
 
@@ -1302,6 +1320,12 @@ impl Cloud {
     /// The current ID token, refreshed when it is within the margin. `None` is a sign-out; an
     /// expired token is not, because the refresh token is what the user actually holds.
     async fn token(&self) -> Result<Session, CloudError> {
+        if self
+            .account_deleted
+            .load(std::sync::atomic::Ordering::SeqCst)
+        {
+            return Err(CloudError::AccountNotFound);
+        }
         let Some(session) = self.store.load()? else {
             return Err(CloudError::NotSignedIn);
         };
