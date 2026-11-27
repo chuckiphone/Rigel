@@ -43,6 +43,7 @@ pub mod proof;
 pub mod provenance;
 pub mod redaction;
 pub mod resume;
+pub mod retention;
 pub mod rules;
 pub mod safety;
 pub mod sandbox;
