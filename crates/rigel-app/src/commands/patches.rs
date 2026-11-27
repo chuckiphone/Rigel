@@ -92,6 +92,7 @@ pub(crate) fn hunk_comment_deliver(
         None,
         None,
         None,
+        None,
     )?;
 
     tauri::async_runtime::block_on(comments.deliver(&id, &reply.turn.id)).map_err(message)?;
