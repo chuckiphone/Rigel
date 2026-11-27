@@ -1,4 +1,5 @@
 import { test, expect, Page } from '@playwright/test'
+import { fileURLToPath } from 'node:url'
 import { login } from '../helpers/login'
 import { seedTestUser, cleanupTestUser, testUser } from '../helpers/seedUser'
 
@@ -23,6 +24,23 @@ test.describe('Admin Panel', () => {
     await expect(page).toHaveURL('http://localhost:3000/admin')
     const dashboardArtifact = page.locator('span[title="Dashboard"]').first()
     await expect(dashboardArtifact).toBeVisible()
+  })
+
+  test('keeps the Rigel brand and links out to the public site and Firebase console', async () => {
+    await page.goto('http://localhost:3000/admin')
+    await expect(page.locator('svg.rigel-mark').first()).toBeVisible()
+    await expect(page.getByRole('link', { name: /Public site/ }).first()).toHaveAttribute(
+      'href',
+      'https://askrigel.com/',
+    )
+    await expect(page.getByRole('link', { name: /Firebase overview/ }).first()).toHaveAttribute(
+      'href',
+      /console\.firebase\.google\.com\/project\//,
+    )
+    // Roadmap 139: the filed screenshot is the evidence that the admin stayed on brand.
+    await page.screenshot({
+      path: fileURLToPath(new URL('../../../docs/qa/cms-admin-parity.png', import.meta.url)),
+    })
   })
 
   test('can navigate to list view', async () => {

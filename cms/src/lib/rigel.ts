@@ -5,9 +5,13 @@ const configured = process.env.RIGEL_FIREBASE_PROJECT_ID?.trim()
 
 export const RIGEL_FIREBASE_PROJECT = configured || 'rigel-25128'
 
+/** The public site the CMS feeds. Authors can leave the admin and land on their own work. */
+export const RIGEL_PUBLIC_SITE = 'https://askrigel.com/'
+
 const consoleRoot = `https://console.firebase.google.com/project/${RIGEL_FIREBASE_PROJECT}`
 
 export const RIGEL_CLOUD_LINKS = [
+  { label: 'Public site', href: RIGEL_PUBLIC_SITE },
   { label: 'Firebase overview', href: `${consoleRoot}/overview` },
   {
     label: 'Realtime Database',
