@@ -1618,7 +1618,9 @@ impl SessionService {
     pub async fn transcript(&self, session_id: &str) -> Result<Vec<TurnTranscript>, SessionError> {
         let session = self.get(session_id).await?;
         let turns: Vec<TurnRow> = sqlx::query_as(
-            "SELECT t.id, t.agent_id, t.seq, t.status, t.prompt, t.started_at, t.completed_at,
+            "SELECT t.id, t.agent_id, t.seq, t.status,
+                    COALESCE((SELECT snapshot FROM prompt_pins WHERE turn_id = t.id), t.prompt),
+                    t.started_at, t.completed_at,
                     t.usage_json, t.stop_reason, t.parent_turn_id, t.images_json
              FROM turns t JOIN agents a ON a.id = t.agent_id
              WHERE a.session_id = ? ORDER BY t.started_at, t.seq",

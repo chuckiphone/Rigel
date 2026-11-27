@@ -41,6 +41,7 @@ mod testing;
 mod tools;
 mod update;
 mod worktree;
+mod prompts;
 
 use harness::{CodexCommand, HarnessCommand};
 use phase3::{AgentCommand, KeyCommand, MemoryCommand, PatchCommand, SnapshotCommand};
@@ -92,6 +93,11 @@ enum Command {
         command: db::DbCommand,
     },
 
+    /// Manage versioned project prompts and pin snapshots to transcript turns.
+    Prompts {
+        #[command(subcommand)]
+        command: prompts::PromptCommand,
+    },
     /// Configure, preview and confirm local per-project retention cleanup.
     Retention {
         #[command(subcommand)]
@@ -782,6 +788,8 @@ async fn entry() -> ExitCode {
         Command::Network { command } => network::run(command).await,
 
         Command::Session { command } => run_session(command).await,
+
+        Command::Prompts { command } => prompts::run(command).await,
 
         Command::Completions { command } => completions::run(command),
 
