@@ -239,6 +239,16 @@ impl Cancels {
         }
     }
 
+    /// Roadmap 115: pause every registered turn at its next step boundary. Children are in the
+    /// same registry, so a tree pauses as one unit.
+    pub fn pause_all(&self) {
+        if let Ok(inner) = self.inner.lock() {
+            for turn_id in inner.keys() {
+                self.pause_turn(turn_id);
+            }
+        }
+    }
+
     pub fn resume_turn(&self, turn_id: &str) {
         if let Ok(mut paused) = self.paused.lock() {
             paused.remove(turn_id);
@@ -3990,6 +4000,20 @@ fn chat_heard(message: &super::agentchat::ChatMessage, me: &str, from: Option<&s
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn pause_all_stops_every_registered_turn_at_its_boundary() {
+        let cancels = Cancels::new();
+        let parent = cancels.register("parent", "writer");
+        cancels.register_child("child", "reviewer", &parent);
+        cancels.pause_all();
+        assert!(cancels.is_paused("parent"));
+        assert!(cancels.is_paused("child"));
+        cancels.resume_turn("parent");
+        cancels.resume_turn("child");
+        assert!(!cancels.is_paused("parent"));
+        assert!(!cancels.is_paused("child"));
+    }
 
     #[test]
     fn the_quote_context_includes_the_tool_schemas() {

@@ -17,6 +17,31 @@ function cpu(value: number): string {
   return `${value < 10 ? value.toFixed(1) : Math.round(value)}%`;
 }
 
+/** The attention strip: unresolved work and the one control that pauses every turn. */
+export function TrayAttention({
+  badge,
+  onPauseAll,
+  busy = false,
+}: {
+  badge: number;
+  onPauseAll: () => Promise<void>;
+  busy?: boolean;
+}) {
+  return (
+    <section className="tray-attention" aria-label="Tray attention">
+      <span className="tray-badge" aria-label="Unresolved items">
+        {badge}
+      </span>
+      <span className="tray-attention-note">
+        {badge === 0 ? "Nothing waiting on you" : `${badge} unresolved approval(s) or failure(s)`}
+      </span>
+      <button type="button" disabled={busy} onClick={() => void onPauseAll()}>
+        Pause all
+      </button>
+    </section>
+  );
+}
+
 /** The panel drawn inside the frameless `tray` window, not a native OS menu. */
 export default function TrayPanel() {
   const [snapshot, setSnapshot] = useState<TraySnapshot | null>(null);
@@ -111,6 +136,12 @@ export default function TrayPanel() {
           {projectPath}
         </span>
       </section>
+
+      <TrayAttention
+        badge={snapshot?.badge ?? 0}
+        onPauseAll={api.tray.pauseAll}
+        busy={busy}
+      />
 
       <section className="tray-metrics" aria-label="Live project metrics">
         <div className="tray-metric">

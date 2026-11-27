@@ -2234,6 +2234,8 @@ pub fn run() {
             commands::cloud::cloud_metadata_decide,
             commands::shell::usage_summary,
             commands::shell::tray_snapshot,
+            commands::shell::tray_pause_all,
+            commands::shell::notify_routing_table,
             commands::shell::tray_open,
             commands::shell::tray_hide,
             commands::shell::tray_quit,

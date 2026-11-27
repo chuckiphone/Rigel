@@ -4062,6 +4062,54 @@ button[aria-label^="Unpin "] {
   background: var(--well);
 }
 
+/* Tray attention (roadmap 115): badge and pause-all above the live metrics. */
+.tray-attention {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 6px 0;
+}
+
+.tray-badge {
+  min-width: 22px;
+  padding: 1px 5px;
+  border-radius: 11px;
+  background: var(--accent);
+  color: var(--accent-text);
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+
+.tray-attention-note {
+  color: var(--faint);
+  font-size: 11px;
+}
+
+.tray-attention button {
+  margin-left: auto;
+  min-height: 24px;
+  padding: 2px 8px;
+  border: 1px solid var(--hairline);
+  border-radius: 6px;
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+}
+
+/* Notification routing (roadmap 114): the event-to-destination table in Settings. */
+.notify-routing {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 11px;
+}
+
+.notify-routing th,
+.notify-routing td {
+  border-bottom: 1px solid var(--hairline);
+  padding: 3px 6px;
+  text-align: left;
+}
+
 /* Publication preview (roadmap 164): every exposed row, with redaction switches up front. */
 .publish-preview {
   margin: 8px 0;

@@ -44,6 +44,8 @@ pub struct TraySnapshot {
     pub power: String,
     pub power_note: String,
     pub agents: Vec<TrayAgent>,
+    /// Unresolved approvals and failures, recomputed from the project database on every poll.
+    pub badge: usize,
     pub updated_at: i64,
 }
 
@@ -217,6 +219,15 @@ pub async fn snapshot() -> Result<TraySnapshot, String> {
         });
     }
 
+    let badge = if let Some(root) = project.as_ref() {
+        let pool = project_pool(root).await?;
+        let pending =
+            rigel_core::agent::approval::ApprovalBus::new(crate::index_dir()).pending_for(root);
+        crate::tray::badge_count_for_project(&pool, &pending, root, now_ms()).await
+    } else {
+        0
+    };
+
     let (cpu_percent, memory_bytes) = sample_processes();
     let (power, _) = power_band(cpu_percent);
     Ok(TraySnapshot {
@@ -232,6 +243,7 @@ pub async fn snapshot() -> Result<TraySnapshot, String> {
         power_note: "Relative CPU load band; Windows does not expose per-process watts."
             .to_string(),
         agents,
+        badge,
         updated_at: now_ms(),
     })
 }

@@ -2125,6 +2125,14 @@ export interface TrayAgent {
   source: "session" | "chat" | string;
 }
 
+/** Roadmap 114: one row of the notification routing table shown in Settings. */
+export interface NotifyRoute {
+  kind: "approval" | "finished" | "failed";
+  target: "tray" | "in_app";
+  enabled: boolean;
+  silent: boolean;
+}
+
 export interface TraySnapshot {
   project: string | null;
   project_name: string | null;
@@ -2137,6 +2145,8 @@ export interface TraySnapshot {
   power: string;
   power_note: string;
   agents: TrayAgent[];
+  /** Unresolved approvals and failures, recomputed from the database on every poll. */
+  badge: number;
   updated_at: number;
 }
 
@@ -4356,6 +4366,17 @@ export const api = {
     },
   },
 
+  /** Roadmap 114: the routing table the emitter uses, rendered in Settings → Notifications. */
+  async notifyRouting(): Promise<NotifyRoute[]> {
+    const preview: NotifyRoute[] = [
+      { kind: "approval", target: "in_app", enabled: true, silent: false },
+      { kind: "finished", target: "tray", enabled: true, silent: false },
+      { kind: "failed", target: "tray", enabled: true, silent: false },
+    ];
+    if (!isTauri()) return preview;
+    return call<NotifyRoute[]>("notify_routing_table");
+  },
+
   /** The themed tray panel: live agents, spend and Rigel's process-tree load. */
   tray: {
     async snapshot(): Promise<TraySnapshot> {
@@ -4372,6 +4393,7 @@ export const api = {
           power: "idle",
           power_note: "The tray runs in the desktop app.",
           agents: [],
+          badge: 2,
           updated_at: Date.now(),
         };
       }
@@ -4391,6 +4413,12 @@ export const api = {
     async quit(): Promise<void> {
       if (!isTauri()) return;
       return call<void>("tray_quit");
+    },
+
+    /** Roadmap 115: pause every running turn at the next step boundary. */
+    async pauseAll(): Promise<void> {
+      if (!isTauri()) return;
+      return call<void>("tray_pause_all");
     },
   },
 
