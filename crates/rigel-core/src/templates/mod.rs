@@ -39,6 +39,8 @@ pub enum TemplateError {
     },
     #[error("parse templates.json: {0}")]
     Parse(#[from] serde_json::Error),
+    #[error("invalid template skill pin: {0}")]
+    InvalidPin(String),
 }
 
 /// One agent the template spawns. The model is the agent's own (D135), so a template can name a
@@ -190,6 +192,11 @@ impl SessionTemplates {
         if template.id.trim().is_empty() {
             template.id = uuid::Uuid::new_v4().to_string();
         }
+        // Roadmap 99: the template captures one validated hash per pinned skill. Rejecting an
+        // invalid pin here keeps a later session from inheriting a hash that resolves to nothing.
+        let pins = skill_pins::SkillPins::try_from_skills(&template.skills)
+            .map_err(TemplateError::InvalidPin)?;
+        template.skills = pins.skills();
 
         let mut list = self.list_v2()?;
         match list.iter().position(|row| row.id == template.id) {
