@@ -167,6 +167,11 @@ pub const PROJECT_MIGRATIONS: &[Migration] = &[
         name: "0028_history_search_fts",
         sql: include_str!("../../../migrations/project/0028_history_search_fts.sql"),
     },
+    Migration {
+        version: 29,
+        name: "0029_permanent_deletion",
+        sql: include_str!("../../../migrations/project/0029_permanent_deletion.sql"),
+    },
 ];
 
 /// `%APPDATA%\Rigel\index.db`

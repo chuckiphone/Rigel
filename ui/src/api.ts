@@ -2552,9 +2552,9 @@ export const api = {
   },
 
   /** Q274: permanent deletion of an archived session; the core refuses a live one. */
-  async deleteSession(project: string, id: string): Promise<void> {
+  async deleteSession(project: string, id: string, confirmation: string): Promise<void> {
     if (!isTauri()) throw new Error("Delete a session in the desktop app.");
-    await call<void>("session_delete", { project, id });
+    await call<void>("session_delete", { project, id, confirmation });
   },
 
   async listBookmarks(project: string, session: string): Promise<Bookmark[]> {

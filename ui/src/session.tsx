@@ -1922,7 +1922,7 @@ export default function SessionView({
     const row = deleting;
     setListBusy(row.id);
     try {
-      if (tauri) await api.deleteSession(project, row.id);
+      if (tauri) await api.deleteSession(project, row.id, deleteText);
       const next = list.filter((candidate) => candidate.id !== row.id);
       setList(next);
       onSessions(next);

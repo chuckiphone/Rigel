@@ -458,10 +458,24 @@ pub async fn restore(
     into: &Path,
     passphrase: &str,
 ) -> Result<RestoreReport, BackupError> {
+    let data_dir = crate::backend::data_dir();
+    let tombstones = crate::store::delete::default_tombstone_path(&data_dir);
+    restore_with_tombstones(archive, into, passphrase, &tombstones).await
+}
+
+/// Restore while enforcing deletion tombstones from outside the archive. Keeping this registry
+/// outside the restored tree prevents an older archive from replacing it with stale state.
+pub async fn restore_with_tombstones(
+    archive: &Path,
+    into: &Path,
+    passphrase: &str,
+    tombstone_file: &Path,
+) -> Result<RestoreReport, BackupError> {
     let destination = checked_restore_destination(into)?;
     let scratch = sibling_temp(&destination);
     let staged = restore_verified(archive, &scratch, passphrase)?;
     let rehearsal = async {
+        apply_session_tombstones(&scratch, tombstone_file).await?;
         let database = check_database(&scratch.join("index.db")).await?;
         Ok(DrillReport {
             ok: true,
@@ -494,6 +508,113 @@ pub async fn restore(
         bytes: staged.bytes,
         rehearsal,
     })
+}
+
+async fn apply_session_tombstones(root: &Path, tombstone_file: &Path) -> Result<(), BackupError> {
+    let tombstones = crate::store::delete::read_tombstones(tombstone_file)
+        .map_err(|error| BackupError::Database(error.to_string()))?;
+    if tombstones.sessions.is_empty() {
+        return Ok(());
+    }
+    for database in sqlite_files(root)? {
+        let options = SqliteConnectOptions::new()
+            .filename(&database)
+            .create_if_missing(false)
+            .foreign_keys(true);
+        let pool = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect_with(options)
+            .await
+            .map_err(|error| BackupError::Database(error.to_string()))?;
+        let has_sessions: i64 = sqlx::query_scalar(
+            "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name='sessions')",
+        )
+        .fetch_one(&pool)
+        .await
+        .map_err(|error| BackupError::Database(error.to_string()))?;
+        if has_sessions != 0 {
+            sqlx::query("CREATE TABLE IF NOT EXISTS session_tombstones (session_id TEXT PRIMARY KEY, deleted_at INTEGER NOT NULL)")
+                .execute(&pool).await.map_err(|error| BackupError::Database(error.to_string()))?;
+            for (session_id, deleted_at) in &tombstones.sessions {
+                sqlx::query("INSERT OR REPLACE INTO session_tombstones(session_id, deleted_at) VALUES (?, ?)")
+                    .bind(session_id).bind(deleted_at).execute(&pool).await
+                    .map_err(|error| BackupError::Database(error.to_string()))?;
+                for table in [
+                    "patches",
+                    "interventions",
+                    "checkpoints",
+                    "team_agents",
+                    "subagent_nodes",
+                    "turn_summaries",
+                    "session_skills",
+                    "bookmarks",
+                    "paused_turns",
+                    "turn_tombstones",
+                ] {
+                    let exists: i64 = sqlx::query_scalar(
+                        "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name = ?)",
+                    )
+                    .bind(table)
+                    .fetch_one(&pool)
+                    .await
+                    .map_err(|error| BackupError::Database(error.to_string()))?;
+                    if exists != 0 {
+                        let query = format!("DELETE FROM {table} WHERE session_id = ?");
+                        sqlx::query(&query)
+                            .bind(session_id)
+                            .execute(&pool)
+                            .await
+                            .map_err(|error| BackupError::Database(error.to_string()))?;
+                    }
+                }
+                let approvals_exist: i64 = sqlx::query_scalar(
+                    "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name='approvals')",
+                )
+                .fetch_one(&pool)
+                .await
+                .map_err(|error| BackupError::Database(error.to_string()))?;
+                if approvals_exist != 0 {
+                    sqlx::query("DELETE FROM approvals WHERE agent_id IN (SELECT id FROM agents WHERE session_id = ?)")
+                        .bind(session_id).execute(&pool).await
+                        .map_err(|error| BackupError::Database(error.to_string()))?;
+                }
+                sqlx::query("DELETE FROM sessions WHERE id = ?")
+                    .bind(session_id)
+                    .execute(&pool)
+                    .await
+                    .map_err(|error| BackupError::Database(error.to_string()))?;
+            }
+        }
+        pool.close().await;
+    }
+    // Preserve the canonical tombstone file in the restored tree too. The canonical source is
+    // still outside it, so restoring a backup predating a deletion cannot remove the marker.
+    let target = root.join("session-tombstones.json");
+    crate::store::delete::write_tombstones(&target, &tombstones)
+        .map_err(|error| BackupError::Database(error.to_string()))?;
+    Ok(())
+}
+
+fn sqlite_files(root: &Path) -> Result<Vec<PathBuf>, BackupError> {
+    let mut pending = vec![root.to_path_buf()];
+    let mut files = Vec::new();
+    while let Some(directory) = pending.pop() {
+        for entry in fs::read_dir(&directory).map_err(|source| io_error(&directory, source))? {
+            let entry = entry.map_err(|source| io_error(&directory, source))?;
+            let path = entry.path();
+            if entry
+                .file_type()
+                .map_err(|source| io_error(&path, source))?
+                .is_dir()
+            {
+                pending.push(path);
+            } else if path.extension().and_then(|extension| extension.to_str()) == Some("db") {
+                files.push(path);
+            }
+        }
+    }
+    files.sort();
+    Ok(files)
 }
 
 fn checked_restore_destination(into: &Path) -> Result<PathBuf, BackupError> {
@@ -1202,5 +1323,66 @@ mod tests {
         .await
         .unwrap();
         assert_eq!(inside.files, 3);
+    }
+
+    #[tokio::test]
+    async fn restore_does_not_resurrect_tombstoned_sessions_from_old_archives() {
+        let temp = tempfile::tempdir().unwrap();
+        let source = temp.path().join("source");
+        fs::create_dir_all(&source).unwrap();
+        let project_db = source.join("project.db");
+        let options = SqliteConnectOptions::new()
+            .filename(&project_db)
+            .create_if_missing(true)
+            .foreign_keys(true);
+        let pool = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect_with(options)
+            .await
+            .unwrap();
+        sqlx::query("CREATE TABLE sessions (id TEXT PRIMARY KEY);")
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query("INSERT INTO sessions VALUES ('deleted-session');")
+            .execute(&pool)
+            .await
+            .unwrap();
+        pool.close().await;
+
+        let archive = temp.path().join("old.rigel-backup");
+        create(&source, &archive, "passphrase").await.unwrap();
+        let tombstone_file = temp.path().join("durable/session-tombstones.json");
+        let mut tombstones = crate::store::delete::Tombstones::default();
+        tombstones.sessions.insert("deleted-session".to_owned(), 42);
+        crate::store::delete::write_tombstones(&tombstone_file, &tombstones).unwrap();
+
+        let destination = temp.path().join("restored");
+        restore_with_tombstones(&archive, &destination, "passphrase", &tombstone_file)
+            .await
+            .unwrap();
+        let restored_db = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect_with(
+                SqliteConnectOptions::new()
+                    .filename(destination.join("project.db"))
+                    .create_if_missing(false),
+            )
+            .await
+            .unwrap();
+        let sessions: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM sessions WHERE id='deleted-session'")
+                .fetch_one(&restored_db)
+                .await
+                .unwrap();
+        let markers: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM session_tombstones WHERE session_id='deleted-session'",
+        )
+        .fetch_one(&restored_db)
+        .await
+        .unwrap();
+        assert_eq!(sessions, 0);
+        assert_eq!(markers, 1);
+        restored_db.close().await;
     }
 }
