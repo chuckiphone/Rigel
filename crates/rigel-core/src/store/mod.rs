@@ -4,6 +4,7 @@
 //! closed window can reopen the same messages and remaining budget without a sidecar file.
 
 pub mod cipher;
+pub mod delete;
 pub mod event_log;
 pub mod integrity;
 pub mod paused;

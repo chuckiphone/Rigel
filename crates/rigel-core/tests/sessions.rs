@@ -499,7 +499,7 @@ async fn permanent_deletion_needs_an_archive_and_removes_the_session() {
     let service = SessionService::open(tmp.path()).await.unwrap();
     let session = service.start(Some("delete me"), None).await.unwrap();
 
-    let refused = service.delete_permanently(&session.id).await;
+    let refused = service.delete_permanently(&session.id, &session.id).await;
     assert!(
         matches!(refused, Err(SessionError::NotArchived(_))),
         "a live transcript is never deleted by one call"
@@ -507,12 +507,58 @@ async fn permanent_deletion_needs_an_archive_and_removes_the_session() {
     assert_eq!(service.list().await.unwrap().len(), 1);
 
     service.set_archived(&session.id, true).await.unwrap();
-    service.delete_permanently(&session.id).await.unwrap();
+    assert!(matches!(
+        service.delete_permanently(&session.id, "wrong id").await,
+        Err(SessionError::Delete(
+            rigel_core::store::delete::DeleteError::Confirmation(_)
+        ))
+    ));
+    assert_eq!(service.list().await.unwrap().len(), 1);
+    sqlx::query(
+        "INSERT INTO patches (id, session_id, agent_id, path, base_hash, result_hash, diff, status, created_at) VALUES ('patch-delete', ?, 'unowned-agent', 'a', 'base', 'result', '', 'proposed', 0)",
+    )
+    .bind(&session.id)
+    .execute(service.pool())
+    .await
+    .unwrap();
+    let owned_blobs = tmp
+        .path()
+        .join(".rigel/sessions")
+        .join(&session.id)
+        .join("blobs");
+    std::fs::create_dir_all(&owned_blobs).unwrap();
+    std::fs::write(owned_blobs.join("blob"), b"private session blob").unwrap();
+    let tombstones = tmp.path().join("tombstones.json");
+    rigel_core::store::delete::delete_session(
+        service.pool(),
+        tmp.path(),
+        &session.id,
+        &session.id,
+        &tombstones,
+    )
+    .await
+    .unwrap();
     assert!(service.list().await.unwrap().is_empty());
     assert!(matches!(
         service.get(&session.id).await,
         Err(SessionError::SessionNotFound(_))
     ));
+    let persisted = rigel_core::store::delete::read_tombstones(&tombstones).unwrap();
+    assert!(persisted.sessions.contains_key(&session.id));
+    let db_tombstone: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM session_tombstones WHERE session_id = ?")
+            .bind(&session.id)
+            .fetch_one(service.pool())
+            .await
+            .unwrap();
+    assert_eq!(db_tombstone, 1);
+    let patches: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM patches WHERE session_id = ?")
+        .bind(&session.id)
+        .fetch_one(service.pool())
+        .await
+        .unwrap();
+    assert_eq!(patches, 0);
+    assert!(!owned_blobs.exists());
 }
 
 #[tokio::test]

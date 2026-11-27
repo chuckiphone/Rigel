@@ -247,12 +247,16 @@ pub(crate) fn session_archive(
 /// Q274: the window's only destructive session action. The core refuses a session that has not
 /// been archived; the renderer asks for the id again before it gets this far.
 #[tauri::command]
-pub(crate) fn session_delete(project: String, id: String) -> Result<(), String> {
+pub(crate) fn session_delete(
+    project: String,
+    id: String,
+    confirmation: String,
+) -> Result<(), String> {
     tauri::async_runtime::block_on(async move {
         SessionService::open(Path::new(&project))
             .await
             .map_err(message)?
-            .delete_permanently(&id)
+            .delete_permanently(&id, &confirmation)
             .await
             .map_err(message)
     })

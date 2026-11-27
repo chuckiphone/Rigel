@@ -1720,7 +1720,7 @@ async fn run_session(command: SessionCommand) -> ExitCode {
                 return ExitCode::from(2);
             }
             match SessionService::open(&project).await {
-                Ok(service) => match service.delete_permanently(&id).await {
+                Ok(service) => match service.delete_permanently(&id, &confirm).await {
                     Ok(()) => {
                         println!("deleted {id}");
                         ExitCode::SUCCESS

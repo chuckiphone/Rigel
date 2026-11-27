@@ -243,6 +243,9 @@ pub enum SessionError {
     #[error("session {0} is not archived; archive it before permanent deletion")]
     NotArchived(String),
 
+    #[error(transparent)]
+    Delete(#[from] crate::store::delete::DeleteError),
+
     #[error("json error: {0}")]
     Json(#[from] serde_json::Error),
 
@@ -467,15 +470,25 @@ impl SessionService {
     /// (`agents`, `turns`, `items`, claims and checkpoints), so a session that is gone cannot
     /// leave rows behind; the archive step is what stops a stray call from erasing a live
     /// transcript.
-    pub async fn delete_permanently(&self, id: &str) -> Result<(), SessionError> {
+    pub async fn delete_permanently(
+        &self,
+        id: &str,
+        confirmation: &str,
+    ) -> Result<(), SessionError> {
         let session = self.get(id).await?;
         if session.archived_at.is_none() {
             return Err(SessionError::NotArchived(id.to_string()));
         }
-        sqlx::query("DELETE FROM sessions WHERE id = ?")
-            .bind(id)
-            .execute(&self.pool)
-            .await?;
+        let data_dir = crate::backend::data_dir();
+        let tombstones = crate::store::delete::default_tombstone_path(&data_dir);
+        crate::store::delete::delete_session(
+            &self.pool,
+            Path::new(&self.project_root),
+            id,
+            confirmation,
+            &tombstones,
+        )
+        .await?;
         Ok(())
     }
 
