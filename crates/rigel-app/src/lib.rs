@@ -2032,6 +2032,10 @@ pub fn run() {
             commands::workspace::project_create,
             commands::workspace::project_workspace_root,
             commands::workspace::attachment_import,
+            commands::workspace::attachment_upload_start,
+            commands::workspace::attachment_upload_chunk,
+            commands::workspace::attachment_upload_finish,
+            commands::workspace::attachment_upload_cancel,
             commands::sessions::session_start,
             commands::sessions::session_list,
             commands::sessions::session_fork,
@@ -2271,7 +2275,10 @@ mod tests {
     use crate::commands::sessions::{
         session_skill_pin, session_skill_pins, session_skill_review, session_start, template_save,
     };
-    use crate::commands::workspace::attachment_import;
+    use crate::commands::workspace::{
+        ATTACHMENT_MAX_BYTES, attachment_import, attachment_upload_cancel, attachment_upload_chunk,
+        attachment_upload_finish, attachment_upload_start,
+    };
 
     #[test]
     fn about_names_the_build_commit_and_the_sbom_licence_list() {
@@ -2473,6 +2480,128 @@ mod tests {
             .expect_err("a directory must be refused");
 
         assert!(error.contains("is not a file"), "{error}");
+    }
+
+    fn attachment_names(project: &std::path::Path) -> Vec<String> {
+        let dir = project.join(".rigel").join("attachments");
+        if !dir.exists() {
+            return Vec::new();
+        }
+        let mut names: Vec<String> = fs::read_dir(dir)
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
+            .collect();
+        names.sort();
+        names
+    }
+
+    #[test]
+    fn a_cancelled_upload_leaves_no_orphan_blob_or_temp_file() {
+        let project = tempfile::tempdir().unwrap();
+        let root = path_string(project.path());
+        attachment_upload_start(root.clone(), "notes.txt".into(), 5, "cancel-1".into()).unwrap();
+        let dir = project.path().join(".rigel/attachments");
+        assert_eq!(
+            fs::read_to_string(dir.join(".upload-cancel-1")).unwrap(),
+            "",
+            "the upload starts with an empty temporary file"
+        );
+        assert_eq!(
+            attachment_upload_chunk(root.clone(), "cancel-1".into(), "aGVsbG8=".into()).unwrap(),
+            5,
+            "progress is the bytes the shell actually accepted"
+        );
+
+        attachment_upload_cancel(root.clone(), "cancel-1".into()).unwrap();
+        assert_eq!(
+            attachment_names(project.path()),
+            vec![".gitignore".to_string()],
+            "cancel removes the temp file and never publishes an attachment"
+        );
+        // A repeated cancel is harmless: no state, no file, no error.
+        attachment_upload_cancel(root, "cancel-1".into()).unwrap();
+        assert_eq!(
+            attachment_names(project.path()),
+            vec![".gitignore".to_string()]
+        );
+    }
+
+    #[test]
+    fn a_complete_upload_commits_exactly_once_with_real_progress() {
+        let project = tempfile::tempdir().unwrap();
+        let root = path_string(project.path());
+        attachment_upload_start(root.clone(), "notes.txt".into(), 11, "done-1".into()).unwrap();
+        assert_eq!(
+            attachment_upload_chunk(
+                root.clone(),
+                "done-1".into(),
+                base64::engine::general_purpose::STANDARD.encode("hello ")
+            )
+            .unwrap(),
+            6
+        );
+        assert_eq!(
+            attachment_upload_chunk(
+                root.clone(),
+                "done-1".into(),
+                base64::engine::general_purpose::STANDARD.encode("world")
+            )
+            .unwrap(),
+            11
+        );
+        let path = attachment_upload_finish(root, "done-1".into()).unwrap();
+        assert_eq!(path, ".rigel/attachments/notes.txt");
+        assert_eq!(
+            fs::read_to_string(project.path().join(&path)).unwrap(),
+            "hello world"
+        );
+        assert_eq!(
+            attachment_names(project.path()),
+            vec![".gitignore".to_string(), "notes.txt".to_string()],
+            "the temporary file is renamed, not copied"
+        );
+    }
+
+    #[test]
+    fn refused_uploads_never_create_a_temp_file_or_attachment() {
+        let project = tempfile::tempdir().unwrap();
+        let root = path_string(project.path());
+        let oversize = format!("{}", ATTACHMENT_MAX_BYTES + 1);
+        assert!(
+            attachment_upload_start(
+                root.clone(),
+                "big.txt".into(),
+                oversize.parse().unwrap(),
+                "bad-1".into()
+            )
+            .is_err()
+        );
+        assert!(
+            attachment_upload_start(root.clone(), "../escape.txt".into(), 5, "bad-2".into())
+                .is_err()
+        );
+        assert!(
+            attachment_upload_start(root.clone(), "malware.exe".into(), 5, "bad-3".into()).is_err()
+        );
+        assert!(
+            attachment_upload_start(root.clone(), "notes.txt".into(), 5, "bad/token".into())
+                .is_err()
+        );
+        assert!(
+            attachment_names(project.path()).is_empty(),
+            "nothing was written"
+        );
+
+        attachment_upload_start(root.clone(), "notes.txt".into(), 5, "bad-4".into()).unwrap();
+        assert!(
+            attachment_upload_chunk(root.clone(), "bad-4".into(), "c2hvdWxkIG5vdCBmaXQ=".into())
+                .is_err(),
+            "more bytes than declared are refused"
+        );
+        assert_eq!(
+            attachment_names(project.path()),
+            vec![".gitignore".to_string()]
+        );
     }
 
     #[test]

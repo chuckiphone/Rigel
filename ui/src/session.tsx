@@ -51,6 +51,7 @@ import SessionFilters, {
 import ForkLineage from "./fork-lineage";
 import MarkdownText, { MarkdownPreview } from "./markdown";
 import McpResult from "./mcp-result";
+import { UPLOAD_CHUNK_BYTES } from "./composer/dropzone";
 import { MemoryInspector } from "./inspector/memory";
 import CompareTurns from "./compare-turns";
 import { RequestInspector, RequestInspectorPreview, fromUsage } from "./inspector/request";
@@ -2320,6 +2321,40 @@ export default function SessionView({
     }
   }, [tauri, project]);
 
+  /** Roadmap 122: a dropped file is read in chunks; progress is bytes the shell acknowledged. */
+  const uploadDropped = useCallback(
+    async (
+      file: File,
+      signal: AbortSignal,
+      onProgress: (sent: number, total: number) => void,
+    ): Promise<string> => {
+      const token = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+      await api.attachmentUploadStart(project, file.name, file.size, token);
+      try {
+        let sent = 0;
+        for (let offset = 0; offset < file.size; offset += UPLOAD_CHUNK_BYTES) {
+          if (signal.aborted) throw new Error("Upload cancelled");
+          const part = new Uint8Array(
+            await file.slice(offset, offset + UPLOAD_CHUNK_BYTES).arrayBuffer(),
+          );
+          sent = await api.attachmentUploadChunk(project, token, part);
+          onProgress(sent, file.size);
+        }
+        if (signal.aborted) throw new Error("Upload cancelled");
+        return await api.attachmentUploadFinish(project, token);
+      } catch (problem) {
+        // Whether the abort happened mid-chunk or after a failure, nothing stays on disk.
+        await api.attachmentUploadCancel(project, token).catch(() => {});
+        throw problem;
+      }
+    },
+    [project],
+  );
+
+  const attachDropped = useCallback((path: string) => {
+    setAttachments((current) => (current.includes(path) ? current : [...current, path]));
+  }, []);
+
   const autoRefine = defaults?.auto_refine ?? false;
 
   /** While a turn runs, Send puts the draft in line instead of discarding the action. */
@@ -4284,6 +4319,8 @@ export default function SessionView({
                 contextPercent={contextKnown ? contextPercent : null}
                 mode={plan?.mode ? "plan" : "act"}
                 disabled={!session || readOnly || live || review !== null || refining}
+                upload={uploadDropped}
+                onAttached={attachDropped}
                 onAttachments={() => setAddOpen(true)}
                 onSkills={() => setPinOpen(true)}
                 onModel={() =>

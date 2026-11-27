@@ -3,7 +3,83 @@
 //! These are the `#[tauri::command]` functions only. Shared types and startup helpers stay
 //! in the crate root, which owns the window lifecycle.
 
+use std::collections::HashMap;
+use std::io::Write;
+use std::sync::{Mutex, OnceLock};
+
 use crate::*;
+
+/// Roadmap 122: a dropped file is capped before any byte is written to the project.
+pub(crate) const ATTACHMENT_MAX_BYTES: u64 = 25 * 1024 * 1024;
+
+struct UploadState {
+    temp: PathBuf,
+    name: String,
+    size: u64,
+    written: u64,
+}
+
+static UPLOADS: OnceLock<Mutex<HashMap<String, UploadState>>> = OnceLock::new();
+
+fn uploads() -> &'static Mutex<HashMap<String, UploadState>> {
+    UPLOADS.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+fn upload_key(project: &str, token: &str) -> String {
+    format!("{project}\0{token}")
+}
+
+/// The token only names a temporary file; keep it to a flat, short, safe fragment.
+fn upload_token_ok(token: &str) -> bool {
+    !token.is_empty()
+        && token.len() <= 64
+        && token
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_'))
+}
+
+/// The renderer rejects these before upload; repeat the check at the shell so a direct invoke
+/// cannot write outside `.rigel/attachments`.
+fn attachment_name_ok(name: &str) -> bool {
+    if name.is_empty() || name.len() > 255 || name == "." || name == ".." {
+        return false;
+    }
+    if name.contains(['/', '\\', '\0']) || name.chars().any(|c| c.is_control()) {
+        return false;
+    }
+    let extension = Path::new(name)
+        .extension()
+        .and_then(|ext| ext.to_str())
+        .unwrap_or_default()
+        .to_ascii_lowercase();
+    [
+        "txt", "md", "markdown", "rs", "toml", "json", "yaml", "yml", "csv", "log", "png", "jpg",
+        "jpeg", "gif", "webp", "avif", "bmp", "pdf",
+    ]
+    .contains(&extension.as_str())
+}
+
+fn attachment_dir(root: &Path) -> Result<PathBuf, String> {
+    let dir = root.join(".rigel").join("attachments");
+    fs::create_dir_all(&dir).map_err(message)?;
+    // Attachments are local context, not source: keep the directory out of the project's diff
+    // even when the project does not ignore `.rigel` itself.
+    let ignore = dir.join(".gitignore");
+    if !ignore.exists() {
+        fs::write(
+            &ignore,
+            "# Written by Rigel. Files attached from the composer are local to this machine.\n*\n",
+        )
+        .map_err(message)?;
+    }
+    Ok(dir)
+}
+
+fn remove_upload(key: &str) {
+    if let Some(state) = uploads().lock().expect("upload lock").remove(key) {
+        let _ = fs::remove_file(&state.temp);
+    }
+}
 
 /// Open (creating if needed) a project and report where its session database lives.
 #[tauri::command]
@@ -75,18 +151,7 @@ pub(crate) fn attachment_import(
         return Ok(Vec::new());
     }
 
-    let dir = root.join(".rigel").join("attachments");
-    fs::create_dir_all(&dir).map_err(message)?;
-    // Attachments are local context, not source: keep the directory out of the project's diff
-    // even when the project does not ignore `.rigel` itself.
-    let ignore = dir.join(".gitignore");
-    if !ignore.exists() {
-        fs::write(
-            &ignore,
-            "# Written by Rigel. Files attached from the composer are local to this machine.\n*\n",
-        )
-        .map_err(message)?;
-    }
+    let dir = attachment_dir(&root)?;
 
     let mut imported = Vec::with_capacity(paths.len());
     for source in paths {
@@ -103,6 +168,128 @@ pub(crate) fn attachment_import(
         imported.push(relative.to_string_lossy().replace('\\', "/"));
     }
     Ok(imported)
+}
+
+/// Begin a chunked upload. The file lives at a hidden temporary path until `finish`, so a
+/// cancelled or interrupted upload never leaves a visible attachment behind.
+#[tauri::command]
+pub(crate) fn attachment_upload_start(
+    project: String,
+    name: String,
+    size: u64,
+    token: String,
+) -> Result<(), String> {
+    let root = PathBuf::from(&project);
+    if !root.is_dir() {
+        return Err("Open a project folder before attaching files.".to_string());
+    }
+    if !upload_token_ok(&token) {
+        return Err("Invalid upload token.".to_string());
+    }
+    if !attachment_name_ok(&name) {
+        return Err("That file type cannot be attached.".to_string());
+    }
+    if size == 0 {
+        return Err("An empty file cannot be attached.".to_string());
+    }
+    if size > ATTACHMENT_MAX_BYTES {
+        return Err(format!(
+            "Files over {} MiB cannot be attached.",
+            ATTACHMENT_MAX_BYTES / (1024 * 1024)
+        ));
+    }
+
+    let key = upload_key(&project, &token);
+    remove_upload(&key); // a retried token must not strand the earlier temporary file
+    let dir = attachment_dir(&root)?;
+    let temp = dir.join(format!(".upload-{token}"));
+    fs::write(&temp, []).map_err(message)?;
+    uploads().lock().expect("upload lock").insert(
+        key,
+        UploadState {
+            temp,
+            name,
+            size,
+            written: 0,
+        },
+    );
+    Ok(())
+}
+
+/// Append one base64 chunk and return the number of bytes actually stored so far. The returned
+/// count is the progress the renderer shows: it is bytes accepted by the shell, not a guess.
+#[tauri::command]
+pub(crate) fn attachment_upload_chunk(
+    project: String,
+    token: String,
+    data: String,
+) -> Result<u64, String> {
+    let key = upload_key(&project, &token);
+    let bytes = base64::engine::general_purpose::STANDARD
+        .decode(data)
+        .map_err(|error| format!("Bad upload chunk: {error}"))?;
+    let mut states = uploads().lock().expect("upload lock");
+    let state = states.get_mut(&key).ok_or("Upload is no longer active.")?;
+    let next = state
+        .written
+        .checked_add(bytes.len() as u64)
+        .ok_or("Upload is too large.")?;
+    if next > state.size {
+        // Leave no partial file for a chunk that lied about the declared size.
+        let temp = state.temp.clone();
+        states.remove(&key);
+        drop(states);
+        let _ = fs::remove_file(temp);
+        return Err("Upload received more bytes than the file contains.".to_string());
+    }
+    let mut file = fs::OpenOptions::new()
+        .append(true)
+        .open(&state.temp)
+        .map_err(message)?;
+    if let Err(error) = file.write_all(&bytes) {
+        let temp = state.temp.clone();
+        states.remove(&key);
+        drop(states);
+        let _ = fs::remove_file(temp);
+        return Err(format!("Upload failed: {error}"));
+    }
+    state.written = next;
+    Ok(next)
+}
+
+/// Publish a complete upload under its original name and return the project-relative path.
+#[tauri::command]
+pub(crate) fn attachment_upload_finish(project: String, token: String) -> Result<String, String> {
+    let root = PathBuf::from(&project);
+    let key = upload_key(&project, &token);
+    let state = uploads()
+        .lock()
+        .expect("upload lock")
+        .remove(&key)
+        .ok_or("Upload is no longer active.")?;
+    if state.written != state.size {
+        let _ = fs::remove_file(&state.temp);
+        return Err("Upload ended before the whole file arrived.".to_string());
+    }
+    let dir = attachment_dir(&root)?;
+    let target = free_attachment_path(&dir, std::ffi::OsStr::new(&state.name))?;
+    if let Err(error) = fs::rename(&state.temp, &target) {
+        let _ = fs::remove_file(&state.temp);
+        return Err(format!("Upload failed: {error}"));
+    }
+    Ok(target
+        .strip_prefix(&root)
+        .map_err(message)?
+        .to_string_lossy()
+        .replace('\\', "/"))
+}
+
+/// Cancel an upload: drop its state and delete the temporary file. Nothing reaches the visible
+/// attachment directory, and no blob is left to clean up later.
+#[tauri::command]
+pub(crate) fn attachment_upload_cancel(project: String, token: String) -> Result<(), String> {
+    remove_upload(&upload_key(&project, &token));
+    Ok(())
 }
 
 #[tauri::command]

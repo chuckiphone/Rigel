@@ -4134,6 +4134,64 @@ button[aria-label^="Unpin "] {
   overflow-wrap: anywhere;
 }
 
+/* Drag-and-drop attachments (roadmap 122): the drop hint and upload row sit under the controls. */
+.composer-dropzone {
+  position: relative;
+}
+
+.composer-dropzone.dragging .composer-v2 {
+  outline: 1px dashed var(--accent);
+  outline-offset: 3px;
+  border-radius: 6px;
+}
+
+.composer-drop-hint,
+.composer-drop-refusal {
+  margin: 2px 0;
+  color: var(--faint);
+  font-size: 11px;
+}
+
+.composer-drop-refusal {
+  color: var(--accent-text);
+}
+
+.composer-upload {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 2px 0;
+  font-size: 11px;
+}
+
+.composer-upload-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.composer-upload progress {
+  flex: 1;
+  min-width: 40px;
+  accent-color: var(--accent);
+}
+
+.composer-upload-value {
+  color: var(--faint);
+  font-variant-numeric: tabular-nums;
+}
+
+.composer-upload-cancel {
+  border: 1px solid var(--hairline);
+  border-radius: 6px;
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+  font-size: 11px;
+  min-height: 24px;
+}
+
 /* Composer v2 (roadmap 137): one wrapping row of single-line control labels. */
 .composer-v2 {
   display: flex;
