@@ -813,6 +813,32 @@ mod tests {
     }
 
     #[test]
+    fn utc_day_handles_epoch_leap_days_and_pre_epoch_dates() {
+        // Mutation testing (roadmap 193) targets the civil-date arithmetic here: a one-character
+        // change in div_euclid, the era correction or the month table moves a whole billing day.
+        assert_eq!(utc_day(0), "1970-01-01");
+        assert_eq!(utc_day(-86_400_000), "1969-12-31");
+        assert_eq!(utc_day(951_782_400_000), "2000-02-29");
+        assert_eq!(utc_day(1_709_164_800_000), "2024-02-29");
+        assert_eq!(utc_day(1_709_251_200_000), "2024-03-01");
+        assert_eq!(utc_day(1_735_689_600_000), "2025-01-01");
+        // Another 400-year era boundary, where the `doe / 146_096` correction is 1.
+        assert_eq!(utc_day(13_574_563_200_000), "2400-02-29");
+        assert_eq!(utc_day(13_574_649_600_000), "2400-03-01");
+    }
+
+    #[test]
+    fn a_quote_at_the_exact_reserve_boundary_is_not_over_remaining() {
+        let quote = quote_turn(SONNET, 0, "hi", 250_000 - RESERVE_MICROS, Some(250_000));
+        assert_eq!(quote.remaining_micros, Some(RESERVE_MICROS));
+        assert_eq!(
+            quote.over_remaining,
+            quote.first_step_micros > RESERVE_MICROS,
+            "the comparison is strict: equal to the estimate is not over"
+        );
+    }
+
+    #[test]
     fn the_assumed_completion_hits_a_floor_and_a_ceiling() {
         let tiny = quote_turn(SONNET, 0, "hi", 0, None);
         assert_eq!(tiny.input_tokens, 1);

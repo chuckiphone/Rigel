@@ -1,0 +1,19 @@
+# Roadmap 193: mutation testing over the decision points this project most depends on —
+# which door a turn uses, who approved it, and the arithmetic that stops a runaway bill.
+examine_globs = [
+  "crates/rigel-core/src/agent/routing.rs",
+  "crates/rigel-core/src/agent/approval.rs",
+  "crates/rigel-core/src/agent/approval_batch.rs",
+  "crates/rigel-core/src/budget.rs",
+]
+
+# These four files live in rigel-core; run that package's tests for every mutant.
+test_package = ["rigel-core"]
+additional_cargo_test_args = ["--lib"]
+
+# Warnings denied in normal CI are about the unchanged tree, not a one-line mutation.
+cap_lints = true
+
+# Do not copy generated dependency trees into the scratch build: their symlinks need a privilege
+# on Windows and none of the mutated files depend on them.
+gitignore = true

@@ -744,6 +744,49 @@ mod tests {
     }
 
     #[test]
+    fn scope_parsing_ignores_case_but_not_a_near_miss() {
+        // Roadmap 193: these boundaries kill the case/prefix mutants in parse and belongs_to.
+        for scope in ApprovalScope::ALL {
+            assert_eq!(
+                ApprovalScope::parse(&scope.as_str().to_ascii_uppercase()),
+                Some(scope)
+            );
+            assert_eq!(
+                ApprovalScope::parse(&format!(" {} ", scope.as_str())),
+                Some(scope)
+            );
+        }
+        assert_eq!(ApprovalScope::parse(""), None);
+        assert_eq!(ApprovalScope::parse("sessions"), None);
+        assert_eq!(ApprovalScope::parse("project-wide"), None);
+    }
+
+    #[test]
+    fn a_question_belongs_only_to_its_exact_project() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().join("project");
+        let nested = root.join("nested");
+        let sibling = dir.path().join("project-other");
+        std::fs::create_dir_all(&nested).unwrap();
+        std::fs::create_dir_all(&sibling).unwrap();
+
+        let pending = PendingApproval::now("command", "key", "Run cargo test").in_project(&root);
+        assert!(pending.belongs_to(&root));
+        assert!(
+            !pending.belongs_to(&nested),
+            "a subdirectory is not the same project"
+        );
+        assert!(
+            !pending.belongs_to(&sibling),
+            "a sibling prefix is not the same project"
+        );
+        assert!(
+            PendingApproval::now("command", "key", "No project named").belongs_to(&sibling),
+            "an older question with no project stays visible"
+        );
+    }
+
+    #[test]
     fn a_session_grant_does_not_outlive_the_store() {
         let dir = tempfile::tempdir().unwrap();
         let scopes = Scopes::new(dir.path(), dir.path().join("index"));

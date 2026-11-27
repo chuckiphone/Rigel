@@ -453,6 +453,36 @@ mod tests {
     }
 
     #[test]
+    fn whitespace_and_case_are_normalised_before_the_pair_is_chosen() {
+        // Mutation testing (roadmap 193) checks that trimming and lowercasing really happen:
+        // dropping either turns a harmless paste into an "unknown provider" error.
+        let route = resolve(
+            " VERTEX ",
+            "google/gemini-4-argon",
+            Some(" OpenRouter "),
+            Some(" openai/gpt-5-nano "),
+        )
+        .unwrap();
+        assert_eq!(route.provider, "openrouter");
+        assert_eq!(route.model, "openai/gpt-5-nano");
+
+        let saved = resolve(
+            "OPENROUTER",
+            "anthropic/claude-sonnet-4.5",
+            Some("   "),
+            Some("  "),
+        )
+        .unwrap();
+        assert_eq!(saved.provider, "openrouter");
+        assert_eq!(saved.model, "anthropic/claude-sonnet-4.5");
+
+        // An empty provider after trimming is not a named pair; the saved door still applies.
+        let detail = explain("openrouter", "anthropic/claude-sonnet-4.5", Some(" "), None).unwrap();
+        assert_eq!(detail.reason, RouteReason::Saved);
+        assert_eq!(detail.mismatch, None);
+    }
+
+    #[test]
     fn a_model_the_named_door_cannot_send_is_an_error_not_a_default() {
         let error = resolve("groq", "", Some("groq"), Some("gemini-4-argon"))
             .expect_err("Gemini's id is not Groq's to send");
