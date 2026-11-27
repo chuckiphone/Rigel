@@ -182,6 +182,11 @@ pub const PROJECT_MIGRATIONS: &[Migration] = &[
         name: "0031_prompt_library",
         sql: include_str!("../../../migrations/project/0031_prompt_library.sql"),
     },
+    Migration {
+        version: 32,
+        name: "0032_forge_sync",
+        sql: include_str!("../../../migrations/project/0032_forge_sync.sql"),
+    },
 ];
 
 /// `%APPDATA%\Rigel\index.db`
