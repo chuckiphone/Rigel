@@ -53,6 +53,7 @@ pub mod model;
 pub mod obscura;
 pub mod omniroute;
 pub mod openrouter;
+pub(crate) mod parallel;
 pub mod pricing;
 pub mod prompt;
 pub mod providers;
