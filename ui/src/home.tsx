@@ -434,10 +434,10 @@ function Engraving({ seed }: { seed: string }) {
         const base = 124 + layer * 26;
         const points = Array.from(
           { length: 11 },
-          (_, index) => `${-10 + index * 34},${(base - random() * 30).toFixed(1)}`,
+          (_, index) => `${index * 32},${(base - random() * 30).toFixed(1)}`,
         );
         return {
-          points: `-10,210 ${points.join(" ")} 330,210`,
+          points: `0,210 ${points.join(" ")} 320,210`,
           opacity: 0.07 + layer * 0.05,
         };
       }),
@@ -456,7 +456,7 @@ function Engraving({ seed }: { seed: string }) {
       viewBox="0 0 320 210"
       role="img"
       aria-label="An engraved plate drawn from the day's record"
-      preserveAspectRatio="xMidYMid slice"
+      preserveAspectRatio="xMidYMid meet"
     >
       <defs>
         <clipPath id={clip}>
@@ -469,8 +469,8 @@ function Engraving({ seed }: { seed: string }) {
             key={`sky-${index}`}
             y1={line.y}
             y2={line.y}
-            x1={-8 + line.inset}
-            x2={328 - line.inset}
+            x1={line.inset}
+            x2={320 - line.inset}
             opacity={line.opacity}
           />
         ))}
