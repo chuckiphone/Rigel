@@ -493,6 +493,37 @@ async fn provider_model(provider: &str) -> Result<Arc<dyn Model>, String> {
     rigel_core::agent::providers::build(provider, &credentials::KeychainCredentialStore).await
 }
 
+pub async fn skill_eval_runner() -> Result<rigel_core::skills::ModelTaskRunner, String> {
+    let model: Arc<dyn Model> = if let Some(path) = std::env::var_os("RIGEL_SKILL_EVAL_SCRIPT") {
+        Arc::new(ScriptedModel::from_path(std::path::Path::new(&path)).map_err(|e| e.to_string())?)
+    } else {
+        let provider = provider_name(None);
+        let model_id = default_model(&provider);
+        if model_id.trim().is_empty() {
+            return Err(format!(
+                "no default model for `{provider}`; configure RIGEL_PROVIDER and a provider with a default model"
+            ));
+        }
+        provider_model(&provider).await?
+    };
+    let model_id = model.id();
+    Ok(rigel_core::skills::ModelTaskRunner::new(
+        model,
+        model_id,
+        std::env::var("RIGEL_EFFORT").ok(),
+    ))
+}
+
+pub(crate) struct CliSkillEvalRunner;
+
+#[async_trait::async_trait]
+impl rigel_core::skills::GoldenTaskRunner for CliSkillEvalRunner {
+    async fn run(&self, skill_id: &str, skill_body: &str, prompt: &str) -> Result<String, String> {
+        let runner = skill_eval_runner().await?;
+        rigel_core::skills::GoldenTaskRunner::run(&runner, skill_id, skill_body, prompt).await
+    }
+}
+
 /// The newest active session, or none. Unlike [`resolve_session`] this never creates one:
 /// listing agents and quoting a turn must not write to the database.
 async fn find_session(

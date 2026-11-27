@@ -22,6 +22,7 @@ sqlx = { workspace = true }
 sysinfo = { workspace = true }
 tar = { workspace = true }
 thiserror = { workspace = true }
+tempfile = { workspace = true }
 tokio = { workspace = true }
 tokio-tungstenite = { workspace = true }
 tokio-util = { workspace = true }
@@ -46,7 +47,5 @@ keyring = { workspace = true, features = ["apple-native"] }
 keyring = { workspace = true, features = ["sync-secret-service"] }
 
 [dev-dependencies]
-tempfile = { workspace = true }
-
 # `start_paused` makes the limiter's refill and Retry-After tests deterministic.
 tokio = { workspace = true, features = ["test-util"] }

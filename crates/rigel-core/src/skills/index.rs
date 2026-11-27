@@ -44,6 +44,11 @@ pub struct SkillIndex {
     fetcher: Arc<dyn RepoFetcher>,
 }
 
+type EvalGate<'a> = Option<(
+    &'a HashMap<String, Vec<GoldenTask>>,
+    &'a dyn GoldenTaskRunner,
+)>;
+
 /// The production repository walker. It owns the same pool, blob store and freshness policy as
 /// `SkillIndex`; tests replace the whole walker, not only its HTTP client.
 struct GitHubRepoFetcher {
@@ -253,6 +258,29 @@ impl SkillIndex {
         self.walk_repo(target, policy, None, Some(limit)).await
     }
 
+    pub async fn index_repo_with_evals(
+        &self,
+        target: &str,
+        policy: SyncPolicy,
+        suites: &HashMap<String, Vec<GoldenTask>>,
+        runner: &dyn GoldenTaskRunner,
+    ) -> Result<IngestReport, SkillsError> {
+        self.walk_repo_inner(target, policy, None, None, Some((suites, runner)))
+            .await
+    }
+
+    pub async fn index_repo_with_limit_and_evals(
+        &self,
+        target: &str,
+        policy: SyncPolicy,
+        limit: usize,
+        suites: &HashMap<String, Vec<GoldenTask>>,
+        runner: &dyn GoldenTaskRunner,
+    ) -> Result<IngestReport, SkillsError> {
+        self.walk_repo_inner(target, policy, None, Some(limit), Some((suites, runner)))
+            .await
+    }
+
     /// Index one skill by its directory name. The skills.sh import uses this so a page costs
     /// one body, not a whole repository's worth of requests.
     pub async fn index_skill(
@@ -270,6 +298,18 @@ impl SkillIndex {
         policy: SyncPolicy,
         slug: Option<&str>,
         limit: Option<usize>,
+    ) -> Result<IngestReport, SkillsError> {
+        self.walk_repo_inner(target, policy, slug, limit, None)
+            .await
+    }
+
+    async fn walk_repo_inner(
+        &self,
+        target: &str,
+        policy: SyncPolicy,
+        slug: Option<&str>,
+        limit: Option<usize>,
+        eval_gate: EvalGate<'_>,
     ) -> Result<IngestReport, SkillsError> {
         // The target preflight runs before `github()` constructs a source and before any
         // metadata or body request. An explicit single-skill URL can be refused here. A base
@@ -298,7 +338,12 @@ impl SkillIndex {
                 let (scan, blocked) = self
                     .gate_snapshot(&mut snapshot, explicit_skill.then_some(&preflight))
                     .await?;
-                let mut report = self.ingest(&snapshot).await?;
+                let mut report = match eval_gate {
+                    Some((suites, runner)) => {
+                        self.ingest_with_evals(&snapshot, suites, runner).await?.0
+                    }
+                    None => self.ingest(&snapshot).await?,
+                };
                 report.scan = Some(scan);
                 report.blocked = blocked;
                 Ok(report)
@@ -383,7 +428,7 @@ impl SkillIndex {
 
     /// Evaluate every changed body before writing any rows. New skills have no prior behavior
     /// to regress; updates must provide a golden suite and pass it before the row can advance.
-    pub async fn ingest_with_evals<R: GoldenTaskRunner>(
+    pub async fn ingest_with_evals<R: GoldenTaskRunner + ?Sized>(
         &self,
         snapshot: &RepoSnapshot,
         suites: &std::collections::HashMap<String, Vec<GoldenTask>>,
@@ -405,6 +450,7 @@ impl SkillIndex {
                     ))
                 })?;
                 let report = eval::evaluate(&skill.record.id, &skill.body, suite, runner)
+                    .await
                     .map_err(|error| SkillsError::Other(error.to_string()))?;
                 eval::require_pass(&report)
                     .map_err(|error| SkillsError::Other(error.to_string()))?;
@@ -717,17 +763,37 @@ impl SkillIndex {
     /// finally every six hours. That recovers a short outage quickly without turning a dead URL
     /// into a request loop. A success resets the count.
     pub async fn refresh_stale(&self) -> Result<RefreshReport, SkillsError> {
-        self.refresh_sources(false).await
+        self.refresh_sources(false, None).await
+    }
+
+    pub async fn refresh_stale_with_evals(
+        &self,
+        suites: &HashMap<String, Vec<GoldenTask>>,
+        runner: &dyn GoldenTaskRunner,
+    ) -> Result<RefreshReport, SkillsError> {
+        self.refresh_sources(false, Some((suites, runner))).await
     }
 
     /// Re-sync every source now, ignoring the freshness window. The launch pass uses it, so a
     /// GitHub shelf that was fresh when the window last closed is still compared with its remote
     /// on this launch instead of waiting out the stale window.
     pub async fn refresh_all(&self) -> Result<RefreshReport, SkillsError> {
-        self.refresh_sources(true).await
+        self.refresh_sources(true, None).await
     }
 
-    async fn refresh_sources(&self, force: bool) -> Result<RefreshReport, SkillsError> {
+    pub async fn refresh_all_with_evals(
+        &self,
+        suites: &HashMap<String, Vec<GoldenTask>>,
+        runner: &dyn GoldenTaskRunner,
+    ) -> Result<RefreshReport, SkillsError> {
+        self.refresh_sources(true, Some((suites, runner))).await
+    }
+
+    async fn refresh_sources(
+        &self,
+        force: bool,
+        eval_gate: EvalGate<'_>,
+    ) -> Result<RefreshReport, SkillsError> {
         let statuses = self.status().await?;
         let mut report = RefreshReport {
             checked: statuses.len(),
@@ -772,7 +838,7 @@ impl SkillIndex {
                 continue;
             };
 
-            let (state, detail) = match self.refresh_source(kind).await {
+            let (state, detail) = match self.refresh_source(kind, eval_gate).await {
                 Ok(detail) => {
                     report.refreshed += 1;
                     (SourceState::Ok, detail)
@@ -790,7 +856,11 @@ impl SkillIndex {
     }
 
     /// What one typed source's refresh does. Unknown persisted ids never reach this function.
-    async fn refresh_source(&self, kind: SourceKind) -> Result<String, SkillsError> {
+    async fn refresh_source(
+        &self,
+        kind: SourceKind,
+        eval_gate: EvalGate<'_>,
+    ) -> Result<String, SkillsError> {
         match kind {
             SourceKind::Github => {
                 let repos = self.indexed_repos(AUTO_REFRESH_REPOS).await?;
@@ -800,7 +870,14 @@ impl SkillIndex {
                 let mut rows = 0;
                 let mut failure: Option<SkillsError> = None;
                 for repo in &repos {
-                    match self.index_repo(repo, SyncPolicy::normal()).await {
+                    let result = match eval_gate {
+                        Some((suites, runner)) => {
+                            self.index_repo_with_evals(repo, SyncPolicy::normal(), suites, runner)
+                                .await
+                        }
+                        None => self.index_repo(repo, SyncPolicy::normal()).await,
+                    };
+                    match result {
                         Ok(report) => rows += report.added + report.updated,
                         Err(error) => {
                             failure.get_or_insert(error);
@@ -1340,7 +1417,7 @@ impl SkillIndex {
     }
 
     /// Run a skill's golden tasks before copying it into any harness store.
-    pub async fn install_with_eval<R: GoldenTaskRunner>(
+    pub async fn install_with_eval<R: GoldenTaskRunner + ?Sized>(
         &self,
         id: &str,
         roots: &[PathBuf],
@@ -1352,6 +1429,7 @@ impl SkillIndex {
             .await?
             .ok_or_else(|| SkillsError::NoBody(id.to_string()))?;
         let report = eval::evaluate(id, &body, tasks, runner)
+            .await
             .map_err(|error| SkillsError::Other(error.to_string()))?;
         eval::require_pass(&report).map_err(|error| SkillsError::Other(error.to_string()))?;
         let installed = self.install(id, roots).await?;
@@ -1402,6 +1480,30 @@ impl SkillIndex {
         let mut reports = Vec::with_capacity(ids.len());
         for id in ids {
             reports.push(self.install(&format!("builtin:{id}"), roots).await?);
+        }
+        Ok(reports)
+    }
+
+    pub async fn install_builtin_skills_with_evals(
+        &self,
+        ids: &[String],
+        roots: &[PathBuf],
+        suites: &HashMap<String, Vec<GoldenTask>>,
+        runner: &dyn GoldenTaskRunner,
+    ) -> Result<Vec<InstallReport>, SkillsError> {
+        if ids.is_empty() {
+            return Ok(Vec::new());
+        }
+        self.install_builtin().await?;
+        let mut reports = Vec::with_capacity(ids.len());
+        for id in ids {
+            let id = format!("builtin:{id}");
+            let tasks = suites.get(&id).ok_or_else(|| {
+                SkillsError::Other(format!(
+                    "skill {id} has no golden task suite; refusing to enable it"
+                ))
+            })?;
+            reports.push(self.install_with_eval(&id, roots, tasks, runner).await?.0);
         }
         Ok(reports)
     }
@@ -1855,8 +1957,14 @@ mod tests {
 
     struct FixedGoldenRunner(&'static str);
 
+    #[async_trait]
     impl GoldenTaskRunner for FixedGoldenRunner {
-        fn run(&self, _skill_id: &str, _skill_body: &str, _prompt: &str) -> Result<String, String> {
+        async fn run(
+            &self,
+            _skill_id: &str,
+            _skill_body: &str,
+            _prompt: &str,
+        ) -> Result<String, String> {
             Ok(self.0.to_string())
         }
     }
