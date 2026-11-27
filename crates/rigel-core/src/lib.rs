@@ -98,6 +98,7 @@ pub use claims::{
     ConflictVerdictInput, MAX_REVIEWER_CHARS, MAX_TEST_HINT_CHARS, MERGE_AUTHOR, MergeResolution,
     MergedConflict, STALE_AFTER, UnverifiedChange,
 };
+pub use cloud::account::{AccountExport, DeletePlan, DeleteReport};
 pub use cloud::{
     Cloud, CloudConfig, CloudError, CloudStatus, Endpoints, MemorySessionStore, PullReport,
     PushReport, SessionStore,

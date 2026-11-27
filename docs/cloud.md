@@ -81,6 +81,8 @@ each finished turn once **publish every session automatically** is on (it is off
    cargo run -q -p rigel-cli -- cloud pull
    cargo run -q -p rigel-cli -- cloud publish <session-id>
    cargo run -q -p rigel-cli -- cloud status --json
+   cargo run -q -p rigel-cli -- cloud export-account > account-export.json
+   cargo run -q -p rigel-cli -- cloud delete-account
    ```
 
    The window does the same from Settings → Cloud: **Create account**, **Sign in**, **Send a reset
@@ -172,6 +174,22 @@ its own — before it will start.
 
 Signing out deletes the local refresh token. It does **not** revoke the token server-side — use
 Authentication → Users → Revoke refresh tokens in the console if a machine is lost.
+
+### Export and permanently delete an account
+
+`rigel cloud export-account` prints a JSON export of every Firestore document beneath
+`users/{uid}`, walking subcollections recursively and preserving each raw document resource.
+Redirect stdout to a file you control and protect it as account data. The export includes published
+session prompts and replies, shelf metadata, and any future nested documents under that account.
+
+`rigel cloud delete-account` first prints the exact Firestore and Authentication data it will
+delete, the account-specific phrase to type, and what remains. Re-run it with that exact phrase:
+`rigel cloud delete-account --confirm "DELETE you@example.com"`. It deletes the Firestore subtree,
+then the Firebase Authentication account, and signs this installation out. Local sessions, skill
+bodies, attachments, backups, `cloud.json`, App Check settings, and data outside that user's
+Firestore subtree remain. A deleted account is reported as `cloud account not found` until another
+account is explicitly signed in. The local App Check client credential also remains. Deletion is
+permanent; export anything needed first.
 
 ### Email verification
 
