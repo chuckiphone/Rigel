@@ -354,3 +354,63 @@ async fn a_directory_that_is_not_a_repository_is_refused() {
     let error = trees.create(&agent.id).await.expect_err("not a repo");
     assert!(matches!(error, WorktreeError::NotARepository(_)), "{error}");
 }
+
+/// A stored pointer is editable data. `remove` must refuse a path outside the managed directory —
+/// including a symlink placed inside it — without running git or clearing the pointer.
+#[tokio::test]
+async fn remove_refuses_an_out_of_base_or_escaped_pointer() {
+    let Some((_repo, data, service, _session, agent, trees)) = setup().await else {
+        return;
+    };
+    trees.create(&agent).await.unwrap();
+
+    // 1. A path that never starts with the base directory.
+    let outside = data.path().join("worktrees-elsewhere").join("checkout");
+    std::fs::create_dir_all(&outside).unwrap();
+    let raw = outside.to_string_lossy().into_owned();
+    sqlx::query("UPDATE agents SET worktree = ? WHERE id = ?")
+        .bind(&raw)
+        .bind(&agent)
+        .execute(service.pool())
+        .await
+        .unwrap();
+    let error = trees
+        .remove(&agent, true)
+        .await
+        .expect_err("out-of-base pointer");
+    assert!(matches!(error, WorktreeError::OutsideBase(_)), "{error}");
+    assert_eq!(
+        service.agent(&agent).await.unwrap().worktree.as_deref(),
+        Some(raw.as_str())
+    );
+    assert!(
+        outside.exists(),
+        "the directory outside the base was not touched"
+    );
+
+    // 2. A path that lexically starts with the base but canonically escapes it. `..` needs no
+    //    symlink privilege and exercises the same canonical-containment check on every platform.
+    let outside_target = data.path().join("elsewhere");
+    std::fs::create_dir_all(&outside_target).unwrap();
+    let link = data.path().join("worktrees").join("..").join("elsewhere");
+    let raw = link.to_string_lossy().into_owned();
+    sqlx::query("UPDATE agents SET worktree = ? WHERE id = ?")
+        .bind(&raw)
+        .bind(&agent)
+        .execute(service.pool())
+        .await
+        .unwrap();
+    let error = trees
+        .remove(&agent, true)
+        .await
+        .expect_err("escaped pointer");
+    assert!(matches!(error, WorktreeError::OutsideBase(_)), "{error}");
+    assert_eq!(
+        service.agent(&agent).await.unwrap().worktree.as_deref(),
+        Some(raw.as_str())
+    );
+    assert!(
+        outside_target.exists(),
+        "the linked directory was not removed"
+    );
+}

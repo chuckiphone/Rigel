@@ -15,6 +15,9 @@ pub enum DeleteError {
     Confirmation(String),
     #[error("session {0} does not exist")]
     NotFound(String),
+
+    #[error("session id {0} is not a single safe path component")]
+    UnsafeSessionId(String),
     #[error("database error: {0}")]
     Database(#[from] sqlx::Error),
     #[error("could not persist deletion tombstones at {path}: {source}")]
@@ -44,6 +47,15 @@ pub fn default_tombstone_path(data_dir: &Path) -> PathBuf {
         .join(format!(".{name}-session-tombstones.json"))
 }
 
+/// One ordinary path component: no separators, no drive prefix, no `.` or `..`, no NUL.
+fn safe_component(value: &str) -> bool {
+    !value.is_empty()
+        && value != "."
+        && value != ".."
+        && !value.contains(['/', '\\', ':', '\0'])
+        && Path::new(value).components().count() == 1
+}
+
 /// Persist a session tombstone before removing its rows, so later restores can filter it.
 pub async fn delete_session(
     pool: &SqlitePool,
@@ -54,6 +66,11 @@ pub async fn delete_session(
 ) -> Result<(), DeleteError> {
     if confirmation != session_id {
         return Err(DeleteError::Confirmation(session_id.to_owned()));
+    }
+    // The id later becomes one directory name under `.rigel/sessions`. Validate it as a single
+    // component first, so a crafted id cannot remove a sibling directory or escape the project.
+    if !safe_component(session_id) {
+        return Err(DeleteError::UnsafeSessionId(session_id.to_owned()));
     }
     let exists: i64 = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM sessions WHERE id = ?)")
         .bind(session_id)
