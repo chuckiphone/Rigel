@@ -22,6 +22,7 @@
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::time::Duration;
 
 use serde::Serialize;
 use sqlx::SqlitePool;
@@ -93,6 +94,23 @@ pub struct MergeReport {
     pub applied: usize,
     pub conflicted: usize,
     pub skipped: usize,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct PruneEntry {
+    pub agent_id: String,
+    pub path: PathBuf,
+    pub removed: bool,
+    pub reason: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct PruneReport {
+    pub retention_ms: i64,
+    pub scanned: usize,
+    pub removed: usize,
+    pub kept: usize,
+    pub entries: Vec<PruneEntry>,
 }
 
 impl MergeReport {
@@ -462,6 +480,124 @@ impl WorktreeService {
             .execute(&self.pool)
             .await?;
         Ok(())
+    }
+
+    /// Remove terminal child worktrees only after they are clean, merged, and past retention.
+    /// Kept worktrees include a reason so callers can explain why data was preserved.
+    pub async fn prune(&self, retention: Duration) -> Result<PruneReport, WorktreeError> {
+        self.ensure_repository()?;
+        let retention_ms = i64::try_from(retention.as_millis()).unwrap_or(i64::MAX);
+        let now = crate::migrate::now_ms();
+        let main_head = self.git(&["rev-parse", "HEAD"])?;
+        let rows: Vec<(String, String, i64, String)> = sqlx::query_as(
+            "SELECT id, worktree, started_at, status FROM agents WHERE worktree IS NOT NULL ORDER BY id",
+        )
+        .fetch_all(&self.pool)
+        .await?;
+        let base_dir = if self.base_dir.exists() {
+            std::fs::canonicalize(&self.base_dir)?
+        } else {
+            self.base_dir.clone()
+        };
+        let mut report = PruneReport {
+            retention_ms,
+            scanned: 0,
+            removed: 0,
+            kept: 0,
+            entries: Vec::new(),
+        };
+
+        for (agent_id, stored_path, started_at, status) in rows {
+            let path = PathBuf::from(stored_path);
+            if !path.starts_with(&self.base_dir) {
+                continue;
+            }
+            report.scanned += 1;
+            let keep = |reason: String, report: &mut PruneReport| {
+                report.kept += 1;
+                report.entries.push(PruneEntry {
+                    agent_id: agent_id.clone(),
+                    path: path.clone(),
+                    removed: false,
+                    reason,
+                });
+            };
+
+            if !path.exists() {
+                keep("worktree directory is missing".into(), &mut report);
+                continue;
+            }
+            let canonical = std::fs::canonicalize(&path)?;
+            if !canonical.starts_with(&base_dir) {
+                keep(
+                    "worktree resolves outside the managed worktree directory".into(),
+                    &mut report,
+                );
+                continue;
+            }
+            if !matches!(status.as_str(), "failed" | "exited") {
+                keep(
+                    format!("agent is not terminal (status: {status})"),
+                    &mut report,
+                );
+                continue;
+            }
+            if !self.changes(&path)?.is_empty() {
+                keep("worktree has uncommitted changes".into(), &mut report);
+                continue;
+            }
+            let head = self.git_in(&path, &["rev-parse", "HEAD"])?;
+            if !self.is_ancestor(head.trim(), main_head.trim())? {
+                keep(
+                    format!("worktree commit {} is not merged", short(head.trim())),
+                    &mut report,
+                );
+                continue;
+            }
+            let age_ms = now.saturating_sub(started_at);
+            if age_ms < retention_ms {
+                keep(
+                    format!("retention window has not elapsed ({age_ms} ms old)"),
+                    &mut report,
+                );
+                continue;
+            }
+
+            self.remove(&agent_id, false).await?;
+            report.removed += 1;
+            report.entries.push(PruneEntry {
+                agent_id,
+                path,
+                removed: true,
+                reason: "clean, merged worktree exceeded retention".into(),
+            });
+        }
+        Ok(report)
+    }
+
+    fn is_ancestor(&self, commit: &str, ancestor_of: &str) -> Result<bool, WorktreeError> {
+        let mut command = Command::new("git");
+        command.arg("-C").arg(&self.root).args([
+            "merge-base",
+            "--is-ancestor",
+            commit,
+            ancestor_of,
+        ]);
+        crate::process::hide(&mut command);
+        let output = command.output().map_err(|error| match error.kind() {
+            std::io::ErrorKind::NotFound => WorktreeError::GitMissing,
+            _ => WorktreeError::Io(error),
+        })?;
+        if output.status.success() {
+            Ok(true)
+        } else if output.status.code() == Some(1) {
+            Ok(false)
+        } else {
+            Err(WorktreeError::Git {
+                command: format!("merge-base --is-ancestor {commit} {ancestor_of}"),
+                message: String::from_utf8_lossy(&output.stderr).trim().to_string(),
+            })
+        }
     }
 
     /* ---------------- git plumbing ---------------- */

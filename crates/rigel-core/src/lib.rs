@@ -173,5 +173,6 @@ pub use update::{
     PUBKEY_FILE as UPDATE_PUBKEY_FILE, UpdateCheck, UpdateError, UpdateManifest, UpdateSettings,
 };
 pub use worktree::{
-    MergeLine, MergeReport, MergeStatus, WORKTREES_DIR, Worktree, WorktreeError, WorktreeService,
+    MergeLine, MergeReport, MergeStatus, PruneEntry, PruneReport, WORKTREES_DIR, Worktree,
+    WorktreeError, WorktreeService,
 };
