@@ -5,6 +5,28 @@
 
 use crate::*;
 
+fn validate_session_step_cap(max_steps: Option<u16>) -> Result<(), String> {
+    if max_steps.is_some_and(|steps| !(1..=50).contains(&steps)) {
+        Err("step cap must be between 1 and 50".to_string())
+    } else {
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod project_defaults_tests {
+    use super::validate_session_step_cap;
+
+    #[test]
+    fn session_step_cap_accepts_supported_bounds_and_rejects_out_of_range_values() {
+        assert!(validate_session_step_cap(None).is_ok());
+        assert!(validate_session_step_cap(Some(1)).is_ok());
+        assert!(validate_session_step_cap(Some(50)).is_ok());
+        assert!(validate_session_step_cap(Some(0)).is_err());
+        assert!(validate_session_step_cap(Some(51)).is_err());
+    }
+}
+
 /// Create a turn and start it. Returns as soon as the row exists; the answer streams on
 /// `rigel://events`.
 ///
@@ -27,7 +49,9 @@ pub(crate) fn turn_send(
     // Project-relative image attachments for the first user message. The renderer passes the
     // paths it imported; the command inlines them for a vision-capable adapter.
     images: Option<Vec<String>>,
+    max_steps: Option<u16>,
 ) -> Result<TurnReply, String> {
+    validate_session_step_cap(max_steps)?;
     let root = PathBuf::from(&project);
     let service = tauri::async_runtime::block_on(SessionService::open(&root)).map_err(message)?;
     let stored = tauri::async_runtime::block_on(service.get(&session)).map_err(message)?;
@@ -224,6 +248,7 @@ pub(crate) fn turn_send(
         turn_id: turn.id.clone(),
         project_root: root.clone(),
     }));
+    let max_steps = max_steps.unwrap_or(settings.max_steps);
     let coordinator = Coordinator {
         session: service.clone(),
         budget,
@@ -234,7 +259,7 @@ pub(crate) fn turn_send(
         project_root: root,
         model_name,
         effort: Some(effort),
-        max_steps: usize::from(settings.max_steps),
+        max_steps: usize::from(max_steps),
         subagents: subagent_policy(&settings),
         depth: 0,
         parent_cancel: None,

@@ -5,7 +5,8 @@
  * last for, then the snapshot state. The old card led with policy pills and put the command in a
  * header, which made "blast radius" the first thing a person read after the countdown.
  *
- * One primary action exists — Allow once. The three wider scopes are secondary chips, and Reject
+ * One primary action uses the project's explicit approval preference. The user still has to click;
+ * the preference never approves automatically. The other scopes remain visible, and Reject
  * is a real button at the end of the tab order with Escape as a shortcut, so a keyboard user can
  * always refuse without reaching for the mouse. A `cannot_determine` row is never wrapped in a
  * disclosure: an unknown blast radius is the reason to look, not a detail to open.
@@ -45,6 +46,7 @@ export function ApprovalCard({
   onAnswer,
   onRetry,
   onDismiss,
+  defaultScope = "once",
 }: {
   pending: PendingApproval;
   /** Q246: the question is over; only Retry and Dismiss remain. */
@@ -57,6 +59,7 @@ export function ApprovalCard({
   ) => void;
   onRetry?: (pending: PendingApproval) => void;
   onDismiss?: (pending: PendingApproval) => void;
+  defaultScope?: "once" | "session" | "project" | "always";
 }) {
   const detail = pending.detail ?? {};
   const [mountedAt] = useState(() => Date.now());
@@ -421,8 +424,8 @@ export function ApprovalCard({
           </>
         ) : (
           <>
-            <button className="primary" data-primary="true" onClick={() => onAnswer(pending, "once")}>
-              Allow once
+            <button className="primary" data-primary="true" onClick={() => onAnswer(pending, defaultScope)}>
+              {defaultScope === "once" ? "Allow once" : `Use default: ${defaultScope === "session" ? "this session" : defaultScope}`}
             </button>
             <button className="chip" onClick={() => onAnswer(pending, "session")}>
               This session

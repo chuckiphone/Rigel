@@ -57,6 +57,12 @@ import { Recovery } from "./recovery";
 import { SubagentGraphView } from "./subagent-graph";
 import { VirtualTranscriptPreview } from "./transcript/virtual";
 import { ApprovalCard } from "./session/approval-card";
+import {
+  ProjectDefaultsEditor,
+  loadSessionDefaults,
+  saveSessionDefaults,
+  useProjectDefaults,
+} from "./settings/project-defaults";
 import { DegradedBanner } from "./degraded-banner";
 import { ProviderErrorPanel, providerStatus } from "./provider-error";
 import {
@@ -621,6 +627,7 @@ export default function SessionView({
   const turnsRef = useRef(turns);
   const patchesRef = useRef(patches);
   const [defaults, setDefaults] = useState<Settings | null>(null);
+  const [projectDefaults, setProjectDefaults] = useProjectDefaults(project || null);
   const [swarming, setSwarming] = useState(false);
   const [preparing, setPreparing] = useState(false);
   // The preflight is a list, not a question: the task text is frozen when it opens so the
@@ -716,8 +723,9 @@ export default function SessionView({
 
   const spendMicros = budget?.session_micros ?? (session ? session.spend_cents * 10_000 : 0);
   const capMicros = budget?.cap_micros ?? (session?.budget_cents ? session.budget_cents * 10_000 : null);
-  const model = defaults?.model ?? "gpt-5.6-sol-medium";
-  const effort = defaults?.effort ?? "medium";
+  const activeProjectDefaults = session ? loadSessionDefaults(session.id) : null;
+  const model = activeProjectDefaults?.model ?? defaults?.model ?? "gpt-5.6-sol-medium";
+  const effort = activeProjectDefaults?.effort ?? defaults?.effort ?? "medium";
   // Sent with the model so the turn cannot land on the previous door while a save is in flight.
   const provider = defaults?.provider ?? "";
 
@@ -1680,6 +1688,14 @@ export default function SessionView({
       try {
         // No template means no name yet: the first prompt gets to name this session cheaply.
         const created = await api.startSession(project, template?.name);
+        // Snapshot project defaults at creation so later edits only affect future sessions.
+        const sessionDefaults = {
+          ...projectDefaults,
+          ...(template?.model ? { model: template.model } : {}),
+          ...(template?.effort ? { effort: template.effort as "low" | "medium" | "high" } : {}),
+          ...(template?.max_steps ? { max_steps: template.max_steps } : {}),
+        };
+        saveSessionDefaults(created.id, sessionDefaults);
         const pinFailures: string[] = [];
         for (const skill of template?.skills ?? []) {
           try {
@@ -1705,9 +1721,6 @@ export default function SessionView({
         // the template's own.
         if (template.model) {
           await applyModel(template.model, template.effort ?? effort);
-        }
-        if (template.max_steps && defaults) {
-          setDefaults(await api.saveSettings({ ...defaults, max_steps: template.max_steps }));
         }
         for (const entry of template.agents) {
           const spawned = await api.spawnAgent(
@@ -1745,6 +1758,7 @@ export default function SessionView({
       tauri,
       project,
       defaults,
+      projectDefaults,
       effort,
       applyModel,
       selectSession,
@@ -2136,6 +2150,7 @@ export default function SessionView({
         workerRoute.provider,
         workerRoute.effort,
         turnImages,
+        activeProjectDefaults?.max_steps,
       );
       rememberPrompt(prompt);
       if (!options?.keepComposer) setAttachments([]);
@@ -3195,22 +3210,23 @@ export default function SessionView({
                   <button
                     type="button"
                     className="chip"
-                    onClick={() =>
-                      templates.length > 0 ? setTemplateOpen((open) => !open) : void startSession()
-                    }
+                    onClick={() => setTemplateOpen((open) => !open)}
                     disabled={starting}
-                    aria-haspopup={templates.length > 0 ? "menu" : undefined}
-                    aria-expanded={templates.length > 0 ? templateOpen : undefined}
+                    aria-haspopup="menu"
+                    aria-expanded={templateOpen}
                     title={
-                      templates.length > 0
-                        ? "Start blank or from a project template"
-                        : "Start a session with a $5.00 cap"
+                      "Review project defaults before creating a session"
                     }
                   >
                     {starting ? "starting…" : "+ session"}
                   </button>
                   {templateOpen ? (
                     <div className="composer-menu template-menu" role="menu" aria-label="Session templates">
+                      <ProjectDefaultsEditor
+                        project={project ?? ""}
+                        value={projectDefaults}
+                        onChange={setProjectDefaults}
+                      />
                       <p className="composer-menu-label">Start from</p>
                       <button
                         type="button"
@@ -3219,7 +3235,7 @@ export default function SessionView({
                         onClick={() => void startSession()}
                       >
                         <span>Blank session</span>
-                        <small>$5.00 cap</small>
+                        <small>{projectDefaults.model} · {projectDefaults.effort} · {projectDefaults.max_steps} steps</small>
                       </button>
                       {templates.map((template) => (
                         <div className="template-row" key={template.id}>
@@ -3266,8 +3282,8 @@ export default function SessionView({
               <SessionFilters filter={filters} onChange={setFilters} />
             </div>
           ) : !session ? (
-            <button className="primary wide" onClick={() => void startSession()} disabled={starting}>
-              {starting ? "Starting…" : "Start a session · $5.00 cap"}
+            <button className="primary wide" onClick={() => setTemplateOpen(true)} disabled={starting}>
+              {starting ? "Starting…" : "Review defaults and start a session"}
             </button>
           ) : (
             <div className="roster-actions">
@@ -3827,6 +3843,7 @@ export default function SessionView({
           <ApprovalCard
             key={pending.id}
             pending={pending}
+            defaultScope={activeProjectDefaults?.approval_scope}
             onAnswer={answer}
             onRetry={retryApproval}
             onDismiss={dismissApproval}
@@ -3838,6 +3855,7 @@ export default function SessionView({
             key={pending.id}
             pending={pending}
             refused
+            defaultScope={activeProjectDefaults?.approval_scope}
             onAnswer={answer}
             onRetry={retryApproval}
             onDismiss={dismissApproval}
