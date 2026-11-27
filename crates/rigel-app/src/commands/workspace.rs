@@ -606,7 +606,13 @@ pub(crate) fn pull_request_plan(
         let service = SessionService::open(&root).await.map_err(message)?;
         let session = service.get(&session).await.map_err(message)?;
         let turns = service.transcript(&session.id).await.map_err(message)?;
-        rigel_core::forge::plan(&root, &session, &turns).map_err(message)
+        rigel_core::forge::Forge::plan(
+            &rigel_core::forge::GitHubForge::default(),
+            &root,
+            &session,
+            &turns,
+        )
+        .map_err(message)
     })
 }
 
@@ -618,8 +624,15 @@ pub(crate) fn pull_request_create(project: String, session: String) -> Result<St
         let service = SessionService::open(&root).await.map_err(message)?;
         let session = service.get(&session).await.map_err(message)?;
         let turns = service.transcript(&session.id).await.map_err(message)?;
-        let plan = rigel_core::forge::plan(&root, &session, &turns).map_err(message)?;
-        rigel_core::forge::create(&root, &plan).map_err(message)
+        let plan = rigel_core::forge::Forge::plan(
+            &rigel_core::forge::GitHubForge::default(),
+            &root,
+            &session,
+            &turns,
+        )
+        .map_err(message)?;
+        rigel_core::forge::Forge::create(&rigel_core::forge::GitHubForge::default(), &root, &plan)
+            .map_err(message)
     })
 }
 
