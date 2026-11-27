@@ -481,11 +481,23 @@ const providerErrorEntry: TurnTranscript | null = providerErrorBody
     }
   : null;
 
-export const previewTranscript: TurnTranscript[] = showDegraded
+/** Roadmap 82: `?safe=1` marks every fixture turn as run in safe mode. */
+const previewSafe =
+  typeof window !== "undefined" &&
+  new URLSearchParams(window.location.search).get("safe") === "1";
+
+const baseTranscript: TurnTranscript[] = showDegraded
   ? [...previewTranscriptBase, { turn: degradedTurn, items: degradedItems }]
   : providerErrorEntry
     ? [...previewTranscriptBase, providerErrorEntry]
     : previewTranscriptBase;
+
+export const previewTranscript: TurnTranscript[] = previewSafe
+  ? baseTranscript.map((entry) => ({
+      ...entry,
+      turn: { ...entry.turn, mode: "safe" as const },
+    }))
+  : baseTranscript;
 
 /** Browser preview: a running turn, so the queue and stop controls are inspectable. */
 export const previewLiveTurn: Turn = {

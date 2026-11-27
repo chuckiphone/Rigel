@@ -1045,6 +1045,8 @@ export interface Turn {
   prompt: string | null;
   /** Image parts persisted with the first user message; omitted on text-only turns. */
   images?: { url: string }[];
+  /** Roadmap 82: the mode the turn ran under. Empty on rows recorded before safe mode. */
+  mode?: 'normal' | 'safe';
   started_at: number;
   completed_at: number | null;
   usage: Usage | null;
@@ -1093,6 +1095,12 @@ export interface BrowserHarnessCapture {
  * D113/D116: the safety knobs and today's ledger. The window reads this in Settings and
  * after a raise; the cap itself is enforced in the core, not here.
  */
+/** Roadmap 82: one session's safe mode and the phrase required to leave it. */
+export interface SafeModeView {
+  mode: 'normal' | 'safe';
+  leave_phrase: string;
+}
+
 export interface SafetyView {
   writable_agents: number;
   daily_cap_micros: number | null;
@@ -2440,6 +2448,14 @@ async function call<T>(command: string, args?: Record<string, unknown>): Promise
   return invoke<T>(command, args);
 }
 
+/** Roadmap 82: the preview starts safe when `?safe=1` so every turn row carries the mode. */
+let previewSafeMode: SafeModeView = {
+  mode: typeof window !== 'undefined' && new URLSearchParams(window.location.search).get('safe') === '1'
+    ? 'safe'
+    : 'normal',
+  leave_phrase: 'leave safe mode',
+}
+
 export const api = {
   isTauri,
 
@@ -3092,6 +3108,32 @@ export const api = {
 
   async raiseBudget(project: string, session: string, capCents: number): Promise<Session> {
     return call<Session>("budget_raise", { project, session, capCents });
+  },
+
+  /** Roadmap 82: read the session's safe mode. The preview keeps it in memory. */
+  async safeModeGet(project: string, session: string): Promise<SafeModeView> {
+    if (!isTauri()) return { ...previewSafeMode };
+    return call<SafeModeView>("safe_mode_get", { project, session });
+  },
+
+  /** Entering is explicit; leaving requires the exact phrase the core enforces. */
+  async safeModeSet(
+    project: string,
+    session: string,
+    enter: boolean,
+    confirmation = '',
+  ): Promise<SafeModeView> {
+    if (!isTauri()) {
+      if (!enter && confirmation !== previewSafeMode.leave_phrase) {
+        throw new Error('confirmation phrase does not match');
+      }
+      previewSafeMode = {
+        ...previewSafeMode,
+        mode: enter ? 'safe' : 'normal',
+      };
+      return { ...previewSafeMode };
+    }
+    return call<SafeModeView>("safe_mode_set", { project, session, enter, confirmation });
   },
 
   /** D92: spend across every session in the project. */

@@ -5,6 +5,34 @@
 
 use crate::*;
 
+/// Roadmap 82: the session's safe mode. Entering is explicit, leaving needs the typed phrase,
+/// and both changes are persisted under `.rigel` outside the checkpointed tree.
+#[tauri::command]
+pub(crate) fn safe_mode_get(project: String, session: String) -> Result<SafeModeState, String> {
+    SafeModeState::load(Path::new(&project), &session).map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+pub(crate) fn safe_mode_set(
+    project: String,
+    session: String,
+    enter: bool,
+    confirmation: Option<String>,
+) -> Result<SafeModeState, String> {
+    let mut state = safe_mode_get(project.clone(), session.clone())?;
+    if enter {
+        state.enter();
+    } else {
+        state
+            .leave(confirmation.as_deref().unwrap_or_default())
+            .map_err(|error| error.to_string())?;
+    }
+    state
+        .save(Path::new(&project), &session)
+        .map_err(|error| error.to_string())?;
+    Ok(state)
+}
+
 /// Q240: the project-local kill switch, rules and disabled sessions. The same file is read by
 /// `Tools::new` and every CLI turn, so the window and the request path cannot disagree.
 #[tauri::command]

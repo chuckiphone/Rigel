@@ -4,6 +4,9 @@
 //! Every turn row records the mode it ran under, and leaving safe mode requires an
 //! explicit action rather than a settings flip that could be triggered by accident.
 
+use std::fs;
+use std::path::{Path, PathBuf};
+
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
@@ -83,6 +86,44 @@ impl SafeModeState {
     pub fn turn_mode(&self) -> &'static str {
         self.mode.as_str()
     }
+
+    /// One file per session, under `.rigel`, so the mode survives a reload but never enters
+    /// the checkpointed tree. The id is one path component and cannot escape that directory.
+    pub fn state_path(project_root: &Path, session_id: &str) -> Result<PathBuf, SafeModeError> {
+        if session_id.is_empty()
+            || session_id == "."
+            || session_id == ".."
+            || session_id.contains(['/', '\\', ':', '\0'])
+        {
+            return Err(SafeModeError::UnsafeSession(session_id.to_string()));
+        }
+        Ok(project_root
+            .join(".rigel")
+            .join("sessions")
+            .join(format!("{session_id}.safe-mode.json")))
+    }
+
+    /// A project with no state file opens normally; an unreadable file is an error, not a quiet
+    /// downgrade to normal mode.
+    pub fn load(project_root: &Path, session_id: &str) -> Result<Self, SafeModeError> {
+        let path = Self::state_path(project_root, session_id)?;
+        if !path.exists() {
+            return Ok(Self::default());
+        }
+        let text =
+            fs::read_to_string(&path).map_err(|error| SafeModeError::Io(error.to_string()))?;
+        serde_json::from_str(&text).map_err(|error| SafeModeError::Corrupt(error.to_string()))
+    }
+
+    pub fn save(&self, project_root: &Path, session_id: &str) -> Result<(), SafeModeError> {
+        let path = Self::state_path(project_root, session_id)?;
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent).map_err(|error| SafeModeError::Io(error.to_string()))?;
+        }
+        let text = serde_json::to_string_pretty(self)
+            .map_err(|error| SafeModeError::Corrupt(error.to_string()))?;
+        fs::write(&path, text).map_err(|error| SafeModeError::Io(error.to_string()))
+    }
 }
 
 #[derive(Debug, thiserror::Error, PartialEq, Eq)]
@@ -91,6 +132,12 @@ pub enum SafeModeError {
     NotInSafeMode,
     #[error("confirmation phrase does not match")]
     BadConfirmation,
+    #[error("session id {0} is not a safe path component")]
+    UnsafeSession(String),
+    #[error("safe mode state could not be read or written: {0}")]
+    Io(String),
+    #[error("safe mode state is not valid: {0}")]
+    Corrupt(String),
 }
 
 /// A turn record carrying the mode it ran under.
@@ -155,6 +202,34 @@ mod tests {
         let turn = TurnMode::new("turn-1", state.mode);
         assert_eq!(turn.mode, Mode::Safe);
         assert_eq!(state.turn_mode(), "safe");
+    }
+
+    #[test]
+    fn state_persists_per_session_and_refuses_an_escaping_id() {
+        let root = tempfile::tempdir().unwrap();
+        let state = SafeModeState::new_safe();
+        state.save(root.path(), "session-1").unwrap();
+        let loaded = SafeModeState::load(root.path(), "session-1").unwrap();
+        assert_eq!(loaded, state);
+        assert!(loaded.mode.is_safe());
+        assert_eq!(
+            SafeModeState::load(root.path(), "other").unwrap().mode,
+            Mode::Normal
+        );
+        assert!(
+            root.path()
+                .join(".rigel/sessions/session-1.safe-mode.json")
+                .is_file()
+        );
+
+        assert!(matches!(
+            SafeModeState::load(root.path(), "../escape"),
+            Err(SafeModeError::UnsafeSession(_))
+        ));
+        assert!(matches!(
+            state.save(root.path(), "a/b"),
+            Err(SafeModeError::UnsafeSession(_))
+        ));
     }
 
     #[test]
