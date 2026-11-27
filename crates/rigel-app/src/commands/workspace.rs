@@ -505,6 +505,32 @@ pub(crate) fn session_export(project: String, id: String) -> Result<SessionExpor
     })
 }
 
+/// Import Claude or Codex JSONL, returning the complete row-by-row dry-run report before writes.
+#[tauri::command]
+pub(crate) fn session_import(
+    project: String,
+    content: String,
+    source: String,
+    dry_run: bool,
+    title: Option<String>,
+) -> Result<rigel_core::import::ImportReport, String> {
+    let source = match source.as_str() {
+        "claude" => rigel_core::import::HistorySource::Claude,
+        "codex" => rigel_core::import::HistorySource::Codex,
+        _ => return Err("Choose a Claude or Codex history source.".to_string()),
+    };
+    if dry_run {
+        return Ok(rigel_core::import::dry_run(&content, source));
+    }
+    tauri::async_runtime::block_on(async move {
+        let root = std::fs::canonicalize(&project).map_err(message)?;
+        let service = SessionService::open(&root).await.map_err(message)?;
+        rigel_core::import::import_history(&service, &content, source, title.as_deref())
+            .await
+            .map_err(message)
+    })
+}
+
 /// Q268: run the one test command Rigel can recognise for this project. The action is explicit,
 /// local, and outside the agent loop; the core bounds the captured output.
 #[tauri::command]

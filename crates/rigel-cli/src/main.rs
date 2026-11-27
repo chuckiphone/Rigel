@@ -364,6 +364,23 @@ enum Command {
 
 #[derive(Subcommand)]
 enum SessionCommand {
+    /// Import a Claude or Codex JSONL transcript into the local session history.
+    Import {
+        #[arg(long, value_name = "PATH", default_value = ".")]
+        project: PathBuf,
+        #[arg(long, value_name = "FILE")]
+        file: PathBuf,
+        #[arg(long, value_parser = ["claude", "codex"])]
+        source: String,
+        #[arg(long)]
+        title: Option<String>,
+        /// List every imported and skipped row without writing anything.
+        #[arg(long)]
+        dry_run: bool,
+        #[arg(long)]
+        json: bool,
+    },
+
     /// Start a session and print its id.
     Start {
         #[arg(long, value_name = "PATH", default_value = ".")]
@@ -1776,6 +1793,66 @@ fn print_refresh(report: &rigel_core::skills::RefreshReport, as_json: bool) {
 
 async fn run_session(command: SessionCommand) -> ExitCode {
     match command {
+        SessionCommand::Import {
+            project,
+            file,
+            source,
+            title,
+            dry_run,
+            json: as_json,
+        } => {
+            let input = match std::fs::read_to_string(&file) {
+                Ok(input) => input,
+                Err(error) => return fail(format!("cannot read {}: {error}", file.display())),
+            };
+            let source = match source.as_str() {
+                "claude" => rigel_core::import::HistorySource::Claude,
+                "codex" => rigel_core::import::HistorySource::Codex,
+                _ => unreachable!("clap validates import source"),
+            };
+            let report = if dry_run {
+                rigel_core::import::dry_run(&input, source)
+            } else {
+                let service = match SessionService::open(&project).await {
+                    Ok(service) => service,
+                    Err(error) => return fail(error),
+                };
+                match rigel_core::import::import_history(&service, &input, source, title.as_deref())
+                    .await
+                {
+                    Ok(report) => report,
+                    Err(error) => return fail(error),
+                }
+            };
+            if as_json {
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&report).unwrap_or_default()
+                );
+            } else {
+                if let Some(id) = &report.session_id {
+                    println!("session {id}");
+                }
+                println!(
+                    "{}",
+                    if report.dry_run {
+                        "dry run"
+                    } else {
+                        "imported"
+                    }
+                );
+                for row in report.rows {
+                    println!(
+                        "row {}  {:<6}  {}",
+                        row.row,
+                        format!("{:?}", row.disposition).to_lowercase(),
+                        row.reason
+                    );
+                }
+            }
+            ExitCode::SUCCESS
+        }
+
         SessionCommand::Start {
             project,
             title,

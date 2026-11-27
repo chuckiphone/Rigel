@@ -2069,6 +2069,7 @@ pub fn run() {
             commands::workspace::diagnostics_export,
             commands::workspace::crash_report,
             commands::workspace::session_export,
+            commands::workspace::session_import,
             commands::workspace::tests_run,
             commands::workspace::rules_sources,
             commands::workspace::pull_request_plan,
