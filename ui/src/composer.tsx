@@ -8,6 +8,10 @@
  */
 
 import { useId, type ReactNode } from "react";
+import DropZone, { type AttachmentUpload } from "./composer/dropzone";
+
+export { default as DropZone } from "./composer/dropzone";
+export type { AttachmentUpload } from "./composer/dropzone";
 
 /** The design contract's minimum window width; the test checks this row at 320px. */
 export const MIN_COMPOSER_WIDTH = 320;
@@ -75,6 +79,8 @@ export default function ComposerBar({
   contextPercent,
   mode,
   disabled = false,
+  upload,
+  onAttached,
   onAttachments,
   onSkills,
   onModel,
@@ -90,6 +96,9 @@ export default function ComposerBar({
   contextPercent: number | null;
   mode: ComposerMode;
   disabled?: boolean;
+  /** Roadmap 122: when present, the bar is the drop target for files to attach. */
+  upload?: AttachmentUpload;
+  onAttached?: (path: string) => void;
   onAttachments?: () => void;
   onSkills?: () => void;
   onModel?: () => void;
@@ -99,6 +108,12 @@ export default function ComposerBar({
 }) {
   const pair = provider ? `${provider} / ${model}` : model;
   return (
+    <DropZone
+      upload={upload ?? (async () => "")}
+      onAttached={onAttached ?? (() => {})}
+      active={Boolean(upload)}
+      disabled={disabled}
+    >
     <div className="composer-v2" role="group" aria-label="Composer controls">
       <Control
         label="Attach"
@@ -166,5 +181,6 @@ export default function ComposerBar({
         ))}
       </div>
     </div>
+    </DropZone>
   );
 }

@@ -2470,6 +2470,9 @@ export const isTauri = (): boolean =>
 /** The browser preview's queue. Answering removes the row; nothing is sent anywhere. */
 let previewQueue: PendingApproval[] = previewApprovals.map((pending) => ({ ...pending }));
 
+/** Roadmap 122: dropped files stay in memory in the browser; the shell writes real bytes. */
+const previewUploads = new Map<string, { name: string; size: number; written: number }>();
+
 async function call<T>(command: string, args?: Record<string, unknown>): Promise<T> {
   const { invoke } = await import("@tauri-apps/api/core");
   return invoke<T>(command, args);
@@ -2597,6 +2600,65 @@ export const api = {
   async importAttachments(project: string, paths: string[]): Promise<string[]> {
     if (!isTauri()) return [];
     return call<string[]>("attachment_import", { project, paths });
+  },
+
+  /**
+   * Roadmap 122: the four steps of one dropped-file upload. In the browser preview the bytes stay
+   * in memory, so a Playwright run can exercise the same progress and cancel flow without writing
+   * to disk; in the app every step is a shell command and the temporary file is shell-owned.
+   */
+  async attachmentUploadStart(
+    project: string,
+    name: string,
+    size: number,
+    token: string,
+  ): Promise<void> {
+    if (!isTauri()) {
+      previewUploads.set(token, { name, size, written: 0 });
+      return;
+    }
+    await call<void>("attachment_upload_start", { project, name, size, token });
+  },
+
+  async attachmentUploadChunk(project: string, token: string, bytes: Uint8Array): Promise<number> {
+    if (!isTauri()) {
+      const upload = previewUploads.get(token);
+      if (!upload) throw new Error("Upload is no longer active.");
+      const next = upload.written + bytes.length;
+      if (next > upload.size) throw new Error("Upload received more bytes than the file contains.");
+      // Give the renderer a chance to show real progress (and let a human cancel it).
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      upload.written = next;
+      return next;
+    }
+    let binary = "";
+    for (let offset = 0; offset < bytes.length; offset += 0x8000) {
+      binary += String.fromCharCode(...bytes.subarray(offset, offset + 0x8000));
+    }
+    return call<number>("attachment_upload_chunk", {
+      project,
+      token,
+      data: btoa(binary),
+    });
+  },
+
+  async attachmentUploadFinish(project: string, token: string): Promise<string> {
+    if (!isTauri()) {
+      const upload = previewUploads.get(token);
+      if (!upload) throw new Error("Upload is no longer active.");
+      if (upload.written !== upload.size) throw new Error("Upload ended before the whole file arrived.");
+      previewUploads.delete(token);
+      return `.rigel/attachments/${upload.name}`;
+    }
+    return call<string>("attachment_upload_finish", { project, token });
+  },
+
+  async attachmentUploadCancel(project: string, token: string): Promise<void> {
+    if (!isTauri()) {
+      previewUploads.delete(token);
+      return;
+    }
+    await call<void>("attachment_upload_cancel", { project, token });
   },
 
   /** Create a folder under the workspace root and open it. */
