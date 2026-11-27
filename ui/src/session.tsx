@@ -75,6 +75,7 @@ import { ModelControls } from "./modelpicker";
 import { AgentRow, resolveAgentRoute } from "./agent-row";
 import BrowserPanel, { latestBrowserCall } from "./browser";
 import RefineCard from "./refine";
+import ComposerBar from "./composer";
 import CompanionSponsor from "./companion";
 import { notify } from "./notify";
 import { useMenu } from "./menu";
@@ -4174,6 +4175,27 @@ export default function SessionView({
                   </div>
                 </section>
               ) : null}
+              <ComposerBar
+                attachments={attachments.length}
+                skills={pins.length}
+                model={model}
+                provider={provider}
+                effort={effort}
+                contextPercent={contextKnown ? contextPercent : null}
+                mode={plan?.mode ? "plan" : "act"}
+                disabled={!session || readOnly || live || review !== null || refining}
+                onAttachments={() => setAddOpen(true)}
+                onSkills={() => setPinOpen(true)}
+                onModel={() =>
+                  document.querySelector<HTMLButtonElement>(".session-tools .model-button")?.click()
+                }
+                onEffort={(next) => void applyModel(model, next)}
+                onContext={() => setContextOpen(true)}
+                onMode={(next) => {
+                  if ((next === "plan") !== Boolean(plan?.mode)) void togglePlan();
+                  else composerRef.current?.focus();
+                }}
+              />
               <div className="composer-field">
               {pins.length > 0 ? (
                 <ul className="composer-pins" aria-label="Skills pinned to this session">
