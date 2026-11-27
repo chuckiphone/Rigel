@@ -52,6 +52,7 @@ import ForkLineage from "./fork-lineage";
 import MarkdownText, { MarkdownPreview } from "./markdown";
 import McpResult from "./mcp-result";
 import { MemoryInspector } from "./inspector/memory";
+import CompareTurns from "./compare-turns";
 import { RequestInspector, RequestInspectorPreview, fromUsage } from "./inspector/request";
 import { StepCost } from "./inspector/step-cost";
 import { Recovery } from "./recovery";
@@ -624,6 +625,8 @@ export default function SessionView({
   // Roadmap 111: in-session search narrows the same rows as the filter chips and the outline.
   const [transcriptQuery, setTranscriptQuery] = useState("");
   const [activeTurnId, setActiveTurnId] = useState<string | null>(null);
+  // Roadmap 104: the two turns currently open in the side-by-side comparison.
+  const [comparedIds, setComparedIds] = useState<[string, string] | null>(null);
   const transcriptRef = useRef<HTMLDivElement | null>(null);
   // D155: one card on focus, built from what changed while the window was in the background.
   const [away, setAway] = useState<AwaySummary | null>(null);
@@ -3748,6 +3751,25 @@ export default function SessionView({
                 {testRunning ? "Running tests…" : "Run tests"}
               </button>
             ) : null}
+            {session && turns.length >= 2 ? (
+              <button
+                className="chip"
+                title="Compare the active turn with the one before it"
+                aria-pressed={comparedIds !== null}
+                onClick={() => {
+                  const current = turns.findIndex((entry) => entry.turn.id === activeTurnId);
+                  const right = current < 0 ? turns.length - 1 : current;
+                  const left = Math.max(0, right - 1);
+                  setComparedIds(
+                    comparedIds
+                      ? null
+                      : [turns[left].turn.id, turns[right].turn.id],
+                  );
+                }}
+              >
+                {comparedIds ? "Close compare" : "Compare turns"}
+              </button>
+            ) : null}
             {session ? (
               <button
                 className="chip"
@@ -4094,6 +4116,21 @@ export default function SessionView({
             </div>
           </>
         )}
+
+        {comparedIds
+          ? (() => {
+              const pair = comparedIds
+                .map((id) => turns.find((entry) => entry.turn.id === id))
+                .filter((entry): entry is TurnTranscript => Boolean(entry));
+              return pair.length === 2 ? (
+                <CompareTurns
+                  left={pair[0]}
+                  right={pair[1]}
+                  onClose={() => setComparedIds(null)}
+                />
+              ) : null;
+            })()
+          : null}
 
         {session && nearCap ? (
           <div className="approval-inline" role="alert">
