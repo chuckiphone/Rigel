@@ -6,6 +6,7 @@
 
 use std::path::Path;
 use std::process::Command;
+use std::time::Duration;
 
 use rigel_core::{SessionService, WorktreeError, WorktreeService};
 
@@ -252,6 +253,86 @@ async fn removing_a_dirty_worktree_needs_force_and_clears_the_agent() {
     assert!(worktree.path.exists());
 
     trees.remove(&agent, true).await.unwrap();
+    assert!(!worktree.path.exists());
+    assert!(service.agent(&agent).await.unwrap().worktree.is_none());
+}
+
+#[tokio::test]
+async fn pruning_keeps_an_unmerged_worktree_with_a_reason() {
+    let Some((_repo, _data, service, _session, agent, trees)) = setup().await else {
+        return;
+    };
+    let worktree = trees.create(&agent).await.unwrap();
+    std::fs::write(worktree.path.join("src/lib.rs"), "unmerged change\n").unwrap();
+    assert!(git(&worktree.path, &["add", "."]));
+    assert!(git(&worktree.path, &["commit", "-q", "-m", "child change"]));
+    service.set_agent_status(&agent, "exited").await.unwrap();
+
+    let report = trees.prune(Duration::ZERO).await.unwrap();
+    assert_eq!(report.removed, 0);
+    assert_eq!(report.kept, 1);
+    assert!(report.entries[0].reason.contains("not merged"));
+    assert!(worktree.path.exists());
+}
+
+#[tokio::test]
+async fn pruning_keeps_a_dirty_worktree_with_a_reason() {
+    let Some((_repo, _data, service, _session, agent, trees)) = setup().await else {
+        return;
+    };
+    let worktree = trees.create(&agent).await.unwrap();
+    std::fs::write(worktree.path.join("src/lib.rs"), "uncommitted change\n").unwrap();
+    service.set_agent_status(&agent, "exited").await.unwrap();
+
+    let report = trees.prune(Duration::ZERO).await.unwrap();
+    assert_eq!(report.removed, 0);
+    assert!(report.entries[0].reason.contains("uncommitted changes"));
+    assert!(worktree.path.exists());
+}
+
+#[tokio::test]
+async fn pruning_obeys_the_retention_window() {
+    let Some((_repo, _data, service, _session, agent, trees)) = setup().await else {
+        return;
+    };
+    let worktree = trees.create(&agent).await.unwrap();
+    service.set_agent_status(&agent, "exited").await.unwrap();
+
+    let report = trees.prune(Duration::from_secs(86_400)).await.unwrap();
+    assert_eq!(report.removed, 0);
+    assert!(report.entries[0].reason.contains("retention window"));
+    assert!(worktree.path.exists());
+}
+
+#[tokio::test]
+async fn pruning_removes_a_clean_merged_worktree_after_retention() {
+    let Some((repo, _data, service, _session, agent, trees)) = setup().await else {
+        return;
+    };
+    let worktree = trees.create(&agent).await.unwrap();
+    std::fs::write(worktree.path.join("src/lib.rs"), "merged change\n").unwrap();
+    assert!(git(&worktree.path, &["add", "."]));
+    assert!(git(&worktree.path, &["commit", "-q", "-m", "merged child"]));
+    let output = Command::new("git")
+        .arg("-C")
+        .arg(&worktree.path)
+        .args(["rev-parse", "HEAD"])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let child_head = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    assert!(git(repo.path(), &["merge", "--ff-only", &child_head]));
+    service.set_agent_status(&agent, "exited").await.unwrap();
+    sqlx::query("UPDATE agents SET started_at = ? WHERE id = ?")
+        .bind(1_i64)
+        .bind(&agent)
+        .execute(service.pool())
+        .await
+        .unwrap();
+
+    let report = trees.prune(Duration::from_millis(1)).await.unwrap();
+    assert_eq!(report.removed, 1);
+    assert!(report.entries[0].removed);
     assert!(!worktree.path.exists());
     assert!(service.agent(&agent).await.unwrap().worktree.is_none());
 }

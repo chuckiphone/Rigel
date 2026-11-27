@@ -5,6 +5,7 @@
 
 use std::path::PathBuf;
 use std::process::ExitCode;
+use std::time::Duration;
 
 use clap::Subcommand;
 use rigel_core::{SessionService, WorktreeService};
@@ -58,6 +59,16 @@ pub enum WorktreeCommand {
     List {
         #[arg(long, value_name = "PATH", default_value = ".")]
         project: PathBuf,
+        #[arg(long)]
+        json: bool,
+    },
+
+    /// Prune clean, merged child worktrees older than the retention window.
+    Prune {
+        #[arg(long, value_name = "PATH", default_value = ".")]
+        project: PathBuf,
+        #[arg(long, default_value_t = 30)]
+        retention_days: u64,
         #[arg(long)]
         json: bool,
     },
@@ -225,6 +236,35 @@ pub async fn run(dir: &std::path::Path, command: WorktreeCommand) -> ExitCode {
                         for path in &paths {
                             println!("{}", path.display());
                         }
+                    }
+                    ExitCode::SUCCESS
+                }
+                Err(error) => failure(error, as_json),
+            }
+        }
+
+        WorktreeCommand::Prune {
+            project,
+            retention_days,
+            json: as_json,
+        } => {
+            let (trees, _service) = match open(&project, dir).await {
+                Ok(pair) => pair,
+                Err(code) => return code,
+            };
+            match trees
+                .prune(Duration::from_secs(retention_days.saturating_mul(86_400)))
+                .await
+            {
+                Ok(report) => {
+                    if as_json {
+                        println!("{}", json!({ "ok": true, "report": report }));
+                    } else {
+                        for entry in &report.entries {
+                            let action = if entry.removed { "removed" } else { "kept" };
+                            println!("{action:<8} {}: {}", entry.agent_id, entry.reason);
+                        }
+                        println!("\n  {} removed · {} kept", report.removed, report.kept);
                     }
                     ExitCode::SUCCESS
                 }
