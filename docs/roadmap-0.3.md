@@ -1010,6 +1010,7 @@ done signal, and the eight-state table is the evidence a review will use.
 82. **W3 · P1 · S · Safe mode.** `crates/rigel-core/src/session/safe_mode.rs` opens an untrusted
     project with tools, network and scripts off. — done when every turn row carries the mode and
     leaving it requires an explicit action.
+    **Done (2026-11-27):** `crates/rigel-core/src/session/safe_mode.rs` defines `SafeModeState::state_path`, `load`, `save` and `turn_mode`; `crates/rigel-app/src/commands/safety.rs` exposes `safe_mode_get` and `safe_mode_set`; `ui/src/safe-mode.tsx` provides `canLeave`, `SafeModeBadge` and `SafeModePanel`, with `ui/tests/safe-mode.spec.ts` and `ui/tests/safe-mode.test.tsx` covering the mode on every row and the typed exit.
 
 83. **W3 · P1 · M · Audit log surface.** `ui/src/audit-log.tsx` makes approvals, denials and
     overrides searchable by project, session, agent and turn. — done when a filter round-trips
@@ -1043,6 +1044,7 @@ done signal, and the eight-state table is the evidence a review will use.
 87. **W4 · P1 · M · Per-project defaults.** `ui/src/settings/project-defaults.tsx` stores model,
     effort, step cap and approval defaults per project. — done when a new session shows them before
     creation and a changed default applies to the next session only.
+    **Done (2026-11-27):** `ui/src/settings/project-defaults.tsx` provides `ProjectDefaultsEditor`, `useProjectDefaults`, `loadSessionDefaults` and `saveSessionDefaults`; `crates/rigel-app/src/commands/turns.rs::validate_session_step_cap` bounds `max_steps` to 1..=50, `ui/src/session.tsx` applies the defaults at session creation, and `ui/tests/project-defaults.test.tsx` checks the behaviour.
 
 88. **W4 · P2 · L · Import Claude/Codex history.** `crates/rigel-core/src/import/mod.rs` parses past
     sessions with roles, tools and timestamps preserved. — done when a dry run lists every imported
@@ -1308,6 +1310,7 @@ done signal, and the eight-state table is the evidence a review will use.
 143. **W5 · P1 · M · Agent run dry run.** `crates/rigel-cli/src/agent_run.rs` prints the resolved
      route, tools, prompt budget and required approvals. — done when `--dry-run` makes no network
      call, asserted by a socket test, and its JSON matches the real run.
+    **Done (2026-11-27):** `crates/rigel-cli/src/phase3/agent.rs` resolves `--dry-run` through the real agent path and prints `dry_run` in its JSON; `crates/rigel-cli/tests/agent_run_dry_run.rs::dry_run_reports_the_real_run_plan_without_opening_a_provider_socket` proves no provider socket is opened.
 
 144. **W5 · P1 · M · MCP health and discovery.** `crates/rigel-core/src/mcp/health.rs` reports connect
      latency, protocol version, tool count and last error per server. — done when one failed
@@ -1542,6 +1545,7 @@ done signal, and the eight-state table is the evidence a review will use.
 192. **W5 · P1 · L · Performance regression suite.** `benches/` covers indexing, search, diff and
      patch apply with recorded thresholds. — done when a run prints a trend against the last recorded
      baseline and a regression beyond the threshold fails.
+    **Done (2026-11-27):** `crates/rigel-core/Cargo.toml` registers the `performance` bench, and `crates/rigel-core/benches/performance.rs` computes medians with `percent_delta` and `is_regression` against `crates/rigel-core/benches/baseline.json`, documented in `crates/rigel-core/benches/README.md`.
 
 ## 10. Testing, observability, docs and release (193–200)
 
