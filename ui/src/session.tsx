@@ -48,7 +48,6 @@ import SessionFilters, {
   sessionHash,
   type SessionFilter,
 } from "./session-filters";
-import ForkLineage from "./fork-lineage";
 import MarkdownText, { MarkdownPreview } from "./markdown";
 import McpResult from "./mcp-result";
 import { UPLOAD_CHUNK_BYTES } from "./composer/dropzone";
@@ -59,6 +58,7 @@ import { RequestInspector, RequestInspectorPreview, fromUsage } from "./inspecto
 import { StepCost } from "./inspector/step-cost";
 import { Recovery } from "./recovery";
 import { SubagentGraphView } from "./subagent-graph";
+import SessionRoster, { rosterFixture } from "./roster";
 import { VirtualTranscriptPreview } from "./transcript/virtual";
 import { ApprovalCard } from "./session/approval-card";
 import {
@@ -587,9 +587,13 @@ export default function SessionView({
   // D148: the left pane is either the project's sessions or this session's agents. The list
   // lives here rather than in App because every edit returns the row the core stored.
   const [pane, setPane] = useState<"sessions" | "agents">("agents");
-  const [list, setList] = useState<Session[]>(() =>
-    tauri ? [] : [previewSession, previewArchivedSession],
-  );
+  const [list, setList] = useState<Session[]>(() => {
+    if (tauri) return [];
+    const fixture =
+      typeof window !== "undefined" &&
+      new URLSearchParams(window.location.search).get("roster") === "500";
+    return fixture ? rosterFixture(500) : [previewSession, previewArchivedSession];
+  });
   // Roadmap 102: one filter object is both the list state and the URL; saved filters and tags
   // live in session-filters.tsx so the same object round-trips through a pasted address.
   const [filters, setFilters] = useState<SessionFilter>(() =>
@@ -3391,194 +3395,97 @@ export default function SessionView({
         </div>
 
         <div className="session-list-pane">
-          <div className="rows">
-            {visibleSessions.map((row) => (
-              <div
-                key={row.id}
-                className={`session-row${session?.id === row.id ? " on" : ""}`}
-                onContextMenu={(event) => {
-                  if ((event.target as HTMLElement).closest("input, textarea")) return;
-                  contextMenu.open(event, {
-                    eyebrow: "Session",
-                    title: row.title ?? "Untitled session",
-                    subtitle: `${row.status} · ${money(row.spend_micros)} · ${when(row.created_at)}`,
-                    sections: [
-                      {
-                        label: "Session",
-                        items: [
-                          {
-                            label: session?.id === row.id ? "Current session" : "Open session",
-                            detail: row.archived_at !== null ? "Archived, still resumable" : row.status,
-                            icon: "open",
-                            disabled: session?.id === row.id,
-                            onSelect: () => void openListItem(row),
-                          },
-                          {
-                            label: row.pinned_at !== null ? "Unpin from top" : "Pin to top",
-                            icon: "pin",
-                            checked: row.pinned_at !== null,
-                            disabled: listBusy === row.id,
-                            onSelect: () => void togglePin(row),
-                          },
-                          {
-                            label: "Rename…",
-                            detail: row.title ?? "Untitled session",
-                            icon: "edit",
-                            onSelect: () => beginRename(row),
-                          },
-                          {
-                            label: row.archived_at !== null ? "Restore to list" : "Archive session",
-                            detail:
-                              row.archived_at !== null
-                                ? "Searchable again"
-                                : "Stays searchable and resumable",
-                            icon: "archive",
-                            disabled: listBusy === row.id,
-                            onSelect: () => void toggleArchive(row),
-                          },
-                          {
-                            label: "Delete permanently…",
-                            detail:
-                              row.archived_at === null
-                                ? "Archive it first"
-                                : "Typed confirmation; cannot be undone",
-                            icon: "trash",
-                            disabled:
-                              row.archived_at === null ||
-                              listBusy === row.id ||
-                              session?.id === row.id,
-                            onSelect: () => requestDelete(row),
-                          },
-                        ],
-                      },
-                      {
-                        label: "Copy",
-                        items: [
-                          {
-                            label: "Session ID",
-                            detail: row.id,
-                            icon: "copy",
-                            onSelect: () => void copyText(row.id, "Session ID"),
-                          },
-                          {
-                            label: "Session title",
-                            icon: "quote",
-                            onSelect: () =>
-                              void copyText(row.title ?? "Untitled session", "Session title"),
-                          },
-                        ],
-                      },
-                    ],
-                    footer: `${row.id.slice(0, 8)} · ${row.status}`,
-                  });
-                }}
-              >
-                {renaming === row.id ? (
-                  <input
-                    className="session-rename"
-                    autoFocus
-                    value={renameText}
-                    onChange={(event) => setRenameText(event.target.value)}
-                    onKeyDown={(event) => {
-                      if (event.key === "Enter") {
-                        event.preventDefault();
-                        event.currentTarget.blur();
-                      } else if (event.key === "Escape") {
-                        event.preventDefault();
-                        cancelRename();
-                      }
-                    }}
-                    onBlur={() => void commitRename(row, renameText)}
-                    aria-label={`Rename ${row.title ?? "session"}`}
-                    placeholder="Session name"
-                  />
-                ) : (
-                  <button
-                    type="button"
-                    className="session-open"
-                    onClick={() => void openListItem(row)}
-                    title={`${row.title ?? "Untitled session"} · ${when(row.created_at)} · ${money(
-                      row.spend_micros,
-                    )}`}
-                  >
-                    <span className="row-text">
-                      <span className="row-name">
-                        {row.pinned_at !== null ? (
-                          <span className="pin-flag" aria-hidden="true">
-                            ★
-                          </span>
-                        ) : null}
-                        <span className="session-name">{row.title ?? "Untitled session"}</span>
-                        <ForkLineage parentSessionId={row.parent_session_id} parentTurnId={row.parent_turn_id} />
-                        {row.archived_at !== null ? <span className="tag">archived</span> : null}
-                      </span>
-                      <span className="row-meta session-meta">
-                        <span className={`session-state ${row.status}`}>{row.status}</span>
-                        <span aria-hidden="true">·</span>
-                        <span>{when(row.created_at).slice(0, 10)}</span>
-                        <span aria-hidden="true">·</span>
-                        <span>{money(row.spend_micros)}</span>
-                      </span>
-                    </span>
-                  </button>
-                )}
-                {renaming === row.id ? null : (
-                  <div className="session-row-actions">
-                    <button
-                      type="button"
-                      className="session-act"
-                      aria-pressed={row.pinned_at !== null}
-                      disabled={listBusy === row.id}
-                      title={row.pinned_at !== null ? "Unpin" : "Pin to the top"}
-                      onClick={() => void togglePin(row)}
-                    >
-                      {row.pinned_at !== null ? "★" : "☆"}
-                    </button>
-                    <button
-                      type="button"
-                      className="session-act"
-                      title="Rename"
-                      aria-label={`Rename ${row.title ?? "session"}`}
-                      onClick={() => beginRename(row)}
-                    >
-                      ✎
-                    </button>
-                    <button
-                      type="button"
-                      className="session-act"
-                      disabled={listBusy === row.id}
-                      title={
-                        row.archived_at !== null
-                          ? "Restore to the list"
-                          : "Archive: hidden by default, still searchable and resumable"
-                      }
-                      aria-label={row.archived_at !== null ? "Restore session" : "Archive session"}
-                      onClick={() => void toggleArchive(row)}
-                    >
-                      {row.archived_at !== null ? "restore" : "archive"}
-                    </button>
-                  </div>
-                )}
-              </div>
-            ))}
-            {visibleSessions.length === 0 ? (
-              <EmptyState
-                surface="sessions"
-                signals={{ filtered: list.length > 0 }}
-                copy={
-                  list.length === 0
-                    ? "No session in this project yet. Start one with the first prompt."
-                    : "No session matches this filter."
+        <div className="rows">
+          <SessionRoster
+            sessions={visibleSessions}
+            selectedId={session?.id ?? null}
+            renamingId={renaming}
+            renameText={renameText}
+            busyId={listBusy}
+            onRenameText={setRenameText}
+            onCommitRename={(row, text) => void commitRename(row, text)}
+            onCancelRename={cancelRename}
+            actions={{
+              onOpen: (row) => void openListItem(row),
+              onRename: (row) => beginRename(row),
+              onPin: (row) => void togglePin(row),
+              onArchive: (row) => void toggleArchive(row),
+              onDelete: (row) => requestDelete(row),
+              onContextMenu: (event, row) => {
+                if ((event.target as HTMLElement).closest("input, textarea")) return;
+                contextMenu.open(event, {
+                  eyebrow: "Session",
+                  title: row.title ?? "Untitled session",
+                  subtitle: `${row.status} · ${money(row.spend_micros)} · ${when(row.created_at)}`,
+                  sections: [
+                    {
+                      label: "Session",
+                      items: [
+                        {
+                          label: session?.id === row.id ? "Current session" : "Open session",
+                          detail: row.archived_at !== null ? "Archived, still resumable" : row.status,
+                          icon: "open",
+                          disabled: session?.id === row.id,
+                          onSelect: () => void openListItem(row),
+                        },
+                        {
+                          label: row.pinned_at !== null ? "Unpin from top" : "Pin to top",
+                          icon: "pin",
+                          checked: row.pinned_at !== null,
+                          disabled: listBusy === row.id,
+                          onSelect: () => void togglePin(row),
+                        },
+                        {
+                          label: "Rename…",
+                          detail: row.title ?? "Untitled session",
+                          icon: "edit",
+                          onSelect: () => beginRename(row),
+                        },
+                        {
+                          label: row.archived_at !== null ? "Restore to list" : "Archive session",
+                          icon: "archive",
+                          disabled: listBusy === row.id,
+                          onSelect: () => void toggleArchive(row),
+                        },
+                        {
+                          label: "Delete permanently…",
+                          detail:
+                            row.archived_at === null
+                              ? "Archive it first"
+                              : "Typed confirmation; cannot be undone",
+                          icon: "trash",
+                          disabled:
+                            row.archived_at === null ||
+                            listBusy === row.id ||
+                            session?.id === row.id,
+                          onSelect: () => requestDelete(row),
+                        },
+                      ],
+                    },
+                  ],
+                  footer: `${row.id.slice(0, 8)} · ${row.status}`,
+                });
+              },
+            }}
+          />
+          {visibleSessions.length === 0 ? (
+            <EmptyState
+              surface="sessions"
+              signals={{ filtered: list.length > 0 }}
+              copy={
+                list.length === 0
+                  ? "No session in this project yet. Start one with the first prompt."
+                  : "No session matches this filter."
+              }
+              onAction={(action) => {
+                if (action === "clear-filter") {
+                  setFilters({ query: "", status: "all", archived: true, tags: [] });
+                } else if (action === "start-session") {
+                  void startSession();
                 }
-                onAction={(action) => {
-                  if (action === "clear-filter") {
-                    setFilters({ query: "", status: "all", archived: true, tags: [] });
-                  } else if (action === "start-session") {
-                    void startSession();
-                  }
-                }}
-              />
-            ) : null}
+              }}
+            />
+          ) : null}
           </div>
           <div className="roster-foot">
             <span>

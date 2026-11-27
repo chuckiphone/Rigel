@@ -4062,6 +4062,67 @@ button[aria-label^="Unpin "] {
   background: var(--well);
 }
 
+/* Session roster (roadmap 131): grouped, virtualised rows and one keyboard-reachable menu. */
+.roster-virtual {
+  max-height: none;
+  height: 100%;
+}
+
+.roster-group {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 11px;
+  color: var(--faint);
+  text-transform: uppercase;
+}
+
+.roster-menu {
+  position: relative;
+  margin-left: auto;
+}
+
+.roster-menu-trigger {
+  min-width: 24px;
+  min-height: 24px;
+  border: 1px solid var(--hairline);
+  border-radius: 6px;
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+}
+
+.roster-menu-items {
+  position: absolute;
+  right: 0;
+  top: 100%;
+  z-index: 20;
+  display: flex;
+  flex-direction: column;
+  min-width: 160px;
+  padding: 4px;
+  border: 1px solid var(--hairline);
+  border-radius: 8px;
+  background: var(--surface);
+  box-shadow: 0 6px 18px var(--shadow);
+}
+
+.roster-menu-items button {
+  min-height: 26px;
+  padding: 3px 8px;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  text-align: left;
+}
+
+.roster-menu-items button:focus-visible,
+.roster-menu-items button:hover {
+  background: var(--well);
+}
+
 /* Tray attention (roadmap 115): badge and pause-all above the live metrics. */
 .tray-attention {
   display: flex;

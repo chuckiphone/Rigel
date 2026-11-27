@@ -54,6 +54,7 @@ export interface VirtualTranscriptProps<T> {
   /** Change this to land on a row; the row is centred rather than placed at the top edge. */
   jumpTo?: number | null;
   label?: string;
+  className?: string;
 }
 
 export default function VirtualTranscript<T>({
@@ -64,6 +65,7 @@ export default function VirtualTranscript<T>({
   renderRow,
   jumpTo,
   label = "Virtual transcript",
+  className,
 }: VirtualTranscriptProps<T>) {
   const scroller = useRef<HTMLDivElement>(null);
   const anchor = useRef<number | null>(null);
@@ -103,7 +105,7 @@ export default function VirtualTranscript<T>({
 
   return (
     <div
-      className="virtual-transcript"
+      className={`virtual-transcript${className ? ` ${className}` : ""}`}
       ref={scroller}
       role="region"
       aria-label={label}
