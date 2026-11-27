@@ -58,6 +58,18 @@ import { VirtualTranscriptPreview } from "./transcript/virtual";
 import { ApprovalCard } from "./session/approval-card";
 import { DegradedBanner } from "./degraded-banner";
 import { ProviderErrorPanel, providerStatus } from "./provider-error";
+import {
+  FILTERS,
+  filterCounts as countFilters,
+  filterShowsPrompt,
+  hiddenCount,
+  outlineGroups,
+  readFilter,
+  visibleItems,
+  writeFilter,
+  type OutlineGroup,
+  type TranscriptFilter,
+} from "./transcript-filter";
 import { ModelControls } from "./modelpicker";
 import { AgentRow, resolveAgentRoute } from "./agent-row";
 import BrowserPanel, { latestBrowserCall } from "./browser";
@@ -225,68 +237,7 @@ function handoffPrompt(entry: TurnTranscript, from: string): string {
   ].join("\n");
 }
 
-/* ------------------------- transcript filters (D136) ------------------------- */
-
-/** The five views of one transcript. `yours` keeps the prompts and the notes you wrote. */
-type TranscriptFilter = "all" | "tools" | "diffs" | "errors" | "yours";
-
-const FILTERS: { id: TranscriptFilter; label: string }[] = [
-  { id: "all", label: "all" },
-  { id: "tools", label: "tools" },
-  { id: "diffs", label: "diffs" },
-  { id: "errors", label: "errors" },
-  { id: "yours", label: "yours" },
-];
-
-const TOOL_KINDS = new Set(["command", "mcp_call", "web_search"]);
-const BAD_STATES = new Set([
-  "error",
-  "failed",
-  "cancelled",
-  "denied",
-  "timeout",
-  "timed_out",
-  "interrupted",
-]);
-
-function isErrorItem(item: Item): boolean {
-  return item.kind === "error" || BAD_STATES.has(item.status);
-}
-
-function matchesFilter(item: Item, filter: TranscriptFilter): boolean {
-  if (filter === "all") return true;
-  if (filter === "tools") return TOOL_KINDS.has(item.kind);
-  if (filter === "diffs") return item.kind === "file_change";
-  if (filter === "errors") return isErrorItem(item);
-  return item.kind === "note";
-}
-
-/** A prompt is yours, and it is the one line that is not an item. */
-function filterShowsPrompt(filter: TranscriptFilter): boolean {
-  return filter === "all" || filter === "yours";
-}
-
-const filterKey = (project: string, session: string) =>
-  `rigel.transcriptFilter.${project}::${session}`;
-
-function readFilter(project: string, session: string): TranscriptFilter {
-  try {
-    const saved = localStorage.getItem(filterKey(project, session));
-    return FILTERS.some((row) => row.id === saved) ? (saved as TranscriptFilter) : "all";
-  } catch {
-    return "all";
-  }
-}
-
-/* --------------------------- turn outline (D149) --------------------------- */
-
-type OutlineKind = "prompt" | "diff" | "error" | "approval";
-
-interface OutlineGroup {
-  turnId: string;
-  seq: number;
-  marks: { key: string; kind: OutlineKind; title: string }[];
-}
+/* Transcript filtering, outline and search live in ./transcript-filter so all three use one rule. */
 
 /* --------------------- composer history and snippets (D151) --------------------- */
 
@@ -656,6 +607,8 @@ export default function SessionView({
   );
   // D136/D149: the filter is remembered per session; the outline tracks where the reader is.
   const [filter, setFilter] = useState<TranscriptFilter>("all");
+  // Roadmap 111: in-session search narrows the same rows as the filter chips and the outline.
+  const [transcriptQuery, setTranscriptQuery] = useState("");
   const [activeTurnId, setActiveTurnId] = useState<string | null>(null);
   const transcriptRef = useRef<HTMLDivElement | null>(null);
   // D155: one card on focus, built from what changed while the window was in the background.
@@ -2812,75 +2765,13 @@ export default function SessionView({
     [shown, shownTurns, turns],
   );
 
-  const filterCounts = useMemo(() => {
-    const counts: Record<TranscriptFilter, number> = {
-      all: 0,
-      tools: 0,
-      diffs: 0,
-      errors: 0,
-      yours: 0,
-    };
-    for (const entry of paneEntries) {
-      if (entry.turn.prompt) {
-        counts.all += 1;
-        counts.yours += 1;
-      }
-      for (const item of entry.items) {
-        counts.all += 1;
-        if (matchesFilter(item, "tools")) counts.tools += 1;
-        if (matchesFilter(item, "diffs")) counts.diffs += 1;
-        if (matchesFilter(item, "errors")) counts.errors += 1;
-        if (matchesFilter(item, "yours")) counts.yours += 1;
-      }
-    }
-    return counts;
-  }, [paneEntries]);
+  const filterCounts = useMemo(() => countFilters(paneEntries), [paneEntries]);
 
-  const outline = useMemo<OutlineGroup[]>(() => {
-    const groups: OutlineGroup[] = [];
-    for (const entry of paneEntries) {
-      const marks: OutlineGroup["marks"] = [];
-      if (entry.turn.prompt) {
-        marks.push({
-          key: `prompt-${entry.turn.id}`,
-          kind: "prompt",
-          title: `turn ${entry.turn.seq} · your prompt: ${entry.turn.prompt.slice(0, 90)}`,
-        });
-      }
-      for (const item of entry.items) {
-        if (item.kind === "file_change") {
-          const result = bodyRecord(item, "result");
-          const path =
-            result && typeof result.path === "string" ? result.path : bodyText(item, "path");
-          marks.push({
-            key: `diff-${item.id}`,
-            kind: "diff",
-            title: `turn ${entry.turn.seq} · patch ${path}`.trim(),
-          });
-        } else if (isErrorItem(item)) {
-          const message =
-            item.kind === "error"
-              ? bodyText(item, "message")
-              : `${item.kind} ${item.status}`;
-          marks.push({
-            key: `error-${item.id}`,
-            kind: "error",
-            title: `turn ${entry.turn.seq} · error: ${message.slice(0, 80)}`,
-          });
-        } else if (item.kind === "approval") {
-          marks.push({
-            key: `approval-${item.id}`,
-            kind: "approval",
-            title: `turn ${entry.turn.seq} · approval ${bodyText(item, "kind") || item.status}`,
-          });
-        }
-      }
-      if (marks.length > 0) {
-        groups.push({ turnId: entry.turn.id, seq: entry.turn.seq, marks });
-      }
-    }
-    return groups;
-  }, [paneEntries]);
+  // The outline is derived from the same visible rows as the transcript and the search.
+  const outline = useMemo<OutlineGroup[]>(
+    () => outlineGroups(paneEntries, filter, transcriptQuery),
+    [paneEntries, filter, transcriptQuery],
+  );
 
   // Q249: only the newest turn of an agent can be continued. An older stopped turn stays a
   // record, not a second button that would duplicate the task.
@@ -2903,11 +2794,7 @@ export default function SessionView({
   const chooseFilter = (next: TranscriptFilter) => {
     setFilter(next);
     if (!project || !session) return;
-    try {
-      localStorage.setItem(filterKey(project, session.id), next);
-    } catch {
-      // A blocked store forgets the choice; the transcript still filters for this run.
-    }
+    writeFilter(project, session.id, next);
   };
 
   const jumpToTurn = useCallback((turnId: string) => {
@@ -3997,16 +3884,22 @@ export default function SessionView({
                   className={filter === row.id ? "chip on" : "chip"}
                   aria-pressed={filter === row.id}
                   onClick={() => chooseFilter(row.id)}
-                  title={
-                    row.id === "yours"
-                      ? "Your prompts and notes, without the agent's tool traffic"
-                      : `Show only ${row.label}`
-                  }
+                  title={row.title}
                 >
                   {row.label}
                   <span className="filter-count">{filterCounts[row.id]}</span>
                 </button>
               ))}
+              <label className="transcript-search">
+                <span aria-hidden>⌕</span>
+                <input
+                  value={transcriptQuery}
+                  onChange={(event) => setTranscriptQuery(event.target.value)}
+                  placeholder="Search this transcript"
+                  aria-label="Search this transcript"
+                  spellCheck={false}
+                />
+              </label>
             </div>
             {asyncPreview ? <AsyncStatePreview /> : null}
             {requestPreview ? <RequestInspectorPreview enabled /> : null}
@@ -4054,6 +3947,7 @@ export default function SessionView({
                         turns={turns}
                         raw={raw}
                         filter={filter}
+                        query={transcriptQuery}
                         bookmarks={bookmarks}
                         onBookmark={toggleItemBookmark}
                         onCopy={copyText}
@@ -5405,6 +5299,7 @@ function TurnCard({
   continueDisabled,
   handoffAgents,
   onHandoff,
+  query,
 }: {
   entry: TurnTranscript;
   turns: TurnTranscript[];
@@ -5413,6 +5308,7 @@ function TurnCard({
   checkpoint?: Checkpoint;
   onRestore?: (checkpoint: Checkpoint) => void;
   filter: TranscriptFilter;
+  query: string;
   bookmarks: Bookmark[];
   onBookmark: (item: Item, seq: number) => void;
   onCopy: (text: string, label: string) => void;
@@ -5426,11 +5322,8 @@ function TurnCard({
 }) {
   const contextMenu = useMenu();
   const children = turns.filter((candidate) => candidate.turn.parent_turn_id === entry.turn.id);
-  const visibleItems = entry.items.filter((item) => matchesFilter(item, filter));
-  const hidden =
-    entry.items.length -
-    visibleItems.length +
-    (entry.turn.prompt && !filterShowsPrompt(filter) ? 1 : 0);
+  const rows = visibleItems(entry, filter, query);
+  const hidden = hiddenCount(entry, filter, query);
   const childSpend = children.reduce(
     (sum, child) => sum + (child.turn.usage?.cost_micros ?? 0),
     0,
@@ -5637,7 +5530,7 @@ function TurnCard({
         </div>
       ) : null}
 
-      {visibleItems.map((item) => {
+      {rows.map((item) => {
         const marked = bookmarks.some(
           (row) => row.kind === "item" && row.target_id === item.id,
         );
@@ -5661,6 +5554,7 @@ function TurnCard({
       {hidden > 0 ? (
         <p className="turn-hidden fine">
           {hidden} line{hidden === 1 ? "" : "s"} hidden by the {filter} filter
+          {query.trim() ? ` and the “${query.trim()}” search` : ""}
         </p>
       ) : null}
 
