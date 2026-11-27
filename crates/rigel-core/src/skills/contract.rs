@@ -74,6 +74,83 @@ impl Contract {
         }
     }
 
+    /// Load a script declaration from skill frontmatter. `script-program` names the
+    /// executable; `script-args` and `script-env` are whitespace-separated names, with
+    /// `?name` marking optional entries. CLI arguments are checked against that declaration.
+    pub fn load_skill(
+        root: impl Into<std::path::PathBuf>,
+        source: &str,
+        mut args: Vec<String>,
+    ) -> Result<(Self, Script), ContractError> {
+        let metadata = crate::skills::frontmatter::parse(source);
+        let program = metadata
+            .get("script-program")
+            .filter(|value| !value.trim().is_empty())
+            .ok_or_else(|| ContractError::InvalidDeclaration("missing script-program".into()))?;
+        let arg_specs = metadata
+            .get("script-args")
+            .unwrap_or_default()
+            .split_whitespace()
+            .map(|token| {
+                if let Some((name, default)) = token.split_once('=') {
+                    if name.is_empty() {
+                        return Err(ContractError::InvalidDeclaration(
+                            "script-args contains an empty argument name".into(),
+                        ));
+                    }
+                    Ok(ArgSpec::new(name).with_default(default))
+                } else if let Some(name) = token.strip_prefix('?') {
+                    if name.is_empty() {
+                        return Err(ContractError::InvalidDeclaration(
+                            "script-args contains an empty argument name".into(),
+                        ));
+                    }
+                    Ok(ArgSpec::new(name).optional())
+                } else {
+                    Ok(ArgSpec::new(token))
+                }
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        let env_specs = parse_names(metadata.get("script-env").unwrap_or_default())
+            .into_iter()
+            .map(|(name, required)| EnvSpec { name, required })
+            .collect::<Vec<_>>();
+        let exit_codes = metadata
+            .get("script-exit-codes")
+            .unwrap_or("0")
+            .split([',', ' ', '\t'])
+            .filter(|value| !value.is_empty())
+            .map(|value| {
+                value.parse::<i32>().map_err(|_| {
+                    ContractError::InvalidDeclaration(format!("invalid exit code {value}"))
+                })
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        let contract = Contract {
+            args: arg_specs,
+            env: env_specs,
+            exit_codes,
+        };
+        let mut script = Script::new(root, program);
+        while args.len() < contract.args.len() {
+            let next = &contract.args[args.len()];
+            let Some(default) = next.default.as_ref() else {
+                break;
+            };
+            args.push(default.clone());
+        }
+        for arg in args {
+            script = script.arg(arg);
+        }
+        for spec in &contract.env {
+            if let Ok(value) = std::env::var(&spec.name) {
+                script = script.env(&spec.name, value);
+            }
+        }
+        contract.validate_script(&script)?;
+        Ok((contract, script))
+    }
+
     pub fn arg(mut self, spec: ArgSpec) -> Self {
         self.args.push(spec);
         self
@@ -109,6 +186,12 @@ impl Contract {
         if script.args.len() < required_args {
             return Err(ContractError::MissingArgument {
                 expected: required_args,
+                got: script.args.len(),
+            });
+        }
+        if script.args.len() > self.args.len() {
+            return Err(ContractError::UnexpectedArgumentCount {
+                expected: self.args.len(),
                 got: script.args.len(),
             });
         }
@@ -157,6 +240,8 @@ impl Default for Contract {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ContractError {
+    InvalidDeclaration(String),
+    UnexpectedArgumentCount { expected: usize, got: usize },
     MissingArgument { expected: usize, got: usize },
     MissingEnvironment(String),
     UndeclaredEnvironment(String),
@@ -164,9 +249,29 @@ pub enum ContractError {
     NoExitCode,
 }
 
+fn parse_names(value: &str) -> Vec<(String, bool)> {
+    value
+        .split_whitespace()
+        .filter(|name| !name.is_empty())
+        .map(|name| {
+            name.strip_prefix('?')
+                .map_or((name.to_string(), true), |optional| {
+                    (optional.to_string(), false)
+                })
+        })
+        .collect()
+}
+
 impl fmt::Display for ContractError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Self::InvalidDeclaration(message) => write!(f, "{message}"),
+            Self::UnexpectedArgumentCount { expected, got } => {
+                write!(
+                    f,
+                    "unexpected argument count: expected at most {expected}, got {got}"
+                )
+            }
             Self::MissingArgument { expected, got } => {
                 write!(f, "missing argument: expected {expected}, got {got}")
             }

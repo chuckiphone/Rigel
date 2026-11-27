@@ -1,9 +1,58 @@
 //! Local skill authoring commands share the core parser and install scanner.
 
+use std::collections::BTreeMap;
 use std::path::Path;
 use std::process::ExitCode;
 
 use rigel_core::skills::{SkillSpector, frontmatter, scan, scanner::SkillScanner};
+
+/// Execute a locally declared script, or print its exact command without spawning it.
+pub(crate) fn run_script(path: &Path, dry_run: bool, args: &[String]) -> ExitCode {
+    let source = match std::fs::read_to_string(path) {
+        Ok(source) => source,
+        Err(error) => {
+            eprintln!("rigel: could not read {}: {error}", path.display());
+            return ExitCode::from(2);
+        }
+    };
+    let root = path
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+        .unwrap_or_else(|| Path::new("."));
+    let (contract, script) =
+        match rigel_core::skills::Contract::load_skill(root, &source, args.to_vec()) {
+            Ok(declaration) => declaration,
+            Err(error) => {
+                eprintln!("rigel: script contract rejected: {error}");
+                return ExitCode::from(1);
+            }
+        };
+    if dry_run {
+        println!("{}", contract.dry_run(&script));
+        return ExitCode::SUCCESS;
+    }
+    let inherited = rigel_core::skills::run::ENVIRONMENT_ALLOWLIST
+        .iter()
+        .filter_map(|name| {
+            std::env::var(name)
+                .ok()
+                .map(|value| ((*name).to_string(), value))
+        })
+        .collect::<BTreeMap<_, _>>();
+    match rigel_core::skills::run::run_checked(root, &script, &contract, &inherited) {
+        Ok(output) => {
+            print!("{}", output.stdout);
+            if !output.stderr.is_empty() {
+                eprint!("{}", output.stderr);
+            }
+            ExitCode::from(output.exit_code.unwrap_or(1).clamp(0, 255) as u8)
+        }
+        Err(error) => {
+            eprintln!("rigel: skill script failed contract: {error}");
+            ExitCode::from(1)
+        }
+    }
+}
 
 /// Create a starter skill without replacing an existing file.
 pub(crate) fn init(path: &Path, name: Option<&str>) -> ExitCode {
@@ -145,5 +194,21 @@ mod tests {
             frontmatter::parse(&std::fs::read_to_string(file).unwrap()).get("name"),
             Some("Example")
         );
+    }
+
+    #[test]
+    fn script_dry_run_uses_the_frontmatter_contract_and_missing_args_are_refused() {
+        let directory = tempfile::tempdir().unwrap();
+        let file = directory.path().join("SKILL.md");
+        std::fs::write(
+            &file,
+            "---\nscript-program: executable-that-does-not-exist\nscript-args: file\n---\n",
+        )
+        .unwrap();
+        assert_eq!(
+            run_script(&file, true, &["task.py".into()]),
+            ExitCode::SUCCESS
+        );
+        assert_eq!(run_script(&file, true, &[]), ExitCode::from(1));
     }
 }
