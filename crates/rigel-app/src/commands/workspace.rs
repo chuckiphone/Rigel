@@ -477,11 +477,56 @@ pub(crate) fn search_all(
             None => rigel_core::WorkspaceHits::default(),
         };
 
+        // Roadmap 113: files and symbols come from the same on-demand graph the Graph tab reads.
+        // A graph that cannot be scanned leaves the other palette sections usable.
+        let (files, symbols) = match project.as_deref().filter(|root| !root.is_empty()) {
+            Some(root) => {
+                let needle = query.trim().to_lowercase();
+                match rigel_core::codegraph::snapshot(Path::new(root), None, 1, 700) {
+                    Ok(graph) => {
+                        let file_rows = graph
+                            .nodes
+                            .iter()
+                            .filter(|node| node.kind == "file")
+                            .filter(|node| {
+                                needle.is_empty() || node.path.to_lowercase().contains(&needle)
+                            })
+                            .take(6)
+                            .map(|node| PaletteFile {
+                                path: node.path.clone(),
+                                language: node.language.clone(),
+                            })
+                            .collect();
+                        let symbol_rows = graph
+                            .nodes
+                            .iter()
+                            .filter(|node| node.kind == "symbol")
+                            .filter(|node| {
+                                needle.is_empty() || node.label.to_lowercase().contains(&needle)
+                            })
+                            .take(6)
+                            .map(|node| PaletteSymbol {
+                                name: node.label.clone(),
+                                path: node.path.clone(),
+                                line: node.line,
+                                language: node.language.clone(),
+                            })
+                            .collect();
+                        (file_rows, symbol_rows)
+                    }
+                    Err(_) => (Vec::new(), Vec::new()),
+                }
+            }
+            None => (Vec::new(), Vec::new()),
+        };
+
         Ok(PaletteResults {
             skills,
             sessions: workspace.sessions,
             turns: workspace.turns,
             patches: workspace.patches,
+            files,
+            symbols,
         })
     })
 }

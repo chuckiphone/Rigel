@@ -60,6 +60,7 @@ import { StepCost } from "./inspector/step-cost";
 import { Recovery } from "./recovery";
 import { SubagentGraphView } from "./subagent-graph";
 import SessionRoster, { rosterFixture } from "./roster";
+import { helpText, parseSlash } from "./slash";
 import { VirtualTranscriptPreview } from "./transcript/virtual";
 import { ApprovalCard } from "./session/approval-card";
 import {
@@ -2417,6 +2418,25 @@ export default function SessionView({
       setError("This transcript is read-only; turn sending is disabled.");
       return;
     }
+    // Roadmap 113: a slash draft is a command, not prompt text. An unknown name is refused with
+    // its own named error before any turn, review card or refiner can see it.
+    const parsed = parseSlash(text);
+    if (parsed.kind === "unknown") {
+      setError(parsed.error);
+      onNotice(parsed.error);
+      return;
+    }
+    if (parsed.kind === "command") {
+      const name = parsed.command.name;
+      setText("");
+      setError(null);
+      if (name === "help") setError(helpText());
+      else if (name === "clear") setError("Draft cleared.");
+      else if (name === "focus") onFocusHandled?.();
+      else if (name === "model") document.querySelector<HTMLButtonElement>(".model-button")?.click();
+      else setError(`/${name}: ${parsed.command.detail}`);
+      return;
+    }
     const prompt =
       text.trim() ||
       (attachments.length > 0 ? "Read the attached files and tell me what matters." : "");
@@ -2483,6 +2503,7 @@ export default function SessionView({
     turns,
     deliver,
     onNotice,
+    onFocusHandled,
     liveTurn,
     queueDraft,
   ]);
