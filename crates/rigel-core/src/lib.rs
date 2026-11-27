@@ -20,6 +20,7 @@ pub mod codegraph;
 pub mod comments;
 pub mod credentials;
 pub mod diagnostics;
+pub mod diff;
 pub mod domain;
 pub mod export;
 pub mod flakes;
@@ -101,6 +102,7 @@ pub use cloud::{
     PushReport, SessionStore,
 };
 pub use comments::{CommentError, HunkComment, HunkComments};
+pub use diff::{DiffHunk, DiffMode, DiffReport, HunkMeta, WORD_DIFF_BYTE_LIMIT};
 pub use domain::{AgentEvent, CostSource, EventSink, ItemKind, NullSink, Usage};
 pub use export::markdown::{
     ExportFormat, ExportManifest, ExportResult, OmittedItem, export_json, export_markdown,
