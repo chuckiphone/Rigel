@@ -959,7 +959,7 @@ async fn run_skills(dir: &Path, command: SkillCommand) -> ExitCode {
         if *as_json {
             println!(
                 "{}",
-                crate::json::to_string_pretty(&report).unwrap_or_default()
+                serde_json::to_string_pretty(&report).unwrap_or_default()
             );
         } else {
             println!("restored {} locked skills", report.restored);
