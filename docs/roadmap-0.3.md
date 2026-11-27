@@ -1049,6 +1049,7 @@ done signal, and the eight-state table is the evidence a review will use.
 88. **W4 · P2 · L · Import Claude/Codex history.** `crates/rigel-core/src/import/mod.rs` parses past
     sessions with roles, tools and timestamps preserved. — done when a dry run lists every imported
     and every skipped row with a reason before anything is written.
+    **Done (2026-11-27):** Claude and Codex JSONL rows are previewed without writes and imported into ended local sessions with source timestamps; core and CLI integration tests cover imports, duplicate/invalid rows, and persistence.
 
 89. **W4 · P1 · M · Redacted export.** `crates/rigel-core/src/export/markdown.rs` writes Markdown
     and JSON exports with secrets removed and paths optionally relativised. — done when the export
