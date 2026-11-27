@@ -763,6 +763,8 @@ export default function SettingsView({
   const [apiBackendBusy, setApiBackendBusy] = useState(false);
   // The Cloud page: the project, the account, and what the last mirror did. Tokens never arrive
   // in this shape — only who is signed in and when the token next needs refreshing.
+  // Roadmap 114: the routing table is read from the shell so the view and the emitter agree.
+  const [routing, setRouting] = useState<import("./api").NotifyRoute[]>([]);
   const [cloud, setCloud] = useState<CloudStatus | null>(null);
   const [cloudBusy, setCloudBusy] = useState(false);
   const [cloudProject, setCloudProject] = useState("");
@@ -882,6 +884,10 @@ export default function SettingsView({
       .mailStatus()
       .then((next) => live && setMail(next))
       .catch(() => live && setMail(null));
+    api
+      .notifyRouting()
+      .then((next) => live && setRouting(next))
+      .catch(() => live && setRouting([]));
     if (project) {
       api
         .spendReport(project)
@@ -1011,6 +1017,13 @@ export default function SettingsView({
     setError(null);
     try {
       setSettings(await api.saveSettings(next));
+      if (
+        Object.keys(fields).some((key) =>
+          ["notify_approval", "notify_turn_done", "notify_turn_failed", "quiet_hours_start", "quiet_hours_end"].includes(key),
+        )
+      ) {
+        void api.notifyRouting().then(setRouting).catch(() => {});
+      }
       if (notice) onNotice(notice);
     } catch (problem) {
       setError(problem instanceof Error ? problem.message : String(problem));
@@ -2670,6 +2683,39 @@ export default function SettingsView({
           Clear
         </button>
       </div>
+
+      <div className="settings-head" style={{ marginTop: 18 }}>
+        <h3>Routing table</h3>
+        <span className="pill">{routing.length} event(s)</span>
+      </div>
+      <p className="fine">
+        Every event has exactly one destination. A row stays visible when it is switched off or
+        silenced by the quiet window; nothing fires inside that window.
+      </p>
+      <table className="notify-routing" aria-label="Notification routing table">
+        <thead>
+          <tr>
+            <th>Event</th>
+            <th>Destination</th>
+            <th>State</th>
+          </tr>
+        </thead>
+        <tbody>
+          {routing.map((row) => (
+            <tr key={row.kind} data-kind={row.kind}>
+              <td>{row.kind}</td>
+              <td>{row.target === "tray" ? "Tray" : "In-app"}</td>
+              <td>
+                {row.silent
+                  ? "silent (quiet hours)"
+                  : row.enabled
+                    ? "enabled"
+                    : "off"}
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
     </section>
   );
 

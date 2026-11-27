@@ -35,6 +35,23 @@ pub(crate) fn servers_start(app: tauri::AppHandle, project: Option<String>) {
     warm_models();
 }
 
+/// Roadmap 114: the notification routing table the settings page shows. It is computed from the
+/// same settings and local clock the emitter uses, so the two cannot disagree.
+#[tauri::command]
+pub(crate) fn notify_routing_table() -> Vec<notify::NotifyRoute> {
+    let now = rigel_core::migrate::now_ms();
+    let minutes = ((now / 60_000) % 1_440) as i32;
+    notify::routing_table(&load_settings().notification_settings(), minutes)
+}
+
+/// Roadmap 115: pause every running turn from the tray. The step boundary is the same one the
+/// per-turn Pause uses, so no response is cut in mid-stream.
+#[tauri::command]
+pub(crate) fn tray_pause_all(state: tauri::State<'_, AppRuntime>) -> Result<(), String> {
+    state.cancels.pause_all();
+    Ok(())
+}
+
 #[tauri::command]
 pub(crate) fn tray_snapshot() -> Result<tray_status::TraySnapshot, String> {
     tauri::async_runtime::block_on(tray_status::snapshot())

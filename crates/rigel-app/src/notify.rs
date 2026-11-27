@@ -57,6 +57,70 @@ impl std::str::FromStr for NotifyKind {
     }
 }
 
+/// Where an event is surfaced. Approval questions follow the user into the window; turn lifecycle
+/// events also badge the tray so a hidden window still tells the truth.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum NotifyTarget {
+    /// A desktop notification and the tray's attention badge.
+    Tray,
+    /// The in-app notification row, which the transcript also records.
+    InApp,
+}
+
+impl NotifyTarget {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Tray => "tray",
+            Self::InApp => "in_app",
+        }
+    }
+}
+
+impl std::fmt::Display for NotifyTarget {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+/// One row of the routing table, as the settings page shows it. `enabled` and `silent` describe
+/// the *current* settings; the target itself never changes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct NotifyRoute {
+    pub kind: NotifyKind,
+    pub target: NotifyTarget,
+    pub enabled: bool,
+    /// True when the Q283 window currently silences this row.
+    pub silent: bool,
+}
+
+/// The explicit table: every event kind has exactly one destination. Nothing is inferred from an
+/// event body, so the settings view and the emitter cannot drift apart.
+pub const ROUTING_TABLE: [(NotifyKind, NotifyTarget); 3] = [
+    (NotifyKind::Approval, NotifyTarget::InApp),
+    (NotifyKind::Finished, NotifyTarget::Tray),
+    (NotifyKind::Failed, NotifyTarget::Tray),
+];
+
+/// Render the table for the current settings and local clock. A row stays visible when muted;
+/// `silent` says why it will not fire.
+pub fn routing_table(settings: &NotificationSettings, now_minutes: i32) -> Vec<NotifyRoute> {
+    let quiet = in_quiet_hours(
+        now_minutes,
+        &settings.quiet_hours_start,
+        &settings.quiet_hours_end,
+    );
+    ROUTING_TABLE
+        .iter()
+        .map(|(kind, target)| NotifyRoute {
+            kind: *kind,
+            target: *target,
+            enabled: settings.notify_for(*kind),
+            silent: quiet,
+        })
+        .collect()
+}
+
 /// The per-event notification switches plus the Q283 quiet window. Old settings files that carry
 /// only the three switches deserialize with the quiet hours defaulting to off.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -133,23 +197,33 @@ pub fn in_quiet_hours(now_minutes: i32, start: &str, end: &str) -> bool {
 /// The one routing decision for a notification event. `watching` is the window's own focus state,
 /// so a turn on screen never notifies; `now_minutes` is local minutes since midnight, for the
 /// Q283 quiet window.
+pub fn route(
+    kind: NotifyKind,
+    settings: &NotificationSettings,
+    watching: bool,
+    now_minutes: i32,
+) -> Option<NotifyTarget> {
+    if watching {
+        return None;
+    }
+    let row = routing_table(settings, now_minutes)
+        .into_iter()
+        .find(|row| row.kind == kind)?;
+    if row.silent || !row.enabled {
+        return None;
+    }
+    Some(row.target)
+}
+
+/// Whether one event may fire a notification at all. The routing decision is the single source;
+/// both callers and the settings view read the same table.
 pub fn should_notify(
     kind: NotifyKind,
     settings: &NotificationSettings,
     watching: bool,
     now_minutes: i32,
 ) -> bool {
-    if watching {
-        return false;
-    }
-    if in_quiet_hours(
-        now_minutes,
-        &settings.quiet_hours_start,
-        &settings.quiet_hours_end,
-    ) {
-        return false;
-    }
-    settings.notify_for(kind)
+    route(kind, settings, watching, now_minutes).is_some()
 }
 
 #[cfg(test)]
@@ -163,6 +237,48 @@ mod tests {
 
     fn minutes(value: &str) -> Option<i32> {
         quiet_hours_minutes(value)
+    }
+
+    #[test]
+    fn the_routing_table_gives_every_kind_one_destination() {
+        let rows = routing_table(&settings(), 60 * 10);
+        assert_eq!(rows.len(), 3);
+        assert_eq!(rows[0].kind, NotifyKind::Approval);
+        assert_eq!(rows[0].target, NotifyTarget::InApp);
+        assert_eq!(rows[1].target, NotifyTarget::Tray);
+        assert_eq!(rows[2].target, NotifyTarget::Tray);
+        assert!(rows.iter().all(|row| row.enabled && !row.silent));
+        assert_eq!(
+            route(NotifyKind::Approval, &settings(), false, 60 * 10),
+            Some(NotifyTarget::InApp)
+        );
+        assert_eq!(
+            route(NotifyKind::Failed, &settings(), false, 60 * 10),
+            Some(NotifyTarget::Tray)
+        );
+    }
+
+    #[test]
+    fn nothing_routes_during_quiet_hours() {
+        let quiet = NotificationSettings {
+            quiet_hours_start: "22:00".to_string(),
+            quiet_hours_end: "06:00".to_string(),
+            ..settings()
+        };
+        for kind in [
+            NotifyKind::Approval,
+            NotifyKind::Finished,
+            NotifyKind::Failed,
+        ] {
+            assert_eq!(route(kind, &quiet, false, 23 * 60), None, "{kind}");
+            assert!(!should_notify(kind, &quiet, false, 2 * 60), "{kind}");
+        }
+        let rows = routing_table(&quiet, 23 * 60);
+        assert!(rows.iter().all(|row| row.silent));
+        assert_eq!(
+            route(NotifyKind::Finished, &quiet, false, 12 * 60),
+            Some(NotifyTarget::Tray)
+        );
     }
 
     #[test]
