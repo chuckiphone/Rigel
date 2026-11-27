@@ -245,7 +245,7 @@ pub fn session_bundle(
         redact_text(session.title.as_deref().unwrap_or("untitled"), secrets)
     ));
     out.push_str(&format!(
-        "- id: `{}`\n- status: {:?}\n- started: {}\n- spend: {} micros\n- budget: {}\n\n",
+        "- id: `{}`\n- status: {:?}\n- started: {}\n- spend: {} micros\n- budget: {}\n",
         session.id,
         session.status,
         session.created_at,
@@ -255,6 +255,13 @@ pub fn session_bundle(
             .map(|cents| format!("{cents} cents"))
             .unwrap_or_else(|| "no cap".to_string()),
     ));
+    if let Some(parent) = &session.parent_session_id {
+        out.push_str(&format!("- forked from session: `{parent}`\n"));
+    }
+    if let Some(parent_turn) = &session.parent_turn_id {
+        out.push_str(&format!("- forked at turn: `{parent_turn}`\n"));
+    }
+    out.push('\n');
 
     out.push_str("## Agents\n\n");
     out.push_str("| agent | harness | role | model | spend (micros) |\n|---|---|---|---|---|\n");
@@ -381,6 +388,8 @@ mod tests {
             ended_at: None,
             pinned_at: None,
             archived_at: None,
+            parent_session_id: None,
+            parent_turn_id: None,
         };
         let bookmarks = [crate::session::Bookmark {
             id: "b-1".to_string(),

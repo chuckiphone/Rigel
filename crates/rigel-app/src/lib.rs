@@ -2034,6 +2034,7 @@ pub fn run() {
             commands::workspace::attachment_import,
             commands::sessions::session_start,
             commands::sessions::session_list,
+            commands::sessions::session_fork,
             commands::sessions::session_rename,
             commands::sessions::session_pin,
             commands::sessions::session_skill_pins,

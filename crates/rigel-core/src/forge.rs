@@ -176,6 +176,8 @@ mod tests {
             ended_at: None,
             pinned_at: None,
             archived_at: None,
+            parent_session_id: None,
+            parent_turn_id: None,
         }
     }
 

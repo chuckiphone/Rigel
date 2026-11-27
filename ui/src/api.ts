@@ -30,6 +30,8 @@ export interface Session {
   pinned_at: number | null;
   /** D148: archived sessions are hidden by default, still searchable and still resumable. */
   archived_at: number | null;
+  parent_session_id?: string | null;
+  parent_turn_id?: string | null;
 }
 
 export interface ProjectInfo {
@@ -2579,6 +2581,11 @@ export const api = {
   async listSessions(project: string): Promise<Session[]> {
     if (!isTauri()) return [];
     return call<Session[]>("session_list", { project });
+  },
+
+  async forkSession(project: string, session: string, turn: string): Promise<Session> {
+    if (!isTauri()) throw new Error("Fork a session in the desktop app.");
+    return call<Session>("session_fork", { project, session, turn });
   },
 
   /** D148: nil clears the name, so the automatic title is used again. */

@@ -48,6 +48,7 @@ import SessionFilters, {
   sessionHash,
   type SessionFilter,
 } from "./session-filters";
+import ForkLineage from "./fork-lineage";
 import MarkdownText, { MarkdownPreview } from "./markdown";
 import McpResult from "./mcp-result";
 import { MemoryInspector } from "./inspector/memory";
@@ -565,6 +566,7 @@ export default function SessionView({
   const [keyPresent, setKeyPresent] = useState<boolean | null>(tauri ? null : true);
   const [warning, setWarning] = useState(false);
   const [exporting, setExporting] = useState(false);
+  const [forking, setForking] = useState(false);
   const [publishing, setPublishing] = useState(false);
   const [testRun, setTestRun] = useState<TestRun | null>(null);
   const [testRunning, setTestRunning] = useState(false);
@@ -3467,6 +3469,7 @@ export default function SessionView({
                           </span>
                         ) : null}
                         <span className="session-name">{row.title ?? "Untitled session"}</span>
+                        <ForkLineage parentSessionId={row.parent_session_id} parentTurnId={row.parent_turn_id} />
                         {row.archived_at !== null ? <span className="tag">archived</span> : null}
                       </span>
                       <span className="row-meta session-meta">
@@ -3710,6 +3713,31 @@ export default function SessionView({
               <input type="checkbox" checked={raw} onChange={(event) => setRaw(event.target.checked)} />
               raw
             </label>
+            {session ? (
+              <button
+                className="chip"
+                disabled={forking || turns.length === 0 || live}
+                title="Create a new session branch from the latest turn"
+                onClick={() => {
+                  const turn = turns.at(-1)?.turn;
+                  if (!turn || !project) return;
+                  setForking(true);
+                  void api.forkSession(project, session.id, turn.id)
+                    .then(async (fork) => {
+                      const rows = await api.listSessions(project);
+                      setList(rows);
+                      onSessions(rows);
+                      await selectSession(fork);
+                      onActive(fork);
+                      onNotice(`Forked from turn ${turn.id.slice(0, 8)}.`);
+                    })
+                    .catch((failure) => onNotice(failure instanceof Error ? failure.message : "Fork failed."))
+                    .finally(() => setForking(false));
+                }}
+              >
+                {forking ? "Forking…" : "Fork at latest turn"}
+              </button>
+            ) : null}
             {session ? (
               <button
                 className="chip"

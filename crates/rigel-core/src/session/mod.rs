@@ -20,6 +20,29 @@ pub use bookmarks::{Bookmark, bookmark_lines};
 
 /// `items` row as SQLite returns it: id, turn, seq, kind, status, body, created_at, raw.
 type ItemRow = (String, String, i64, String, String, String, i64, String);
+type ForkAgentRow = (
+    String,
+    String,
+    Option<String>,
+    Option<String>,
+    Option<String>,
+    Option<String>,
+    Option<String>,
+    i64,
+);
+type ForkTurnRow = (
+    String,
+    String,
+    i64,
+    String,
+    Option<String>,
+    i64,
+    Option<i64>,
+    Option<String>,
+    Option<String>,
+    Option<String>,
+    Option<String>,
+);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "lowercase")]
@@ -72,6 +95,10 @@ pub struct Session {
     pub pinned_at: Option<i64>,
     /// D148: hidden from the default list, still searchable and still resumable.
     pub archived_at: Option<i64>,
+    /// The session this branch was forked from, when applicable.
+    pub parent_session_id: Option<String>,
+    /// The source turn at which this branch was forked.
+    pub parent_turn_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -282,6 +309,8 @@ type SessionRow = (
     Option<i64>,
     Option<i64>,
     Option<String>,
+    Option<String>,
+    Option<String>,
 );
 
 impl SessionService {
@@ -341,7 +370,7 @@ impl SessionService {
         let row: Option<SessionRow> = sqlx::query_as(
             "SELECT id, project_root, title, status, budget_cents, spend_cents, spend_micros,
                     interventions, tasks_done, created_at, ended_at, pinned_at, archived_at,
-                    title_source
+                    title_source, parent_session_id, parent_turn_id
              FROM sessions WHERE id = ?",
         )
         .bind(id)
@@ -354,6 +383,149 @@ impl SessionService {
         }
     }
 
+    /// Start a session branch linked to an existing session and the turn it forks from.
+    pub async fn fork(
+        &self,
+        source_session_id: &str,
+        turn_id: &str,
+    ) -> Result<Session, SessionError> {
+        let source = self.get(source_session_id).await?;
+        let mut tx = self.pool.begin().await?;
+        let belongs: Option<(i64,)> = sqlx::query_as(
+            "SELECT t.rowid FROM turns t JOIN agents a ON a.id = t.agent_id
+             WHERE a.session_id = ? AND t.id = ?",
+        )
+        .bind(source_session_id)
+        .bind(turn_id)
+        .fetch_optional(&mut *tx)
+        .await?;
+        if belongs.is_none() {
+            return Err(SessionError::TurnNotFound(turn_id.to_string()));
+        }
+        let forked_id = Uuid::new_v4().to_string();
+        let created_at = now_ms();
+        sqlx::query(
+            "INSERT INTO sessions
+                 (id, project_root, title, title_source, status, budget_cents, created_at,
+                  parent_session_id, parent_turn_id)
+             VALUES (?, ?, ?, ?, 'active', ?, ?, ?, ?)",
+        )
+        .bind(&forked_id)
+        .bind(&self.project_root)
+        .bind(source.title.as_deref())
+        .bind(source.title.as_deref().map(|_| "manual"))
+        .bind(source.budget_cents)
+        .bind(created_at)
+        .bind(source_session_id)
+        .bind(turn_id)
+        .execute(&mut *tx)
+        .await?;
+        // Clone the chronological prefix into the child so it is a real branch, while new
+        // turn ids keep its later edits isolated from the parent transcript.
+        let cutoff: i64 = sqlx::query_scalar("SELECT rowid FROM turns WHERE id = ?")
+            .bind(turn_id)
+            .fetch_one(&mut *tx)
+            .await?;
+        let source_agents: Vec<ForkAgentRow> = sqlx::query_as(
+            "SELECT id, harness, role, model, provider, effort, worktree, started_at
+             FROM agents WHERE session_id = ? ORDER BY started_at, rowid",
+        )
+        .bind(source_session_id)
+        .fetch_all(&mut *tx)
+        .await?;
+        let agent_ids: std::collections::HashMap<_, _> = source_agents
+            .iter()
+            .map(|agent| (agent.0.clone(), Uuid::new_v4().to_string()))
+            .collect();
+        for agent in source_agents {
+            sqlx::query(
+                "INSERT INTO agents (id, session_id, harness, role, model, provider, effort, worktree, status, started_at)
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'ended', ?)",
+            )
+            .bind(agent_ids.get(&agent.0).ok_or_else(|| SessionError::AgentNotFound(agent.0.clone()))?)
+            .bind(&forked_id)
+            .bind(agent.1)
+            .bind(agent.2)
+            .bind(agent.3)
+            .bind(agent.4)
+            .bind(agent.5)
+            .bind(agent.6)
+            .bind(agent.7)
+            .execute(&mut *tx)
+            .await?;
+        }
+        let source_turns: Vec<ForkTurnRow> = sqlx::query_as(
+            "SELECT t.id, t.agent_id, t.seq, t.status, t.prompt, t.started_at, t.completed_at,
+                    t.usage_json, t.stop_reason, t.parent_turn_id, t.images_json
+             FROM turns t JOIN agents a ON a.id = t.agent_id
+             WHERE a.session_id = ? AND t.rowid <= ? ORDER BY t.rowid",
+        )
+        .bind(source_session_id)
+        .bind(cutoff)
+        .fetch_all(&mut *tx)
+        .await?;
+        let turn_ids: std::collections::HashMap<_, _> = source_turns
+            .iter()
+            .map(|turn| (turn.0.clone(), Uuid::new_v4().to_string()))
+            .collect();
+        for turn in source_turns {
+            let child_turn = turn_ids
+                .get(&turn.0)
+                .ok_or_else(|| SessionError::TurnNotFound(turn.0.clone()))?;
+            let child_agent = agent_ids
+                .get(&turn.1)
+                .ok_or_else(|| SessionError::AgentNotFound(turn.1.clone()))?;
+            let parent_turn = turn
+                .9
+                .as_ref()
+                .and_then(|parent| turn_ids.get(parent))
+                .cloned()
+                .or(turn.9.clone());
+            sqlx::query(
+                "INSERT INTO turns (id, agent_id, seq, status, prompt, started_at, completed_at,
+                                    usage_json, stop_reason, parent_turn_id, images_json)
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            )
+            .bind(child_turn)
+            .bind(child_agent)
+            .bind(turn.2)
+            .bind(turn.3)
+            .bind(turn.4)
+            .bind(turn.5)
+            .bind(turn.6)
+            .bind(turn.7)
+            .bind(turn.8)
+            .bind(parent_turn)
+            .bind(turn.10)
+            .execute(&mut *tx)
+            .await?;
+            let items: Vec<(i64, String, String, String, String, i64)> = sqlx::query_as(
+                "SELECT seq, kind, status, body_json, raw_json, created_at FROM items WHERE turn_id = ? ORDER BY seq",
+            )
+            .bind(&turn.0)
+            .fetch_all(&mut *tx)
+            .await?;
+            for item in items {
+                sqlx::query(
+                    "INSERT INTO items (id, turn_id, seq, kind, status, body_json, raw_json, created_at)
+                     VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                )
+                .bind(Uuid::new_v4().to_string())
+                .bind(child_turn)
+                .bind(item.0)
+                .bind(item.1)
+                .bind(item.2)
+                .bind(item.3)
+                .bind(item.4)
+                .bind(item.5)
+                .execute(&mut *tx)
+                .await?;
+            }
+        }
+        tx.commit().await?;
+        self.get(&forked_id).await
+    }
+
     /// Pinned first, then newest: the session list is a log with a favourites shelf.
     ///
     /// Archived sessions are still returned — the window hides them behind a toggle, and the
@@ -362,7 +534,7 @@ impl SessionService {
         let rows: Vec<SessionRow> = sqlx::query_as(
             "SELECT id, project_root, title, status, budget_cents, spend_cents, spend_micros,
                     interventions, tasks_done, created_at, ended_at, pinned_at, archived_at,
-                    title_source
+                    title_source, parent_session_id, parent_turn_id
              FROM sessions
              ORDER BY (pinned_at IS NULL), pinned_at DESC, created_at DESC, id DESC",
         )
@@ -1911,6 +2083,8 @@ fn session_from_row(row: SessionRow) -> Result<Session, SessionError> {
         ended_at: row.10,
         pinned_at: row.11,
         archived_at: row.12,
+        parent_session_id: row.14,
+        parent_turn_id: row.15,
     })
 }
 
