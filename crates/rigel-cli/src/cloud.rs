@@ -11,6 +11,7 @@ use std::process::ExitCode;
 
 use clap::Subcommand;
 use rigel_core::SkillIndex;
+use rigel_core::cloud::sponsor::SponsorLedger;
 use rigel_core::cloud::{AppCheckConfig, Cloud, CloudConfig, CloudError};
 use rigel_core::credentials;
 use serde_json::json;
@@ -30,6 +31,18 @@ pub enum CloudCommand {
         /// The project's web API key. Read from stdin when omitted.
         #[arg(long, value_name = "KEY")]
         api_key: Option<String>,
+        #[arg(long)]
+        json: bool,
+    },
+
+    /// Configure this signed-in operator's local sponsor budget and per-run cap.
+    SponsorConfigure {
+        #[arg(long, value_name = "NAME")]
+        sponsor: String,
+        #[arg(long, value_name = "MICROS")]
+        budget_micros: u64,
+        #[arg(long, value_name = "MICROS")]
+        cap_micros: u64,
         #[arg(long)]
         json: bool,
     },
@@ -92,6 +105,9 @@ pub enum CloudCommand {
         /// Ceiling on the runner's work, in minutes. The queue records it; the runner enforces it.
         #[arg(long, default_value_t = 15)]
         minutes: u32,
+        /// Sponsor this run from the configured operator budget, in micros.
+        #[arg(long, value_name = "MICROS")]
+        sponsor_cost_micros: Option<u64>,
         #[arg(long)]
         json: bool,
     },
@@ -675,21 +691,44 @@ pub async fn run(dir: &Path, command: CloudCommand) -> ExitCode {
         CloudCommand::Run {
             prompt,
             minutes,
+            sponsor_cost_micros,
             json: as_json,
         } => {
             let cloud = match Cloud::open(dir) {
                 Ok(cloud) => cloud,
                 Err(error) => return failure(error, as_json),
             };
-            match cloud.enqueue_run(&prompt.join(" "), minutes).await {
-                Ok(id) => {
+            let queued = if let Some(amount_micros) = sponsor_cost_micros {
+                cloud
+                    .enqueue_sponsored_run(&prompt.join(" "), minutes, amount_micros)
+                    .await
+                    .map(|report| (report.run_id.clone(), Some(report)))
+            } else {
+                cloud
+                    .enqueue_run(&prompt.join(" "), minutes)
+                    .await
+                    .map(|id| (id, None))
+            };
+            match queued {
+                Ok((id, report)) => {
                     if as_json {
-                        crate::json::print(
-                            json!({ "id": id, "state": "queued", "maxMinutes": minutes }),
-                        );
+                        let mut payload =
+                            json!({ "id": id, "state": "queued", "maxMinutes": minutes });
+                        if let Some(report) = report {
+                            payload["sponsorReport"] = json!(report);
+                        }
+                        crate::json::print(payload);
                     } else {
                         println!("queued     {id} · {minutes} min ceiling");
                         println!("state      queued");
+                        if let Some(report) = report {
+                            println!("sponsor    {}", report.sponsor);
+                            println!(
+                                "funding    {} micros · cap {} micros",
+                                report.amount_micros, report.cap_micros
+                            );
+                            println!("report     sponsorReports/{id}");
+                        }
                         println!(
                             "next       no runner leases this queue yet, so the run stays queued"
                         );
@@ -697,6 +736,41 @@ pub async fn run(dir: &Path, command: CloudCommand) -> ExitCode {
                     ExitCode::SUCCESS
                 }
                 Err(error) => failure(error, as_json),
+            }
+        }
+
+        CloudCommand::SponsorConfigure {
+            sponsor,
+            budget_micros,
+            cap_micros,
+            json: as_json,
+        } => {
+            match SponsorLedger::create(
+                dir.join("sponsor-ledger.json"),
+                sponsor,
+                budget_micros,
+                cap_micros,
+            ) {
+                Ok(ledger) => match ledger.sponsor() {
+                    Ok(sponsor) => {
+                        if as_json {
+                            crate::json::print(json!({
+                                "sponsor": sponsor,
+                                "budgetMicros": budget_micros,
+                                "capMicros": cap_micros,
+                                "ledger": "local",
+                            }));
+                        } else {
+                            println!("sponsor    {sponsor}");
+                            println!("budget     {budget_micros} micros");
+                            println!("per-run cap {cap_micros} micros");
+                            println!("ledger     local operator ledger");
+                        }
+                        ExitCode::SUCCESS
+                    }
+                    Err(error) => failure(error.into(), as_json),
+                },
+                Err(error) => failure(error.into(), as_json),
             }
         }
 
