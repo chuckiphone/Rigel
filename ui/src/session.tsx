@@ -65,6 +65,7 @@ import {
 } from "./settings/project-defaults";
 import { DegradedBanner } from "./degraded-banner";
 import { ProviderErrorPanel, providerStatus } from "./provider-error";
+import SafeModePanel, { SafeModeBadge } from "./safe-mode";
 import {
   FILTERS,
   filterCounts as countFilters,
@@ -3941,6 +3942,7 @@ export default function SessionView({
             {markdownPreview ? <MarkdownPreview enabled /> : null}
             {requestPreview ? <RequestInspectorPreview enabled /> : null}
             {virtualPreview ? <VirtualTranscriptPreview enabled /> : null}
+            <SafeModePanel project={project ?? null} session={session?.id ?? null} />
             <div className="transcript-shell">
             <div className="transcripts" ref={transcriptRef} onScroll={trackOutline}>
             <div className={shown.length === 2 ? "transcript-panes split" : "transcript-panes"}>
@@ -5455,6 +5457,7 @@ function TurnCard({
       <header className="turn-head">
         <span className="turn-seq">turn {entry.turn.seq}</span>
         <span className={`pill ${entry.turn.status}`}>{entry.turn.status}</span>
+        <SafeModeBadge mode={entry.turn.mode} />
         {entry.turn.stop_reason && entry.turn.stop_reason !== entry.turn.status ? (
           <span className="turn-stop">{entry.turn.stop_reason}</span>
         ) : null}

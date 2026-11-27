@@ -2581,6 +2581,71 @@ input[type="checkbox"] {
   box-shadow: 0 0 0 2px rgba(233, 162, 59, 0.35);
 }
 
+/* Roadmap 82: safe mode is visible on every row and the way out needs a typed phrase. */
+.turn-mode.safe {
+  color: var(--warn);
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.safe-mode-panel {
+  margin: 8px 0;
+  padding: 10px 12px;
+  border: 1px solid var(--hairline);
+  background: var(--raised);
+}
+
+.safe-mode-panel.safe {
+  border-color: var(--warn);
+}
+
+.safe-mode-head {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.safe-mode-head strong {
+  color: var(--text);
+  font-size: 12px;
+}
+
+.safe-mode-leave {
+  display: flex;
+  align-items: flex-end;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.safe-mode-leave label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.safe-mode-leave input {
+  min-width: 180px;
+  height: 24px;
+  padding: 0 6px;
+  border: 1px solid var(--hairline);
+  background: var(--well);
+  color: var(--text);
+  font-family: var(--mono);
+  font-size: 11px;
+}
+
+.safe-mode-error {
+  margin: 6px 0 0;
+  color: var(--danger-text);
+  font-size: 11px;
+}
+
 .turn-hidden {
   margin: 6px 0 0;
   padding-left: 76px;

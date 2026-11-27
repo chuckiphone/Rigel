@@ -41,11 +41,11 @@ use rigel_core::{
     ConflictWatcher, EventSink, HunkComment, HunkComments, InterruptSink, MemoryApprover,
     MemoryDecision, MemoryFile, MemoryRequest, MemoryService, MergeReview, MergeReviews, Model,
     NetworkPolicy, POLL_INTERVAL, Patch, PatchPipeline, PlanApprover, PlanDecision, PlanRequest,
-    Provenance, RankedFact, RecoveryOffer, ResumeOutcome, Scopes, ScriptedModel, Session,
-    SessionService, SessionTemplate, SessionTemplates, SkillDetail, SkillIndex, SkillsError,
-    SnapshotService, StopAt, Store, SubagentPolicy, SyncPolicy, TeamAgent, Tools, Turn, TurnQuote,
-    TurnTranscript, UnverifiedChange, Usage, WorktreeService, WriteMode, apply_review, credentials,
-    diagnostics, skills::search::SearchHit,
+    Provenance, RankedFact, RecoveryOffer, ResumeOutcome, SafeModeState, Scopes, ScriptedModel,
+    Session, SessionService, SessionTemplate, SessionTemplates, SkillDetail, SkillIndex,
+    SkillsError, SnapshotService, StopAt, Store, SubagentPolicy, SyncPolicy, TeamAgent, Tools,
+    Turn, TurnQuote, TurnTranscript, UnverifiedChange, Usage, WorktreeService, WriteMode,
+    apply_review, credentials, diagnostics, skills::search::SearchHit,
 };
 use serde::{Deserialize, Serialize};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
@@ -2114,6 +2114,8 @@ pub fn run() {
             commands::safety::budget_raise,
             commands::safety::safety_get,
             commands::safety::safety_set,
+            commands::safety::safe_mode_get,
+            commands::safety::safe_mode_set,
             commands::patches::patch_list,
             commands::patches::patch_hunks,
             commands::patches::hunk_comment_add,
