@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 
 import { api, isTauri, type McpServer } from "./api";
 import { humanize, sourceLabel } from "./display";
+import McpHealthPanel from "./mcp-health";
 
 export type ShelfKind = "skills" | "mcps" | "plugins";
 
@@ -382,6 +383,8 @@ export default function McpShelf({ project, kind, onKind }: Props) {
             </button>
           </div>
         </header>
+
+        <McpHealthPanel project={project} />
 
         <p className="notice" role="status">
           {feedback}

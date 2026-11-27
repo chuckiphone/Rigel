@@ -2224,7 +2224,8 @@ pub fn run() {
             commands::skills::mcp_catalog_search,
             commands::skills::mcp_catalog_count,
             commands::skills::mcp_install,
-            commands::skills::mcp_installed
+            commands::skills::mcp_installed,
+            commands::mcp::health
         ])
         .build(tauri::generate_context!())
         .expect("rigel: failed to build the window")
