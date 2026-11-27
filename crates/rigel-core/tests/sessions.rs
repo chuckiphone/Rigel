@@ -561,6 +561,46 @@ async fn permanent_deletion_needs_an_archive_and_removes_the_session() {
     assert!(!owned_blobs.exists());
 }
 
+/// The id becomes one directory name under `.rigel/sessions`; a crafted value must be rejected
+/// before any row or file is touched, so a sibling's blobs cannot be removed as "session-owned".
+#[tokio::test]
+async fn an_unsafe_session_id_cannot_reach_a_sibling_blob_directory() {
+    use rigel_core::store::delete::{DeleteError, delete_session};
+
+    let tmp = TempDir::new().unwrap();
+    let service = SessionService::open(tmp.path()).await.unwrap();
+    let session = service.start(Some("safe"), None).await.unwrap();
+    let sibling = tmp.path().join(".rigel/sessions/neighbour");
+    std::fs::create_dir_all(&sibling).unwrap();
+    std::fs::write(sibling.join("keep"), b"another session's blob").unwrap();
+    let tombstones = tmp.path().join("unsafe-tombstones.json");
+
+    for bad_id in [
+        "../neighbour",
+        "..\\neighbour",
+        "/absolute",
+        "nested/child",
+        ".",
+        "..",
+    ] {
+        let error = delete_session(service.pool(), tmp.path(), bad_id, bad_id, &tombstones)
+            .await
+            .expect_err("an unsafe id is refused");
+        assert!(matches!(error, DeleteError::UnsafeSessionId(_)), "{error}");
+        assert!(
+            sibling.join("keep").exists(),
+            "{bad_id} reached a sibling directory"
+        );
+    }
+
+    assert!(
+        !tombstones.exists(),
+        "no tombstone was written for an unsafe id"
+    );
+    assert_eq!(service.get(&session.id).await.unwrap().id, session.id);
+    assert_eq!(service.list().await.unwrap().len(), 1);
+}
+
 #[tokio::test]
 async fn skill_pins_are_per_session_and_unpin_is_idempotent() {
     let tmp = TempDir::new().unwrap();

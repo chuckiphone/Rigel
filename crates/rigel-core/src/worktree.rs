@@ -44,6 +44,9 @@ pub enum WorktreeError {
     #[error("agent {0} has no worktree")]
     NotFound(String),
 
+    #[error("refusing to touch a worktree outside the managed directory: {0}")]
+    OutsideBase(PathBuf),
+
     #[error("{0} is not a git repository")]
     NotARepository(PathBuf),
 
@@ -466,7 +469,34 @@ impl WorktreeService {
     /// Remove the checkout and clear the agent's pointer. Refuses a dirty tree unless `force`,
     /// because discarding unmerged work silently is the failure mode this whole module avoids.
     pub async fn remove(&self, agent_id: &str, force: bool) -> Result<(), WorktreeError> {
+        // The stored pointer is data, and data can be edited or imported. Read it directly and
+        // check containment *before* `get()` runs git on it: neither a command nor a pointer
+        // clear may happen for a path outside the directory this service owns.
+        let row: Option<(Option<String>,)> =
+            sqlx::query_as("SELECT worktree FROM agents WHERE id = ?")
+                .bind(agent_id)
+                .fetch_optional(&self.pool)
+                .await?;
+        let path = row
+            .and_then(|(path,)| path)
+            .ok_or_else(|| WorktreeError::NotFound(agent_id.to_string()))?;
+        let path = PathBuf::from(path);
+        if !path.starts_with(&self.base_dir) {
+            return Err(WorktreeError::OutsideBase(path));
+        }
+        let base = if self.base_dir.exists() {
+            std::fs::canonicalize(&self.base_dir)?
+        } else {
+            self.base_dir.clone()
+        };
+        if path.exists() {
+            let canonical = std::fs::canonicalize(&path)?;
+            if !canonical.starts_with(&base) {
+                return Err(WorktreeError::OutsideBase(path));
+            }
+        }
         let worktree = self.get(agent_id).await?;
+
         let mut args = vec!["worktree", "remove"];
         if force {
             args.push("--force");
