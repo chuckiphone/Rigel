@@ -25,6 +25,7 @@ pub mod export;
 pub mod flakes;
 pub mod forge;
 pub mod gravity;
+pub mod index;
 pub mod mcp;
 pub mod memory;
 pub mod merge;
