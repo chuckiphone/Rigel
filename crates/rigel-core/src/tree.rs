@@ -9,10 +9,13 @@
 //! Git is only used to *enumerate* files (`git ls-files`), which is cheap and respects
 //! `.gitignore`. Without git, the walker skips the usual build directories by name.
 
+use std::collections::{BTreeMap, HashMap};
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::sync::{Mutex, OnceLock};
+use std::time::SystemTime;
 
 use sha2::{Digest, Sha256};
 
@@ -24,29 +27,132 @@ pub enum TreeError {
         #[source]
         source: io::Error,
     },
+    #[error("tree hash cache lock is poisoned")]
+    CachePoisoned,
 }
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct FileStamp {
+    modified: Option<SystemTime>,
+    size: u64,
+}
+
+#[derive(Default)]
+struct TreeHashCache {
+    files: BTreeMap<String, (FileStamp, String)>,
+    directories: HashMap<String, (Vec<(String, String)>, String)>,
+}
+
+static HASH_CACHES: OnceLock<Mutex<HashMap<PathBuf, TreeHashCache>>> = OnceLock::new();
 
 /// Stable across runs and machines: sorted `path\0content-sha` lines, hashed once.
 pub fn tree_hash(root: &Path) -> Result<String, TreeError> {
+    let root_key = fs::canonicalize(root).unwrap_or_else(|_| root.to_path_buf());
+    let caches = HASH_CACHES.get_or_init(|| Mutex::new(HashMap::new()));
+    let mut caches = caches.lock().map_err(|_| TreeError::CachePoisoned)?;
+    let cache = caches.entry(root_key).or_default();
     let files = tracked_files(root)?;
-    let mut hasher = Sha256::new();
+    let mut current = BTreeMap::new();
+    let mut directories: BTreeMap<String, Vec<(String, String)>> = BTreeMap::new();
     for relative in files {
         let path = root.join(&relative);
-        let bytes = match fs::read(&path) {
-            Ok(bytes) => bytes,
+        let metadata = match fs::metadata(&path) {
+            Ok(metadata) => metadata,
             Err(error) if error.kind() == io::ErrorKind::NotFound => continue,
-            Err(source) => {
-                return Err(TreeError::Io {
+            Err(source) => return Err(TreeError::Io { path, source }),
+        };
+        let stamp = FileStamp {
+            modified: metadata.modified().ok(),
+            size: metadata.len(),
+        };
+        let digest = match cache.files.get(&relative) {
+            Some((previous, digest)) if previous == &stamp => digest.clone(),
+            _ => {
+                let bytes = fs::read(&path).map_err(|source| TreeError::Io {
                     path: path.clone(),
                     source,
-                });
+                })?;
+                sha256_hex(&bytes)
             }
         };
+        let normalized = relative.replace('\\', "/");
+        let parent = normalized
+            .rsplit_once('/')
+            .map(|(parent, _)| parent)
+            .unwrap_or("")
+            .to_string();
+        let name = normalized
+            .rsplit('/')
+            .next()
+            .unwrap_or(&normalized)
+            .to_string();
+        directories
+            .entry(parent.clone())
+            .or_default()
+            .push((format!("f:{name}"), digest.clone()));
+        let mut ancestor = parent.as_str();
+        while !ancestor.is_empty() {
+            let parent = ancestor
+                .rsplit_once('/')
+                .map(|(parent, _)| parent)
+                .unwrap_or("");
+            let name = ancestor.rsplit('/').next().unwrap_or(ancestor);
+            directories
+                .entry(parent.to_string())
+                .or_default()
+                .push((format!("d:{name}"), String::new()));
+            ancestor = parent;
+        }
+        current.insert(relative, (stamp, digest));
+    }
+    cache.files = current;
+    let mut all_paths: Vec<_> = cache.files.iter().collect();
+    all_paths.sort_by(|left, right| left.0.cmp(right.0));
+    let mut hasher = Sha256::new();
+    for (relative, (_, digest)) in all_paths {
         hasher.update(relative.replace('\\', "/").as_bytes());
         hasher.update([0]);
-        hasher.update(sha256_hex(&bytes).as_bytes());
+        hasher.update(digest.as_bytes());
         hasher.update(b"\n");
     }
+    let mut next_directories = HashMap::new();
+    let mut directory_hashes = HashMap::new();
+    let mut directory_names: Vec<_> = directories.keys().cloned().collect();
+    directory_names.sort_by_key(|directory| std::cmp::Reverse(directory.matches('/').count()));
+    for directory in directory_names {
+        let mut children = directories.remove(&directory).unwrap_or_default();
+        for (name, hash) in &mut children {
+            if hash.is_empty() {
+                let child_name = name.strip_prefix("d:").unwrap_or(name);
+                let child_path = if directory.is_empty() {
+                    child_name.to_string()
+                } else {
+                    format!("{directory}/{child_name}")
+                };
+                *hash = directory_hashes
+                    .get(&child_path)
+                    .cloned()
+                    .unwrap_or_default();
+            }
+        }
+        children.sort();
+        let digest = match cache.directories.get(&directory) {
+            Some((previous, digest)) if previous == &children => digest.clone(),
+            _ => {
+                let mut directory_hasher = Sha256::new();
+                for (name, child_hash) in &children {
+                    directory_hasher.update(name.as_bytes());
+                    directory_hasher.update([0]);
+                    directory_hasher.update(child_hash.as_bytes());
+                    directory_hasher.update(b"\n");
+                }
+                hex(&directory_hasher.finalize())
+            }
+        };
+        directory_hashes.insert(directory.clone(), digest.clone());
+        next_directories.insert(directory, (children, digest));
+    }
+    cache.directories = next_directories;
     Ok(hasher
         .finalize()
         .iter()
@@ -154,6 +260,10 @@ fn sha256_hex(bytes: &[u8]) -> String {
         .collect()
 }
 
+fn hex(bytes: &[u8]) -> String {
+    bytes.iter().map(|byte| format!("{byte:02x}")).collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -191,5 +301,30 @@ mod tests {
         fs::create_dir_all(tmp.path().join(".rigel")).unwrap();
         fs::write(tmp.path().join(".rigel/rigel.db"), b"not a project file").unwrap();
         assert_eq!(tree_hash(tmp.path()).unwrap(), before);
+    }
+
+    #[test]
+    fn changing_a_file_invalidates_only_its_directory_and_ancestors() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        fs::create_dir_all(tmp.path().join("src")).unwrap();
+        fs::create_dir_all(tmp.path().join("docs")).unwrap();
+        fs::write(tmp.path().join("src/main.rs"), "one\n").unwrap();
+        fs::write(tmp.path().join("docs/readme.md"), "notes\n").unwrap();
+
+        let first = tree_hash(tmp.path()).unwrap();
+        let root_key = fs::canonicalize(tmp.path()).unwrap();
+        let caches = HASH_CACHES.get().unwrap().lock().unwrap();
+        let cache = caches.get(&root_key).unwrap();
+        let docs_before = cache.directories.get("docs").unwrap().1.clone();
+        let src_before = cache.directories.get("src").unwrap().1.clone();
+        drop(caches);
+
+        fs::write(tmp.path().join("src/main.rs"), "two\n").unwrap();
+        let second = tree_hash(tmp.path()).unwrap();
+        assert_ne!(first, second);
+        let caches = HASH_CACHES.get().unwrap().lock().unwrap();
+        let cache = caches.get(&root_key).unwrap();
+        assert_ne!(cache.directories.get("src").unwrap().1, src_before);
+        assert_eq!(cache.directories.get("docs").unwrap().1, docs_before);
     }
 }
