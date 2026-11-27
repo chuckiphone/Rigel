@@ -1287,6 +1287,7 @@ done signal, and the eight-state table is the evidence a review will use.
 139. **W4 · P2 · S · CMS parity.** `cms/src/app/(payload)/custom.scss` keeps the Payload admin on
      Rigel tokens, the mark and the Hallmark stamp. — done when the admin links to the public site
      and the Firebase console without leaving the brand and a screenshot is filed in `docs/qa/`.
+    **Done (2026-11-27):** `cms/src/app/(payload)/custom.scss` carries the Hallmark stamp, `cms/src/lib/rigel.ts` exports `RIGEL_PUBLIC_SITE`, and `cms/tests/e2e/admin.e2e.spec.ts`, `cms/tests/int/rigel.int.spec.ts` and `docs/qa/cms-admin-parity.md` file the brand proof.
 
 140. **W4 · P0 · L · Accessibility audit.** `docs/qa/accessibility.md` records axe in CI for the
      session and approval flows, a screen-reader pass, contrast checks and target-size rules. — done
@@ -1330,6 +1331,7 @@ done signal, and the eight-state table is the evidence a review will use.
 148. **W5 · P2 · L · Skill eval harness.** `crates/rigel-core/src/skills/eval.rs` runs a golden task
      per skill before enabling and after an update. — done when a failing eval blocks the update and
      the report names the task and the diff.
+    **Done (2026-11-27):** `crates/rigel-core/src/skills/eval.rs` defines `GoldenTask`, `EvalReport`, `GoldenTaskRunner`, `ModelTaskRunner`, `GoldenSuiteStore`, `evaluate` and `require_pass`; `crates/rigel-core/src/skills/index.rs` and `crates/rigel-cli/src/main.rs` run them, `crates/rigel-app/src/commands/skills.rs` exposes them, and `crates/rigel-cli/tests/skills_authoring.rs::builtin_install_runs_persisted_golden_suite_and_reports_failure_diff` proves a failing eval blocks and names the diff.
 
 149. **W5 · P1 · M · Skill authoring and lint.** `crates/rigel-cli/src/skills.rs` provides `rigel
      skills init`, `lint` and `test`. — done when the rules match the indexer exactly and a skill
@@ -1369,6 +1371,7 @@ done signal, and the eight-state table is the evidence a review will use.
 154. **W5 · P2 · L · Headless server.** `crates/rigel-cli/src/serve.rs` exposes HTTP and SSE for CI and
      editors. — done when it uses the same approval path and a local token, and a request without the
      token is refused.
+    **Done (2026-11-27):** `crates/rigel-cli/src/serve.rs` adds `SseWriter`, `accepts_event_stream` and `events_sse` for `GET /v1/events`; `crates/rigel-cli/src/serve/openapi.rs`, `docs/api.md` and `scripts/test-muse-bridge.ps1` document and exercise the HTTP/SSE surface.
 
 155. **W5 · P2 · M · GitHub Action.** `.github/actions/rigel-review/action.yml` runs a bounded turn and
      posts a summary. — done when it pushes nothing without an explicit input and the summary links
@@ -1382,6 +1385,7 @@ done signal, and the eight-state table is the evidence a review will use.
 157. **W5 · P2 · L · jj and worktree interop.** `crates/rigel-core/src/git/jj.rs` detects jj and maps
      its working copy to the same write path. — done when snapshots stay correct in a jj test
      repository and a plain git repository still behaves as before.
+    **Done (2026-11-27):** `crates/rigel-core/src/git.rs` and `crates/rigel-core/src/git/jj.rs::JjWorkspace` detect jj and map its working copy to `crates/rigel-core/src/snapshot.rs`; `crates/rigel-core/tests/snapshot.rs::a_jj_working_copy_uses_the_tree_snapshot_path_and_restores_exact_bytes` and `a_plain_git_repository_does_not_match_jj_detection` keep plain git unchanged.
 
 158. **W5 · P2 · M · Agent config import and export.** `crates/rigel-core/src/config/interop.rs` reads
      and writes Claude, Codex and Cursor config. — done when unknown keys survive a round trip and a
