@@ -94,7 +94,8 @@ export function inlineTokens(text: string): Inline[] {
       tokens.push({ kind: "strong", text: raw.slice(2, -2) });
     } else {
       const link = /^\[([^\]]+)\]\(([^)]+)\)$/.exec(raw);
-      if (link && /^https?:\/\//i.test(link[2])) {
+      // An ordinary absolute web URL only: no whitespace tricks, no other scheme, no relative path.
+      if (link && /^https?:\/\/\S+$/i.test(link[2])) {
         tokens.push({ kind: "link", text: link[1], url: link[2] });
       } else {
         tokens.push({ kind: "text", text: raw });
@@ -209,12 +210,21 @@ function renderBlock(block: MarkdownBlock, index: number): ReactNode {
   }
 }
 
-/** The renderer used for assistant turns and skill bodies. `raw` is a single local toggle. */
-export function MarkdownText({ source }: { source: string }) {
+/**
+ * The renderer used for assistant turns and skill bodies. `raw` is a single local toggle.
+ *
+ * A streaming turn passes `streaming`: the same parser handles a half-written fence or heading,
+ * so partial text can never take a different, less safe path than a finished answer.
+ */
+export function MarkdownText({ source, streaming = false }: { source: string; streaming?: boolean }) {
   const [raw, setRaw] = useState(false);
   return h(
     "section",
-    { className: "markdown" },
+    {
+      className: "markdown",
+      "data-streaming": streaming ? "true" : "false",
+      "aria-busy": streaming,
+    },
     h(
       "button",
       {
@@ -228,6 +238,32 @@ export function MarkdownText({ source }: { source: string }) {
     raw
       ? h("pre", { className: "markdown-raw-body" }, source)
       : h("div", { className: "markdown-rendered" }, parseMarkdown(source).map(renderBlock)),
+  );
+}
+
+/**
+ * Preview-only fixture for roadmap 112: a half-written stream and a finished answer side by side.
+ * The native window never shows it; Playwright uses it to exercise the streaming path.
+ */
+const PREVIEW_STREAM =
+  "## Working\n\nA model can say <script>alert(1)</script> mid-turn.\n\n```rust\nfn go() -> u64 { 42 }\n";
+const PREVIEW_DONE =
+  "## Done\n\nA model can say <script>alert(1)</script> and it stays text. " +
+  "[Unsafe](javascript:alert(1)) is text too.\n\n```rust\nfn go() -> u64 { 42 } // note\n```\n";
+
+export function MarkdownPreview({ enabled = false }: { enabled?: boolean }) {
+  if (!enabled) return null;
+  return h(
+    "section",
+    { className: "markdown-preview", "aria-label": "Markdown preview" },
+    h("div", { className: "markdown-preview-cell" },
+      h("h3", null, "Streaming"),
+      h("div", { "data-testid": "markdown-streaming" }, h(MarkdownText, { source: PREVIEW_STREAM, streaming: true })),
+    ),
+    h("div", { className: "markdown-preview-cell" },
+      h("h3", null, "Complete"),
+      h("div", { "data-testid": "markdown-complete" }, h(MarkdownText, { source: PREVIEW_DONE })),
+    ),
   );
 }
 

@@ -47,7 +47,7 @@ import SessionFilters, {
   sessionHash,
   type SessionFilter,
 } from "./session-filters";
-import MarkdownText from "./markdown";
+import MarkdownText, { MarkdownPreview } from "./markdown";
 import McpResult from "./mcp-result";
 import { MemoryInspector } from "./inspector/memory";
 import { RequestInspector, RequestInspectorPreview, fromUsage } from "./inspector/request";
@@ -453,6 +453,8 @@ export default function SessionView({
     !tauri && new URLSearchParams(window.location.search).get("request") === "1";
   const asyncPreview =
     !tauri && new URLSearchParams(window.location.search).get("async") === "1";
+  const markdownPreview =
+    !tauri && new URLSearchParams(window.location.search).get("markdown") === "1";
   const contextMenu = useMenu();
   const [session, setSession] = useState<Session | null>(() => (tauri ? null : previewSession));
   const [recovery, setRecovery] = useState<RecoveryOffer | null>(() =>
@@ -3902,6 +3904,7 @@ export default function SessionView({
               </label>
             </div>
             {asyncPreview ? <AsyncStatePreview /> : null}
+            {markdownPreview ? <MarkdownPreview enabled /> : null}
             {requestPreview ? <RequestInspectorPreview enabled /> : null}
             {virtualPreview ? <VirtualTranscriptPreview enabled /> : null}
             <div className="transcript-shell">
@@ -5561,7 +5564,9 @@ function TurnCard({
       {stream[entry.turn.id] ? (
         <div className="msg assistant">
           <span className="gutter">rigel</span>
-          <div className="msg-body streaming">{stream[entry.turn.id]}</div>
+          <div className="msg-body streaming">
+            <MarkdownText source={stream[entry.turn.id]} streaming />
+          </div>
         </div>
       ) : null}
 

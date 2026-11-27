@@ -2982,6 +2982,24 @@ input[type="checkbox"] {
   margin-bottom: 6px;
 }
 
+.markdown[data-streaming="true"] {
+  opacity: 0.92;
+}
+
+.markdown-preview {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 12px;
+  padding: 8px 0;
+}
+
+.markdown-preview-cell {
+  min-width: 0;
+  padding: 8px;
+  border: 1px solid var(--hairline);
+  background: var(--raised);
+}
+
 .markdown-heading {
   margin: 10px 0 4px;
   font-size: 13px;
