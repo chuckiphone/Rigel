@@ -1056,14 +1056,17 @@ done signal, and the eight-state table is the evidence a review will use.
 90. **W4 · P1 · M · Permanent deletion.** `crates/rigel-core/src/store/delete.rs` deletes a session
     and its rows and blobs after a typed confirmation. — done when a tombstone is written and a
     restored backup cannot resurrect the session.
+    **Done (2026-11-26):** `crates/rigel-core/src/store/delete.rs` writes tombstones in `delete_session`; `crates/rigel-core/src/backup.rs` test `restore_does_not_resurrect_tombstoned_sessions_from_old_archives` proves a restored backup cannot bring the session back.
 
 91. **W4 · P1 · M · Rolling backups and restore.** `crates/rigel-core/src/backup/mod.rs` keeps N
     verified daily backups. — done when each backup verifies and a restore is rehearsed into a
     scratch project before the real one is offered.
+    **Done (2026-11-26):** `crates/rigel-core/src/backup.rs` provides `rotate`, `verify` and `drill`; `crates/rigel-core/tests/backup_rolling.rs` covers `daily_backups_are_verified_and_pruned_to_the_requested_retention` and `restore_requires_successful_scratch_rehearsal_before_installing_files`.
 
 92. **W4 · P1 · M · Worktree auto-prune.** `crates/rigel-core/src/git/worktree.rs` removes clean,
     merged child worktrees after a retention window. — done when an unmerged worktree is kept with a
     named reason and a clean merged one is removed.
+    **Done (2026-11-26):** `crates/rigel-core/src/worktree.rs::prune` removes clean merged child worktrees after retention; `crates/rigel-core/tests/worktree.rs` checks `pruning_keeps_an_unmerged_worktree_with_a_reason` and `pruning_removes_a_clean_merged_worktree_after_retention`.
 
 93. **W4 · P1 · L · Cross-session search.** `crates/rigel-core/src/search/query.rs` queries FTS5
     over prompts, answers, commands and patches with project, agent, model and date filters. — done
@@ -1073,6 +1076,7 @@ done signal, and the eight-state table is the evidence a review will use.
 94. **W4 · P1 · M · Templates v2.** `crates/rigel-core/src/templates/model.rs` adds variables, slots
     and per-agent sections with a diff when a template changes. — done when a v1 template still
     loads and a changed template shows the field-level diff before use.
+    **Done (2026-11-26):** `crates/rigel-core/src/templates/model.rs` defines `TemplateModel` and `diff`; `crates/rigel-core/tests/templates_v2.rs::v1_loads_and_diff_works` and `crates/rigel-core/tests/templates_v2_persistence.rs` cover the v1 load and field-level changes.
 
 95. **W4 · P1 · S · Claim dashboard.** `ui/src/claims.tsx` shows counts, stale claims, holder and
     last heartbeat in one view. — done when release is still an explicit action and a stale claim
@@ -1103,6 +1107,7 @@ done signal, and the eight-state table is the evidence a review will use.
 101. **W4 · P1 · M · Attachment store quota.** `crates/rigel-core/src/attachments/store.rs` enforces
      a per-project quota, validates types and dedupes by hash. — done when a purge never removes a
      blob that a remaining session still references.
+    **Done (2026-11-26):** `crates/rigel-core/src/attachments/store.rs` enforces quota, types and hash dedup with `put_for_session` and `drop_session`; `crates/rigel-core/tests/attachment_store.rs::purge_never_removes_a_referenced_blob` proves a remaining session keeps its blob.
 
 102. **W4 · P2 · S · Tags and saved filters.** `ui/src/session-filters.tsx` adds colourless tags and
      filters that survive restart. — done when a filter round-trips through the URL and an unknown
@@ -1148,10 +1153,12 @@ done signal, and the eight-state table is the evidence a review will use.
 111. **W4 · P1 · M · Transcript filter.** `ui/src/transcript-filter.tsx` filters by role, tool, error,
      model, approval and cost. — done when the outline and in-session search respect the same filter
      and the count of hidden rows is shown.
+    **Done (2026-11-26):** `ui/src/transcript-filter.tsx` drives rows, outline and search from `visibleItems`; `ui/tests/transcript-filter.spec.ts` checks all views, hidden counts and reload persistence.
 
 112. **W4 · P1 · M · CSP-safe markdown.** `ui/src/markdown.ts` renders model and skill text without
      `innerHTML`. — done when highlighting, copy buttons and a raw toggle work and a fixture with a
      script tag renders as text.
+    **Done (2026-11-26):** `ui/src/markdown.ts` renders tokens with `parseMarkdown` and `MarkdownText` and no HTML injection; `ui/tests/markdown.spec.ts` proves script text, highlighting, copy and the raw toggle.
 
 113. **W4 · P1 · L · Palette and slash grammar.** `ui/src/palette.ts` reaches actions, files, symbols,
      sessions and settings, and `docs/slash-commands.md` documents the grammar. — done when an
@@ -1214,6 +1221,7 @@ done signal, and the eight-state table is the evidence a review will use.
 126. **W4 · P1 · M · Responsive contract.** `docs/design.md` fixes minimum window sizes and the
      320/375/414/768 px breakpoints. — done when each width is checked with no horizontal scroll and
      no clickable label wrapping to two lines.
+    **Done (2026-11-26):** `docs/design.md` fixes the 320/375/414/768 px breakpoints; `ui/tests/responsive.spec.ts` asserts no horizontal scroll and no wrapped clickable labels on Home and Session.
 
 127. **W1 · P0 · M · Eight-state audit.** `docs/qa/eight-states.md` lists every control in the
      session, approval, picker and settings surfaces against default, hover, focus, active, disabled,
@@ -1269,6 +1277,7 @@ done signal, and the eight-state table is the evidence a review will use.
 137. **W4 · P1 · L · Composer v2.** `ui/src/composer.tsx` puts attachments, skills, model, effort,
      context meter and a plan/act toggle in one row. — done when no control label wraps to two lines
      at the minimum window width and every control is keyboard reachable.
+    **Done (2026-11-26):** `ui/src/composer.tsx` holds the composer row; `ui/tests/composer-v2.spec.ts` checks 320 px, keyboard reach and the plan toggle, with `ui/tests/keyboard.spec.ts` for the Tab path.
 
 138. **W4 · P1 · M · Async state kit.** `ui/src/async-state.tsx` gives loading, empty, error, retry
      and success the same tokens. — done when each state announces to a live region and the kit is
@@ -1302,6 +1311,7 @@ done signal, and the eight-state table is the evidence a review will use.
 144. **W5 · P1 · M · MCP health and discovery.** `crates/rigel-core/src/mcp/health.rs` reports connect
      latency, protocol version, tool count and last error per server. — done when one failed
      handshake is marked without blocking the others and the panel refreshes on demand.
+    **Done (2026-11-26):** `crates/rigel-core/src/mcp/health.rs::probe_all` probes declared servers concurrently; `crates/rigel-app/src/commands/mcp.rs`, `ui/src/mcp-health.tsx` and `ui/tests/mcp-health.spec.ts` give the panel on-demand refresh with per-server errors.
 
 145. **W5 · P1 · M · MCP result rendering.** `ui/src/mcp-result.tsx` renders text, images and
      structured results as typed rows. — done when a size cap truncates with a visible marker and
@@ -1315,6 +1325,7 @@ done signal, and the eight-state table is the evidence a review will use.
 147. **W5 · P1 · L · Skill lockfile.** `rigel.lock` records version, hash and source per skill. — done
      when `rigel skills restore` reproduces the tree from the lockfile alone and a hash mismatch
      refuses to load.
+    **Done (2026-11-26):** `crates/rigel-core/src/skills/lockfile.rs` defines `SkillLockfile::restore` and `validate_entries`; `crates/rigel-cli/src/main.rs` runs `rigel skills restore`, and the module tests `generated_lock_restores_without_opening_the_index_database` and `restore_rejects_hash_mismatch_before_writing_any_skill` cover offline restore and hash refusal.
 
 148. **W5 · P2 · L · Skill eval harness.** `crates/rigel-core/src/skills/eval.rs` runs a golden task
      per skill before enabling and after an update. — done when a failing eval blocks the update and
@@ -1323,6 +1334,7 @@ done signal, and the eight-state table is the evidence a review will use.
 149. **W5 · P1 · M · Skill authoring and lint.** `crates/rigel-cli/src/skills.rs` provides `rigel
      skills init`, `lint` and `test`. — done when the rules match the indexer exactly and a skill
      that lints clean also loads.
+    **Done (2026-11-26):** `crates/rigel-cli/src/skills.rs` provides `init`, `lint` and `test`; `crates/rigel-cli/tests/skills_authoring.rs::skills_init_creates_a_parseable_skill_from_the_cli` and the module tests `lint_projection_matches_the_indexer_fallbacks` and `init_creates_a_core_parseable_skill_and_never_overwrites` check the rules against the indexer.
 
 150. **W5 · P2 · M · Skill ranking.** `crates/rigel-core/src/skills/rank.rs` ranks by fit, freshness,
      evidence and install history. — done when no score is derived from popularity and each result
@@ -1481,6 +1493,7 @@ done signal, and the eight-state table is the evidence a review will use.
 183. **W5 · P1 · M · Database maintenance.** `crates/rigel-cli/src/db.rs` owns the WAL checkpoint
      policy, `ANALYZE`, size reporting and a `vacuum` that is safe while the app runs. — done when a
      concurrent reader completes during the vacuum and the size report names each table.
+    **Done (2026-11-26):** `crates/rigel-cli/src/db.rs` owns `checkpoint`, `analyze`, `size` and `vacuum`; unit tests `vacuum_keeps_wal_readers_available`, `size_report_includes_pages_for_each_table` and `analyze_and_passive_checkpoint_complete_in_wal_mode` cover the concurrent reader, table names and WAL checkpoint.
 
 184. **W5 · P1 · M · Blob store integrity.** `crates/rigel-core/src/blobs/store.rs` dedupes by hash,
      verifies on read, collects orphans and reports bytes per project. — done when a corrupted blob
