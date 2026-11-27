@@ -40,16 +40,14 @@ impl EventLog {
     /// in-progress chunk for that message so the row count stays bounded.
     pub fn push_chunk(&mut self, message_id: &str, data: &str) {
         // Find an existing in-progress chunk for this message.
-        if let Some(event) = self
+        if let Some(Event::Chunk { data: existing, .. }) = self
             .rows
             .iter_mut()
             .rev()
             .find(|e| matches!(e, Event::Chunk { message_id: m, .. } if m == message_id))
         {
-            if let Event::Chunk { data: existing, .. } = event {
-                existing.push_str(data);
-                return;
-            }
+            existing.push_str(data);
+            return;
         }
         let seq = self.seqs.entry(message_id.to_string()).or_insert(0);
         *seq += 1;

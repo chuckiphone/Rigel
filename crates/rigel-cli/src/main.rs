@@ -18,6 +18,7 @@ mod audit;
 mod backup;
 mod claims;
 mod cloud;
+mod completions;
 mod db;
 mod doctor;
 mod handoff;
@@ -44,7 +45,7 @@ use phase3::{AgentCommand, KeyCommand, MemoryCommand, PatchCommand, SnapshotComm
 
 #[derive(Parser)]
 #[command(name = "rigel", version, about = "Rigel — an agent workspace")]
-struct Cli {
+pub(crate) struct Cli {
     /// Where `index.db` and `blobs/` live. Defaults to the per-user app data directory.
     #[arg(long, global = true, env = "RIGEL_INDEX_DIR", value_name = "DIR")]
     data_dir: Option<PathBuf>,
@@ -93,6 +94,12 @@ enum Command {
     Session {
         #[command(subcommand)]
         command: SessionCommand,
+    },
+
+    /// Generate and install shell completions from this command tree.
+    Completions {
+        #[command(subcommand)]
+        command: completions::CompletionCommand,
     },
 
     /// Package a session's unfinished work as a prompt for another agent.
@@ -671,6 +678,8 @@ async fn entry() -> ExitCode {
         Command::Network { command } => network::run(command).await,
 
         Command::Session { command } => run_session(command).await,
+
+        Command::Completions { command } => completions::run(command),
 
         // Boxed so this large command future does not inflate `main`'s already large state
         // machine; the native Windows stack is the limiting factor here.

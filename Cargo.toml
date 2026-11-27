@@ -19,6 +19,7 @@ repository = "https://github.com/chuckiphone/Rigel"
 age = "0.11"
 async-trait = "0.1"
 clap = { version = "4", features = ["derive", "env"] }
+clap_complete = "4"
 ed25519-dalek = { version = "2", features = ["std"] }
 keyring = "3"
 # SQLCipher is a build-time property of libsqlite3-sys, not a runtime switch: this feature

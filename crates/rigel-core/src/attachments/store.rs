@@ -1,6 +1,6 @@
 //! Attachment store with per-project quota, type validation and hash dedup (roadmap 101).
 
-use std::collections::{BTreeMap, HashSet};
+use std::collections::HashSet;
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -151,7 +151,7 @@ impl AttachmentStore {
 
         fs::write(&blob_path, data)?;
         // write a small meta file recording the mime type
-        let meta = format!("{mime_type}");
+        let meta = mime_type.to_string();
         let _ = fs::write(self.meta_path(project, &hash), meta);
 
         Ok(Attachment {
