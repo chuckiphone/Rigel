@@ -22,6 +22,7 @@ mod db;
 mod doctor;
 mod handoff;
 mod harness;
+mod hooks;
 mod impact;
 mod local;
 mod mail;
@@ -96,6 +97,12 @@ enum Command {
 
     /// Package a session's unfinished work as a prompt for another agent.
     Handoff(handoff::HandoffArgs),
+
+    /// Optional git hooks: secret scan, attribution trailer and commit check.
+    Hooks {
+        #[command(subcommand)]
+        command: hooks::HooksCommand,
+    },
 
     /// The skill index: search it offline, extend it from the network.
     Skills {
@@ -668,6 +675,8 @@ async fn entry() -> ExitCode {
         // Boxed so this large command future does not inflate `main`'s already large state
         // machine; the native Windows stack is the limiting factor here.
         Command::Handoff(args) => Box::pin(handoff::run(args)).await,
+
+        Command::Hooks { command } => hooks::run(command),
 
         Command::Skills { command } => run_skills(&dir, command).await,
 
