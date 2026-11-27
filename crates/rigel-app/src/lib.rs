@@ -64,6 +64,88 @@ mod tray_status;
 pub mod webview;
 pub use claude::mcp_mode;
 
+/// The API-ready step of startup, shared by the window and the headless startup probe. A test
+/// that timed a copy of this code could pass while the real launch regressed.
+pub fn startup_ready<F: Fn() -> Option<PathBuf>>(
+    data_dir: &Path,
+    project: F,
+    timeout: Duration,
+) -> Result<bool, String> {
+    control::ensure(data_dir, project, timeout)
+}
+
+/// Headless launch probe for `tests/startup.rs`: runs the same readiness step the window runs
+/// before it shows itself, prints one JSON line and exits. No window, no tray, no console output
+/// beyond that line; a non-zero exit means the API never answered.
+pub fn startup_probe_mode<I, S>(args: I) -> Option<i32>
+where
+    I: IntoIterator<Item = S>,
+    S: AsRef<str>,
+{
+    let args: Vec<String> = args
+        .into_iter()
+        .map(|arg| arg.as_ref().to_string())
+        .collect();
+    if args.first().map(String::as_str) != Some("startup") {
+        return None;
+    }
+
+    let mut data_dir = None;
+    let mut project_root = None;
+    let mut timeout_ms = 12_000u64;
+    let mut index = 1;
+    while index < args.len() {
+        match args[index].as_str() {
+            "--data-dir" => {
+                index += 1;
+                data_dir = args.get(index).map(PathBuf::from);
+            }
+            "--project" => {
+                index += 1;
+                project_root = args.get(index).map(PathBuf::from);
+            }
+            "--timeout-ms" => {
+                index += 1;
+                timeout_ms = args
+                    .get(index)
+                    .and_then(|value| value.parse().ok())
+                    .unwrap_or(timeout_ms);
+            }
+            _ => {}
+        }
+        index += 1;
+    }
+    let (Some(data_dir), Some(project_root)) = (data_dir, project_root) else {
+        eprintln!("rigel startup: --data-dir and --project are required");
+        return Some(2);
+    };
+
+    let started = std::time::Instant::now();
+    let root = project_root.clone();
+    let result = startup_ready(
+        &data_dir,
+        || Some(root.clone()),
+        Duration::from_millis(timeout_ms),
+    );
+    let ms = started.elapsed().as_millis();
+    match result {
+        Ok(api_ready) => {
+            println!(
+                "{}",
+                serde_json::json!({ "api_ready": api_ready, "ms": ms })
+            );
+            Some(0)
+        }
+        Err(problem) => {
+            println!(
+                "{}",
+                serde_json::json!({ "api_ready": false, "ms": ms, "error": problem })
+            );
+            Some(2)
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize)]
 pub struct ProjectInfo {
     pub root: String,
@@ -1882,7 +1964,7 @@ pub fn run() {
             // Wait for the API before the first paint: a fresh logon otherwise opened the window
             // while the server was still binding, and a localhost request looked like a dead app.
             if let Err(problem) =
-                control::ensure(&index_dir(), current_project_root, Duration::from_secs(12))
+                startup_ready(&index_dir(), current_project_root, Duration::from_secs(12))
             {
                 eprintln!("rigel: {problem}");
                 control::log(&index_dir(), &problem);

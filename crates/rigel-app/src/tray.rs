@@ -14,6 +14,8 @@ use sqlx::SqlitePool;
 
 /// The number of open items the tray should badge. Equals the core attention total
 /// plus the pending approvals that belong to this project.
+// Kept as the documented attention surface; the tray menu wiring arrives with the badge UI.
+#[allow(dead_code)]
 pub fn badge_count(
     attention: &Attention,
     pending: &[PendingApproval],
@@ -27,6 +29,7 @@ pub fn badge_count(
 }
 
 /// Recompute the badge count from a project pool and the pending approvals.
+#[allow(dead_code)]
 pub async fn badge_count_for_project(
     pool: &SqlitePool,
     pending: &[PendingApproval],
@@ -44,6 +47,7 @@ pub async fn badge_count_for_project(
 }
 
 /// A small struct describing the tray menu's attention state, for tests and the UI.
+#[allow(dead_code)]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TrayAttention {
     pub running_agents: usize,
@@ -51,6 +55,7 @@ pub struct TrayAttention {
 }
 
 impl TrayAttention {
+    #[allow(dead_code)]
     pub fn new(running_agents: usize, badge: usize) -> Self {
         Self {
             running_agents,
@@ -62,7 +67,7 @@ impl TrayAttention {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use rigel_core::attention::{Attention, AttentionGroup, AttentionItem};
+    use rigel_core::attention::Attention;
 
     fn attention_with(total: usize) -> Attention {
         Attention {

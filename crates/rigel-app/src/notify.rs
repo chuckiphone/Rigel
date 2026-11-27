@@ -103,7 +103,7 @@ pub fn quiet_hours_minutes(value: &str) -> Option<i32> {
     let mut parts = text.split(':');
     let hour = parts.next()?.parse::<i32>().ok()?;
     let minute = parts.next()?.parse::<i32>().ok()?;
-    if parts.next().is_some() || hour < 0 || hour > 23 || minute < 0 || minute > 59 {
+    if parts.next().is_some() || !(0..=23).contains(&hour) || !(0..=59).contains(&minute) {
         return None;
     }
     Some(hour * 60 + minute)
