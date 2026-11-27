@@ -4,9 +4,9 @@ The idea: a user without a provider key can send one turn to Rigel's runner, wat
 into the same window, and pay nothing — a sponsor covers the tokens. This is the Freebuff shape,
 applied to agent runs rather than chat.
 
-This document is the design and the arithmetic. **The queue exists; no runner, ad slot or credit
-ledger exists yet.** What exists is below, plus `scripts/cloud-economics.mjs`, which is what any of
-it has to clear.
+This document is the design and the arithmetic. The queue and an operator-configured sponsorship
+budget/report path exist; no runner or ad slot exists yet. `scripts/cloud-economics.mjs` records the
+economics any eventual runner has to clear.
 
 ## The arithmetic comes first
 
@@ -81,13 +81,18 @@ Built:
 - the queue: `rigel cloud run`, `runs`, `show`, `cancel` and `retry`, backed by
   `Cloud::enqueue_run` and the tested `queued → cancelled → queued` table. It writes one document
   under the account's own subtree, so `firestore.rules` needed no change.
+- operator-local sponsor budgets: `rigel cloud sponsor-configure --sponsor <name> --budget-micros <n>
+  --cap-micros <n>` sets a visible name, total budget and per-run cap. Passing
+  `--sponsor-cost-micros <n>` to `rigel cloud run` reserves that budget and atomically writes the
+  sponsored run plus `sponsorReports/{run-id}`. This is an opt-in accounting and audit reservation;
+  it does not charge an account or pay provider costs.
 - the identity and attestation pieces in `functions/` (the `contact` function is live; `appCheck`
   is written but undeployed and its secret is empty)
 
 Not built, in dependency order:
 1. A credit ledger and the global daily spend ceiling.
 2. The Cloud Run runner image, its lease loop and its sandbox.
-3. Sponsor inventory and the sponsor line above a transcript.
+3. Server-managed sponsor inventory and the sponsor line above a transcript.
 4. A cloud-run surface in the window. Today the queue is CLI-only.
 
 The queue is the honest first slice because it is observable and fails loudly: `run` writes
@@ -107,6 +112,13 @@ users/{uid}/runs/{id}
   updatedAtMs:  integer     optional; written when a stopped run is cancelled or requeued
   sponsor:      string|null set only when a sponsor's bucket pays for the run
 ```
+
+Sponsored queue requests also write `users/{uid}/sponsorReports/{run-id}` in the same Firestore
+commit. The report contains the run id, sponsor name, reserved amount, configured cap, queued state
+and creation time. The local `sponsor-ledger.json` is created once and refuses reconfiguration
+over an existing ledger, preserving its audit history. This establishes a report for every
+sponsored queue record; actual provider funding remains unavailable until a runner and server-side
+credit enforcement exist.
 
 No rules change was needed: firestore.rules already allows an account to read and write its
 own subtree and lets a token carrying the admin claim read any subtree, which is exactly the

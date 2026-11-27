@@ -34,6 +34,7 @@ pub(crate) mod app_check;
 pub mod metadata;
 pub mod publish;
 pub mod queue;
+pub mod sponsor;
 
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
@@ -138,6 +139,9 @@ pub enum CloudError {
 
     #[error(transparent)]
     Session(#[from] SessionError),
+
+    #[error(transparent)]
+    Sponsor(#[from] sponsor::SponsorError),
 }
 
 impl CloudError {
@@ -152,7 +156,8 @@ impl CloudError {
             | CloudError::AccountNotFound
             | CloudError::InvalidAppCheck(_)
             | CloudError::AppCheck(_)
-            | CloudError::Input(_) => 1,
+            | CloudError::Input(_)
+            | CloudError::Sponsor(_) => 1,
             CloudError::Rejected { status, .. } if (400..500).contains(status) => 1,
             _ => 2,
         }
@@ -1468,6 +1473,67 @@ impl Cloud {
         Ok(id)
     }
 
+    /// Queue an operator-funded run and write its sponsor report in the same Firestore commit.
+    ///
+    /// The operator's local ledger reserves the configured budget before this request. Firestore
+    /// is only asked to queue the run and its report together; a failed commit releases the local
+    /// reservation and records a failed report, so no queued sponsored run can lack an audit row.
+    pub async fn enqueue_sponsored_run(
+        &self,
+        prompt: &str,
+        max_minutes: u32,
+        amount_micros: u64,
+    ) -> Result<sponsor::SponsorReport, CloudError> {
+        let session = self.token().await?;
+        let state_dir = self.state_dir.as_ref().ok_or_else(|| {
+            CloudError::Input("sponsored runs require a local operator ledger".to_string())
+        })?;
+        let ledger = sponsor::SponsorLedger::open(state_dir.join("sponsor-ledger.json"))?;
+        let created_at = crate::migrate::now_ms();
+        let id = format!("{created_at:x}-{:x}", std::process::id());
+        let reserved = ledger.reserve(&id, amount_micros)?;
+        let run_document = format!(
+            "projects/{}/databases/(default)/documents/users/{}/runs/{}",
+            self.config.project_id, session.uid, id
+        );
+        let report_document = format!(
+            "projects/{}/databases/(default)/documents/users/{}/sponsorReports/{}",
+            self.config.project_id, session.uid, id
+        );
+        let report_fields = json!({
+            "runId": { "stringValue": id },
+            "sponsor": { "stringValue": reserved.sponsor },
+            "amountMicros": { "integerValue": amount_micros.to_string() },
+            "capMicros": { "integerValue": reserved.cap_micros.to_string() },
+            "status": { "stringValue": "queued" },
+            "createdAtMs": { "integerValue": created_at.to_string() },
+        });
+        let run_write = json!({
+            "update": {
+                "name": run_document,
+                "fields": {
+                    "prompt": { "stringValue": prompt },
+                    "state": { "stringValue": "queued" },
+                    "maxMinutes": { "integerValue": max_minutes.to_string() },
+                    "createdAtMs": { "integerValue": created_at.to_string() },
+                    "attempts": { "integerValue": "0" },
+                    "maxAttempts": { "integerValue": default_run_attempts().to_string() },
+                    "leaseOwner": { "nullValue": null },
+                    "leaseUntilMs": { "nullValue": null },
+                    "lastError": { "nullValue": null },
+                    "sponsor": { "stringValue": reserved.sponsor },
+                },
+            }
+        });
+        let report_write =
+            json!({ "update": { "name": report_document, "fields": report_fields } });
+        if let Err(error) = self.commit(&session, vec![run_write, report_write]).await {
+            ledger.release(&id)?;
+            return Err(error);
+        }
+        ledger.mark_queued(&id).map_err(CloudError::from)
+    }
+
     /// The runs this account has queued.
     pub async fn runs(&self, limit: u32) -> Result<Vec<QueuedRun>, CloudError> {
         let session = self.token().await?;
@@ -2426,6 +2492,116 @@ mod tests {
     use crate::cloud::app_check::{AppCheckAnswer, app_check_refusal};
     use crate::domain::Usage;
     use crate::session::{SessionStatus, Turn};
+
+    #[tokio::test]
+    async fn sponsored_run_and_named_report_are_committed_together() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        use tokio::net::TcpListener;
+
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.unwrap();
+            let mut request = Vec::new();
+            let mut buffer = [0_u8; 4096];
+            let body_start;
+            let content_length;
+            loop {
+                let read = socket.read(&mut buffer).await.unwrap();
+                assert_ne!(read, 0, "client closed before completing the request");
+                request.extend_from_slice(&buffer[..read]);
+                if let Some(header_end) =
+                    request.windows(4).position(|window| window == b"\r\n\r\n")
+                {
+                    body_start = header_end + 4;
+                    let headers = String::from_utf8_lossy(&request[..header_end]);
+                    content_length = headers
+                        .lines()
+                        .find_map(|line| {
+                            let (name, value) = line.split_once(':')?;
+                            name.eq_ignore_ascii_case("content-length")
+                                .then(|| value.trim().parse::<usize>().unwrap())
+                        })
+                        .unwrap();
+                    if request.len() >= body_start + content_length {
+                        break;
+                    }
+                    loop {
+                        let read = socket.read(&mut buffer).await.unwrap();
+                        assert_ne!(read, 0, "client closed before completing the request body");
+                        request.extend_from_slice(&buffer[..read]);
+                        if request.len() >= body_start + content_length {
+                            break;
+                        }
+                    }
+                    break;
+                }
+            }
+            let body: Value =
+                serde_json::from_slice(&request[body_start..body_start + content_length]).unwrap();
+            socket
+                .write_all(b"HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: 2\r\nconnection: close\r\n\r\n{}")
+                .await
+                .unwrap();
+            body
+        });
+
+        let directory = tempfile::tempdir().unwrap();
+        let ledger_path = directory.path().join("sponsor-ledger.json");
+        sponsor::SponsorLedger::create(&ledger_path, "Rigel Operator", 500, 200).unwrap();
+        let store = Arc::new(MemorySessionStore::new());
+        store
+            .save(&Session {
+                uid: "operator-uid".into(),
+                email: "operator@example.com".into(),
+                project_id: "rigel-cloud".into(),
+                id_token: "test-id-token".into(),
+                refresh_token: "test-refresh-token".into(),
+                expires_at: now_ms() + 60_000,
+                email_verified: true,
+            })
+            .unwrap();
+        let cloud = Cloud::new_at(
+            directory.path(),
+            CloudConfig::new("rigel-cloud", "key").unwrap(),
+            Endpoints::same(format!("http://{address}")),
+            store,
+        )
+        .unwrap();
+
+        let report = cloud
+            .enqueue_sponsored_run("fix the tests", 10, 125)
+            .await
+            .unwrap();
+        let request = server.await.unwrap();
+        let writes = request["writes"].as_array().unwrap();
+        assert_eq!(writes.len(), 2, "run and audit report must be atomic");
+        assert_eq!(
+            writes[0]["update"]["fields"]["sponsor"]["stringValue"],
+            "Rigel Operator"
+        );
+        assert_eq!(
+            writes[1]["update"]["fields"]["sponsor"]["stringValue"],
+            "Rigel Operator"
+        );
+        assert_eq!(
+            writes[1]["update"]["fields"]["amountMicros"]["integerValue"],
+            "125"
+        );
+        assert_eq!(
+            writes[1]["update"]["fields"]["status"]["stringValue"],
+            "queued"
+        );
+        assert_eq!(report.status, "queued");
+        assert_eq!(
+            sponsor::SponsorLedger::open(ledger_path)
+                .unwrap()
+                .reports()
+                .unwrap()[0]
+                .status,
+            "queued"
+        );
+    }
 
     fn record() -> SkillRecord {
         SkillRecord {
