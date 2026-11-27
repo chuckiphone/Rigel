@@ -393,6 +393,10 @@ A timeout is still a 200, with `changed: false` and the current snapshot, so a r
 need a separate case. `/v1/app` has the same body without waiting: `open`, `project`,
 `heartbeat_age_ms`, `swarm.pending`, `swarm.oldest` and the fingerprint.
 
+Send `Accept: text/event-stream` to `GET /v1/events` for a Server-Sent Events stream. With no `since`
+fingerprint, it sends an immediate `snapshot` event, later snapshots when the fingerprint changes,
+and keep-alive comments while idle. Each snapshot uses the same `event` body as the long-poll response.
+
 `POST /v1/swarm/jobs/next` claims the oldest prompt by renaming it into `swarm/claimed/`. A second
 claim cannot take the same file, and a Muse crash leaves the job claimed rather than silently
 re-running it. After the work is reported, `POST /v1/swarm/jobs/{id}/complete` moves the file to
