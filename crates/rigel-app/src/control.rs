@@ -173,9 +173,9 @@ fn spawn_api(root: &Path) -> Result<u32, String> {
 /// Start the API when it is not already answering, and wait until it does. The window calls
 /// this before it becomes visible, so the first localhost request cannot race the bind. A first
 /// launch has no project yet, and `Ok(false)` lets the window open immediately in that case.
-pub fn ensure(
+pub fn ensure<F: Fn() -> Option<PathBuf>>(
     data_dir: &Path,
-    project: fn() -> Option<PathBuf>,
+    project: F,
     timeout: Duration,
 ) -> Result<bool, String> {
     if serving() {

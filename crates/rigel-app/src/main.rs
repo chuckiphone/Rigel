@@ -36,6 +36,11 @@ fn main() {
     if let Some(code) = rigel_app::update_helper_mode(std::env::args_os().skip(1)) {
         std::process::exit(code);
     }
+    // `rigel-app startup ...` is the headless readiness probe used by the cold-start test. It
+    // runs the same path as the visible launch and exits instead of opening a window.
+    if let Some(code) = rigel_app::startup_probe_mode(std::env::args().skip(1)) {
+        std::process::exit(code);
+    }
     // `rigel-app mcp ...` is the stdio server Claude calls back into; anything else opens the
     // window. A packaged app has no CLI on `PATH`, so the window binary hosts it itself.
     if let Some(code) = rigel_app::mcp_mode(std::env::args().skip(1)) {
