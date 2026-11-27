@@ -410,6 +410,8 @@ export interface CodeGraph {
 export interface CloudStatus {
   configured: boolean;
   project_id: string | null;
+  /** Stored Firebase Firestore region pin, if the project has one. */
+  data_region: string | null;
   signed_in: boolean;
   email: string | null;
   uid: string | null;
@@ -4031,6 +4033,7 @@ export const api = {
       return {
         configured: signedIn,
         project_id: signedIn ? "preview-project" : null,
+        data_region: signedIn ? "us-central1" : null,
         signed_in: signedIn,
         email: signedIn ? "reviewer@example.com" : null,
         uid: signedIn ? "preview-uid" : null,
@@ -4048,6 +4051,12 @@ export const api = {
   async cloudConfigure(project: string, apiKey: string): Promise<CloudStatus> {
     if (!isTauri()) throw new Error("Configure the Firebase project in the desktop app.");
     return call<CloudStatus>("cloud_configure", { project, apiKey });
+  },
+
+  /** Pin the Firebase database region; changing a pin requires an exact confirmation phrase. */
+  async cloudSetRegion(region: string, confirmation: string | null): Promise<CloudStatus> {
+    if (!isTauri()) throw new Error("Pin the Firebase data region in the desktop app.");
+    return call<CloudStatus>("cloud_region_set", { region, confirmation });
   },
 
   /** One sign-in. The password is not stored; only the refresh token reaches the keychain. */

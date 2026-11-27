@@ -333,6 +333,7 @@ mod tests {
             CloudConfig {
                 project_id: "rigel-cloud".into(),
                 api_key: "public-key".into(),
+                region: None,
                 app_check: None,
                 push: None,
             },
@@ -461,6 +462,7 @@ mod tests {
             CloudConfig {
                 project_id: "rigel-cloud".into(),
                 api_key: "public-key".into(),
+                region: None,
                 app_check: None,
                 push: None,
             },

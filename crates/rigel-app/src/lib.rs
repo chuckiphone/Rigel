@@ -2209,6 +2209,7 @@ pub fn run() {
             commands::settings::update_install,
             commands::cloud::cloud_status,
             commands::cloud::cloud_configure,
+            commands::cloud::cloud_region_set,
             commands::cloud::cloud_login,
             commands::cloud::cloud_signup,
             commands::cloud::cloud_reset_password,

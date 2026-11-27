@@ -34,6 +34,7 @@ pub(crate) mod app_check;
 pub mod metadata;
 pub mod publish;
 pub mod queue;
+pub mod region;
 pub mod sponsor;
 
 use std::collections::BTreeSet;
@@ -172,6 +173,9 @@ pub struct CloudConfig {
     pub project_id: String,
     /// The project's web API key. Public by design; Firestore rules enforce ownership.
     pub api_key: String,
+    /// The Firestore database region recorded by the project owner. An old config has no pin.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub region: Option<region::RegionPin>,
     /// App Check attestation, when this machine should send App Check tokens. Absent means the
     /// requests go out as they did before; an old `cloud.json` reads as absent.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -211,6 +215,7 @@ impl CloudConfig {
         let config = Self {
             project_id: project_id.into().trim().to_string(),
             api_key: api_key.into().trim().to_string(),
+            region: None,
             app_check: None,
             push: None,
         };
@@ -284,6 +289,15 @@ impl CloudConfig {
         }
         if self.api_key.trim().is_empty() {
             return Err(CloudError::InvalidApiKey);
+        }
+        if self
+            .region
+            .as_ref()
+            .is_some_and(|region| region::RegionPin::parse(region.as_str()).is_err())
+        {
+            return Err(CloudError::Input(
+                "the stored Firebase region is invalid".to_string(),
+            ));
         }
         if let Some(check) = &self.app_check {
             let url = check.attest_url.trim();
@@ -498,6 +512,8 @@ pub struct AppCheckStatus {
 pub struct CloudStatus {
     pub configured: bool,
     pub project_id: Option<String>,
+    /// Stored data residency pin; `None` means the project has not been pinned in Rigel.
+    pub data_region: Option<String>,
     pub signed_in: bool,
     pub email: Option<String>,
     pub uid: Option<String>,
@@ -523,6 +539,7 @@ impl CloudStatus {
         Self {
             configured: false,
             project_id: None,
+            data_region: None,
             signed_in: false,
             email: None,
             uid: None,
@@ -845,6 +862,11 @@ impl Cloud {
         Ok(CloudStatus {
             configured: true,
             project_id: Some(self.config.project_id.clone()),
+            data_region: self
+                .config
+                .region
+                .as_ref()
+                .map(|region| region.as_str().to_string()),
             signed_in: session.is_some(),
             email: session.as_ref().map(|session| session.email.clone()),
             uid: session.as_ref().map(|session| session.uid.clone()),
