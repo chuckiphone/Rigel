@@ -423,9 +423,69 @@ const showDegraded =
   typeof window !== "undefined" &&
   window.localStorage?.getItem("rigel.preview.degraded") === "1";
 
+/**
+ * Roadmap 118: a 401, 429 or 5xx from the provider. The preview fixture keeps the failed turn in
+ * the transcript so the panel can be inspected without a live provider or a real credential.
+ */
+const providerErrorPreview: Record<string, Record<string, unknown>> = {
+  "401": {
+    status: 401,
+    provider: "OpenRouter",
+    model: "anthropic/claude-sonnet-4.5",
+    message: "401 invalid x-api-key: the OpenRouter key was revoked",
+    request_id: "req-preview-401",
+  },
+  "429": {
+    status: 429,
+    provider: "OpenRouter",
+    model: "anthropic/claude-sonnet-4.5",
+    message: "429 rate limit exceeded: too many requests for this key",
+    request_id: "req-preview-429",
+    retry_after: 12,
+  },
+  "500": {
+    status: 500,
+    provider: "OpenRouter",
+    model: "anthropic/claude-sonnet-4.5",
+    message: "500 internal server error from the upstream provider",
+    request_id: "req-preview-500",
+  },
+};
+
+const providerErrorCode =
+  typeof window !== "undefined"
+    ? window.localStorage?.getItem("rigel.preview.providerError")
+    : null;
+const providerErrorBody = providerErrorCode
+  ? providerErrorPreview[providerErrorCode]
+  : undefined;
+const providerErrorEntry: TurnTranscript | null = providerErrorBody
+  ? {
+      turn: {
+        ...degradedTurn,
+        id: "turn-preview-provider-error",
+        seq: 4,
+        prompt: "Inspect the provider error and report it.",
+      },
+      items: [
+        {
+          id: "item-preview-provider-error",
+          turn_id: "turn-preview-provider-error",
+          seq: 1,
+          kind: "error",
+          status: "error",
+          body: providerErrorBody,
+          created_at: ago(1),
+        },
+      ],
+    }
+  : null;
+
 export const previewTranscript: TurnTranscript[] = showDegraded
   ? [...previewTranscriptBase, { turn: degradedTurn, items: degradedItems }]
-  : previewTranscriptBase;
+  : providerErrorEntry
+    ? [...previewTranscriptBase, providerErrorEntry]
+    : previewTranscriptBase;
 
 /** Browser preview: a running turn, so the queue and stop controls are inspectable. */
 export const previewLiveTurn: Turn = {

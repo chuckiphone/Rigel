@@ -3241,6 +3241,50 @@ input[type="checkbox"] {
   font-size: 12px;
 }
 
+/* Roadmap 118: a provider failure renders inside its turn row, never as a replacement for it. */
+.provider-error {
+  margin: 0 0 8px 76px;
+  padding: 8px 10px;
+  border: 1px solid color-mix(in srgb, var(--danger) 45%, var(--hairline));
+  background: color-mix(in srgb, var(--danger) 6%, var(--surface));
+}
+
+.provider-error-head {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+
+.provider-error-head strong {
+  color: var(--danger);
+  font-size: 12px;
+}
+
+.provider-error-message {
+  margin: 6px 0;
+  color: var(--text);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.provider-error-remedy {
+  margin: 6px 0;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.provider-error-request {
+  margin: 4px 0;
+  color: var(--faint);
+}
+
+.provider-error-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
 /* A decision the user made in the window; the transcript's own voice, not the model's. */
 .note-line {
   margin: 0 0 8px 76px;
