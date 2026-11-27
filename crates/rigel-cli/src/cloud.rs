@@ -102,6 +102,12 @@ pub enum CloudCommand {
         json: bool,
     },
 
+    /// List failed runs whose bounded retry budget is exhausted.
+    DeadLetters {
+        #[arg(long)]
+        json: bool,
+    },
+
     /// Show one queued run.
     Show {
         /// The id the queue printed.
@@ -712,6 +718,33 @@ pub async fn run(dir: &Path, command: CloudCommand) -> ExitCode {
                                 run.id,
                                 run.state,
                                 run.max_minutes,
+                                one_line(&run.prompt)
+                            );
+                        }
+                    }
+                    ExitCode::SUCCESS
+                }
+                Err(error) => failure(error, as_json),
+            }
+        }
+
+        CloudCommand::DeadLetters { json: as_json } => {
+            let cloud = match Cloud::open(dir) {
+                Ok(cloud) => cloud,
+                Err(error) => return failure(error, as_json),
+            };
+            match cloud.dead_letter_runs(100).await {
+                Ok(runs) => {
+                    if as_json {
+                        crate::json::print_pretty(&runs);
+                    } else if runs.is_empty() {
+                        println!("no dead-letter runs");
+                    } else {
+                        for run in &runs {
+                            println!(
+                                "{}  {}  {}",
+                                run.id,
+                                run.last_error.as_deref().unwrap_or("no error recorded"),
                                 one_line(&run.prompt)
                             );
                         }
