@@ -4062,6 +4062,78 @@ button[aria-label^="Unpin "] {
   background: var(--well);
 }
 
+/* Compare turns (roadmap 104): two anchored, scroll-synced columns of recorded facts. */
+.compare-turns {
+  margin: 8px 0;
+  border: 1px solid var(--hairline);
+  border-radius: 9px;
+  background: var(--well);
+  padding: 8px;
+}
+
+.compare-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 6px;
+}
+
+.compare-head button {
+  margin-left: auto;
+  min-height: 24px;
+  border: 1px solid var(--hairline);
+  border-radius: 6px;
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+}
+
+.compare-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.compare-column {
+  max-height: 280px;
+  overflow: auto;
+  border: 1px solid var(--hairline);
+  border-radius: 6px;
+  padding: 4px 6px;
+}
+
+.compare-title {
+  margin: 0 0 4px;
+  font-size: 11px;
+}
+
+.compare-rows {
+  margin: 0;
+}
+
+.compare-row {
+  margin: 0;
+  padding: 3px 4px;
+  border-left: 2px solid transparent;
+}
+
+.compare-row.differing {
+  border-left-color: var(--accent);
+  background: var(--surface);
+}
+
+.compare-row dt {
+  color: var(--faint);
+  font-size: 10px;
+  text-transform: uppercase;
+}
+
+.compare-row dd {
+  margin: 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
 /* Composer v2 (roadmap 137): one wrapping row of single-line control labels. */
 .composer-v2 {
   display: flex;
